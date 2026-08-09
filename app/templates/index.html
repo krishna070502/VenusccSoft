@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Venus Chicken Centers — Operations Console</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    emerald:{50:'#ecfdf5',100:'#d1fae5',200:'#a7f3d0',300:'#6ee7b7',400:'#34d399',500:'#10b981',600:'#059669',700:'#046C4E',800:'#04543C',900:'#033A29'},
+    amber:{50:'#fffbeb',100:'#fef3c7',200:'#fde68a',300:'#fcd34d',400:'#fbbf24',500:'#F59E0B',600:'#d97706',700:'#b45309'}
+  }, fontFamily:{ sans:['Inter','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'] } } } }
+</script>
+
+<style>
+  body { font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  input[type=number] { -moz-appearance:textfield; }
+
+  .inp { width:100%; border:1px solid #cbd5e1; border-radius:.5rem; padding:.5rem .75rem; font-size:.875rem; background:#fff; }
+  .inp:focus { outline:none; box-shadow:0 0 0 2px #10b981; border-color:#10b981; }
+  .inp:disabled, .inp[readonly] { background:#f1f5f9; color:#64748b; }
+  .inp.missing { border-color:#e11d48; background:#fff1f2; box-shadow:0 0 0 1px #e11d48; }
+  .lbl { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#64748b; margin-bottom:.25rem; }
+  .lbl .req { color:#e11d48; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:.75rem; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .sec-head { display:flex; align-items:center; gap:.75rem; padding:.65rem 1.25rem; color:#fff; font-weight:700; font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; }
+  .sec-badge { height:1.6rem; width:1.6rem; border-radius:.5rem; display:grid; place-items:center; font-size:.7rem; font-weight:700; background:#F59E0B; color:#033A29; }
+  .grid-f { display:grid; gap:1rem; padding:1.25rem; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+  .kgg { display:flex; gap:.4rem; align-items:center; }
+  .kgg input { min-width:0; }
+  .kgg span { font-size:11px; font-weight:700; color:#94a3b8; }
+  .calcbox { display:flex; align-items:center; gap:.6rem; border-radius:.5rem; padding:.6rem .85rem; font-size:.8rem; }
+  .tab-btn.active { background:#046C4E; color:#fff; }
+  .seg { display:inline-flex; background:#e2e8f0; border-radius:.6rem; padding:3px; }
+  .seg button { padding:.45rem 1.1rem; border-radius:.45rem; font-size:.85rem; font-weight:700; color:#475569; transition:all .18s; }
+  .seg button.active { background:#fff; color:#046C4E; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  .pulse-dot { animation: pulse 2s cubic-bezier(.4,0,.6,1) infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  ::-webkit-scrollbar { height:8px; width:8px; }
+  ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:8px; }
+  .rowhover:hover { background:#ecfdf5; }
+  .autoBtn { font-size:9px; font-weight:800; letter-spacing:.05em; padding:1px 6px; border-radius:5px; background:#d1fae5; color:#046C4E; border:1px solid #6ee7b7; text-transform:uppercase; }
+  .autoBtn.off { background:#fee2e2; color:#b91c1c; border-color:#fca5a5; }
+
+  /* ---------- animations ---------- */
+  @keyframes fadeUp { from { opacity:0; transform:translateY(14px);} to { opacity:1; transform:none; } }
+  .view-enter { animation: fadeUp .34s cubic-bezier(.22,1,.36,1) both; }
+  .view-enter > * { animation: fadeUp .42s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes popIn { from { opacity:0; transform:scale(.94);} to { opacity:1; transform:none; } }
+  .pop { animation: popIn .3s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes countGlow { 0%{ background:#fef3c7 } 100%{ background:transparent } }
+  .glow { animation: countGlow .8s ease-out; }
+
+  /* running chicken */
+  #runOverlay { pointer-events:none; }
+  @keyframes runAcross { 0% { transform:translateX(-160px) } 100% { transform:translateX(calc(100vw + 160px)) } }
+  @keyframes bob { 0%,100%{ transform:translateY(0) rotate(-2deg) } 50%{ transform:translateY(-9px) rotate(2deg) } }
+  @keyframes legA { 0%,100%{ transform:rotate(28deg) } 50%{ transform:rotate(-32deg) } }
+  @keyframes legB { 0%,100%{ transform:rotate(-32deg) } 50%{ transform:rotate(28deg) } }
+  @keyframes wingFlap { 0%,100%{ transform:rotate(-12deg) scaleY(1) } 50%{ transform:rotate(24deg) scaleY(.7) } }
+  @keyframes dust { 0%{ opacity:.55; transform:scale(.4) translateX(0) } 100%{ opacity:0; transform:scale(1.5) translateX(34px) } }
+  .runner { animation: runAcross 2.4s linear forwards; }
+  .runner .body { animation: bob .40s infinite ease-in-out; transform-origin:50% 80%; }
+  .runner .legA { animation: legA .40s infinite ease-in-out; transform-origin:top center; }
+  .runner .legB { animation: legB .40s infinite ease-in-out; transform-origin:top center; }
+  .runner .wing { animation: wingFlap .40s infinite ease-in-out; transform-origin:70% 40%; }
+  .runner .puff { animation: dust .80s infinite ease-out; }
+  .runner .puff2 { animation: dust .80s .40s infinite ease-out; }
+
+  #printArea { display:none; }
+  @media print {
+    body * { visibility:hidden !important; }
+    #printArea, #printArea * { visibility:visible !important; }
+    #printArea { display:block !important; position:absolute; left:0; top:0; width:100%; padding:20px; }
+    @page { margin:14mm; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .view-enter, .view-enter > *, .pop, .runner, .runner * { animation:none !important; }
+  }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased">
+
+<!-- ================= RUNNING CHICKEN OVERLAY ================= -->
+<div id="runOverlay" class="fixed inset-x-0 top-0 z-[80] hidden h-full">
+  <div id="runTrack" class="absolute left-0" style="top:38%">
+    <svg width="150" height="120" viewBox="0 0 150 120" fill="none" aria-hidden="true">
+      <ellipse class="puff" cx="26" cy="104" rx="11" ry="5" fill="#94a3b8"/>
+      <ellipse class="puff2" cx="12" cy="106" rx="9" ry="4" fill="#cbd5e1"/>
+      <g class="body">
+        <!-- legs -->
+        <g class="legA" style="transform-box:fill-box">
+          <rect x="66" y="76" width="5" height="22" rx="2.5" fill="#ea580c"/>
+          <path d="M60 98 L76 98 M68 98 L68 104" stroke="#ea580c" stroke-width="4.5" stroke-linecap="round"/>
+        </g>
+        <g class="legB" style="transform-box:fill-box">
+          <rect x="82" y="76" width="5" height="22" rx="2.5" fill="#c2410c"/>
+          <path d="M76 98 L92 98 M84 98 L84 104" stroke="#c2410c" stroke-width="4.5" stroke-linecap="round"/>
+        </g>
+        <!-- tail -->
+        <path d="M40 52 Q18 32 26 60 Q16 56 30 70 Z" fill="#92400e"/>
+        <!-- body -->
+        <ellipse cx="76" cy="58" rx="34" ry="27" fill="#F59E0B"/>
+        <ellipse cx="80" cy="64" rx="26" ry="19" fill="#fcd34d"/>
+        <!-- wing -->
+        <path class="wing" d="M70 50 Q92 44 96 62 Q80 68 70 50 Z" fill="#b45309" style="transform-box:fill-box"/>
+        <!-- head -->
+        <circle cx="108" cy="38" r="18" fill="#fbbf24"/>
+        <path d="M100 22 q5 -12 10 0 q6 -11 9 2 z" fill="#e11d48"/>
+        <circle cx="114" cy="34" r="3.4" fill="#fff"/>
+        <circle cx="115" cy="34.5" r="1.9" fill="#0f172a"/>
+        <path d="M124 40 L140 45 L124 50 Z" fill="#ea580c"/>
+        <path d="M112 52 q4 9 -3 11 q-4 -6 3 -11 z" fill="#e11d48"/>
+      </g>
+    </svg>
+  </div>
+</div>
+
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen" class="fixed inset-0 z-50 bg-gradient-to-br from-emerald-900 via-emerald-800 to-slate-900 grid place-items-center p-4">
+  <div class="w-full max-w-sm pop">
+    <div class="text-center mb-6">
+      <img id="loginLogo" src="{{ url_for('static', filename='img/logo.png') }}" alt="" class="h-20 w-20 rounded-full mx-auto ring-4 ring-amber-400/60 shadow-2xl" />
+      <h1 class="mt-4 text-2xl font-bold text-white">Venus Chicken Centers</h1>
+      <p class="text-emerald-300 text-xs uppercase tracking-[0.2em] mt-1">Operations Console</p>
+    </div>
+    <form id="loginForm" class="bg-white rounded-2xl shadow-2xl p-6 space-y-4">
+      <div><label class="lbl" for="loginUser">Username</label><input id="loginUser" class="inp" autocomplete="username" placeholder="admin" required /></div>
+      <div><label class="lbl" for="loginPass">Password</label><input id="loginPass" type="password" class="inp" autocomplete="current-password" placeholder="••••••••" required /></div>
+      <p id="loginError" class="hidden text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></p>
+      <p id="loginNotice" class="hidden text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
+      <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-lg shadow transition"><i class="fa-solid fa-right-to-bracket mr-2"></i>Sign in</button>
+      <div class="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 leading-relaxed">
+        <p class="font-bold text-slate-600 mb-1">Demo accounts</p>
+        <p>Admin — <code class="font-mono">admin</code> / <code class="font-mono">admin123</code></p>
+        <p>Supervisor — <code class="font-mono">ravi</code> / <code class="font-mono">ravi123</code></p>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="appShell" class="hidden">
+
+<header class="bg-emerald-800 text-white shadow-lg sticky top-0 z-40 print:hidden">
+  <div class="max-w-[1700px] mx-auto px-4 sm:px-6">
+    <div class="flex flex-wrap items-center gap-3 py-3">
+      <div class="flex items-center gap-3">
+        <img id="brandLogo" src="{{ url_for('static', filename='img/logo.png') }}" alt="Venus Chicken Centers" class="h-11 w-11 rounded-full ring-2 ring-amber-400/70 shadow-lg object-cover bg-emerald-900" />
+        <div class="leading-tight">
+          <h1 class="text-lg font-bold tracking-tight">Venus Chicken Centers</h1>
+          <p class="text-[11px] uppercase tracking-[0.18em] text-emerald-200">Operations Console</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 ml-2">
+        <div class="relative">
+          <i class="fa-solid fa-store absolute left-3 top-1/2 -translate-y-1/2 text-emerald-300 text-xs pointer-events-none"></i>
+          <select id="branchSelect" class="appearance-none bg-emerald-900/60 border border-emerald-600 text-white text-sm rounded-lg pl-8 pr-9 py-2 focus:ring-2 focus:ring-amber-400 focus:outline-none cursor-pointer"></select>
+          <i class="fa-solid fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-emerald-300 text-xs pointer-events-none"></i>
+        </div>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <div class="hidden lg:flex items-center gap-2 text-sm bg-emerald-900/50 rounded-lg px-3 py-2 border border-emerald-700"><i class="fa-regular fa-clock text-amber-400"></i><span id="liveClock" class="num">—</span></div>
+        <div id="sessionPill" title="Session auto-logout timer" class="hidden lg:flex items-center gap-2 text-xs font-semibold rounded-full px-3 py-2 bg-slate-900/40 text-emerald-100 border border-emerald-700"><i class="fa-solid fa-user-clock text-amber-400"></i><span id="sessionLeft" class="num">--:--</span></div>
+        <div id="netPill" class="flex items-center gap-2 text-xs font-semibold rounded-full px-3 py-2 bg-emerald-500/20 text-emerald-100 border border-emerald-400/40"><span id="netDot" class="h-2 w-2 rounded-full bg-emerald-300 pulse-dot"></span><span id="netText">Online</span></div>
+        <div class="flex items-center gap-2 bg-amber-500 text-emerald-900 rounded-full pl-1.5 pr-3 py-1.5 shadow">
+          <span id="userInitials" class="h-6 w-6 rounded-full bg-emerald-800 text-amber-400 grid place-items-center text-[10px] font-bold">—</span>
+          <span class="text-xs font-bold leading-tight"><span id="userName">—</span><span id="userRole" class="block text-[9px] uppercase tracking-wider opacity-80">—</span></span>
+        </div>
+        <button id="btnLogout" title="Sign out" class="h-9 w-9 rounded-lg bg-emerald-900/60 border border-emerald-600 text-emerald-200 hover:bg-rose-600 hover:text-white transition grid place-items-center"><i class="fa-solid fa-power-off text-sm"></i></button>
+      </div>
+    </div>
+    <nav class="flex gap-1 -mb-px overflow-x-auto" id="mainNav">
+      <button data-view="dashboard" data-admin="1" class="tab-btn active flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-chart-line text-xs"></i> Dashboard</button>
+      <button data-view="entry" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-pen-to-square text-xs"></i> Daily Entry</button>
+      <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Labour</button>
+      <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
+    </nav>
+  </div>
+</header>
+
+<main class="max-w-[1700px] mx-auto px-4 sm:px-6 py-6 print:hidden">
+
+  <!-- ================= DASHBOARD ================= -->
+  <section id="view-dashboard" class="view">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div>
+        <h2 class="text-xl font-bold text-slate-900">Profit &amp; Loss</h2>
+        <p class="text-sm text-slate-500"><span id="dashScopeLabel" class="font-semibold text-emerald-700">—</span> · approved records only</p>
+      </div>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div class="seg" id="dashScopeSeg">
+          <button data-scope="branch" class="active">This branch</button>
+          <button data-scope="all">All branches</button>
+        </div>
+        <div class="seg" id="dashCatSeg">
+          <button data-cat="all" class="active">Both</button>
+          <button data-cat="broiler">Broiler</button>
+          <button data-cat="parents">Parents</button>
+        </div>
+        <div><label class="lbl" for="dashFrom">From</label><input type="date" id="dashFrom" class="inp" /></div>
+        <div><label class="lbl" for="dashTo">To</label><input type="date" id="dashTo" class="inp" /></div>
+        <div class="flex gap-1.5">
+          <button data-range="today" class="qr text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Today</button>
+          <button data-range="7" class="qr text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">7d</button>
+          <button data-range="month" class="qr text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Month</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HEADLINE P&L -->
+    <div id="opsHero" data-sup="1" class="rounded-2xl shadow-lg overflow-hidden mb-5 bg-gradient-to-br from-emerald-800 to-emerald-900 text-white">
+      <div class="grid grid-cols-2 lg:grid-cols-5 divide-x divide-white/10">
+        <div class="p-5"><p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Birds handled</p><p class="mt-1 text-2xl xl:text-3xl font-bold num" id="opHandled">0</p><p class="text-[11px] text-emerald-300 mt-1"><span id="opDays">0</span> day(s) recorded</p></div>
+        <div class="p-5"><p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Live birds sold</p><p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="opLive">0</p><p class="text-[11px] text-emerald-300 mt-1">retail · no dressing</p></div>
+        <div class="p-5"><p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Dressed birds</p><p class="mt-1 text-2xl xl:text-3xl font-bold num" id="opDressed">0</p><p class="text-[11px] text-emerald-300 mt-1">meat <span id="opMeat" class="num">0</span></p></div>
+        <div class="p-5"><p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Total sales</p><p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="opSales">₹0</p><p class="text-[11px] text-emerald-300 mt-1">amount collected</p></div>
+        <div class="p-5 col-span-2 lg:col-span-1"><p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Yield</p><p class="mt-1 text-3xl xl:text-4xl font-bold num" id="opYield">0.0%</p><p class="text-[11px] text-emerald-300 mt-1">expected <span id="opExpYield" class="num">69</span>%</p></div>
+      </div>
+    </div>
+    <div id="plHero" data-admin="1" class="rounded-2xl shadow-lg overflow-hidden mb-5 bg-gradient-to-br from-emerald-800 to-emerald-900 text-white">
+      <div class="grid grid-cols-2 lg:grid-cols-5 divide-x divide-white/10">
+        <div class="p-5">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Revenue</p>
+          <p class="mt-1 text-2xl xl:text-3xl font-bold num" id="plRevenue">₹0</p>
+          <p class="text-[11px] text-emerald-300 mt-1"><span id="plDays">0</span> day(s) recorded</p>
+        </div>
+        <div class="p-5">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Cost of stock sold</p>
+          <p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="plCogs">₹0</p>
+          <p class="text-[11px] text-emerald-300 mt-1">avg buy <span id="plAvgRate" class="num">₹0</span>/kg</p>
+        </div>
+        <div class="p-5">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Labour paid</p>
+          <p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="plLabour">₹0</p>
+          <p class="text-[11px] text-emerald-300 mt-1"><span id="plManDays" class="num">0</span> man-days</p>
+        </div>
+        <div class="p-5">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Other expenses</p>
+          <p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="plOther">₹0</p>
+          <p class="text-[11px] text-emerald-300 mt-1">tea, tiffin &amp; shop costs</p>
+        </div>
+        <div class="p-5 col-span-2 lg:col-span-1" id="plNetBox">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Operating profit / loss</p>
+          <p class="mt-1 text-3xl xl:text-4xl font-bold num" id="plNet">₹0</p>
+          <p class="text-[11px] mt-1"><span id="plMargin" class="num font-bold">0.0%</span> <span class="text-emerald-300">margin · before overheads</span></p>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashAlerts" class="space-y-3 mb-5"></div>
+
+    <!-- OPERATIONAL KPIs -->
+    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
+      <article class="card p-4 border-t-4 border-t-emerald-700"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Birds purchased</p><p class="mt-2 text-2xl font-bold num" id="kBuyBirds">0</p><p class="text-xs text-slate-500"><span id="kBuyWt" class="num">0</span></p><p data-admin="1" class="text-xs text-slate-500 mt-1" id="kBuyAmt">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-emerald-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Dressed</p><p class="mt-2 text-2xl font-bold num" id="kDressed">0</p><p class="text-xs text-slate-500">birds · <span id="kDressedWt" class="num">0</span></p><p class="text-xs text-slate-500 mt-1">Meat <span id="kMeat" class="num font-semibold text-emerald-700">0</span></p></article>
+      <article class="card p-4 border-t-4 border-t-amber-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Live sales</p><p class="mt-2 text-2xl font-bold num" id="kLiveBirds">0</p><p class="text-xs text-slate-500">birds · <span id="kLiveAmt" class="num">₹0</span></p><p class="text-xs text-slate-500 mt-1">Cutting <span id="kCutAmt" class="num">₹0</span></p></article>
+      <article class="card p-4 border-t-4 border-t-rose-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Mortality</p><p class="mt-2 text-2xl font-bold num text-rose-600" id="kMortCount">0</p><p class="text-xs text-slate-500">birds · <span id="kMortWt" class="num">0</span></p><p data-admin="1" class="text-xs text-slate-500 mt-1">Loss <span id="kMortVal" class="num font-semibold text-rose-600">₹0</span></p></article>
+      <article class="card p-4 border-t-4 border-t-emerald-700"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Yield</p><p class="mt-2 text-2xl font-bold num" id="kYield">0.0%</p><p class="text-xs text-slate-500">expected <span id="kExpYield" class="num">69</span>%</p><p class="text-xs text-slate-500 mt-1">Waste <span id="kWaste" class="num">0</span></p></article>
+      <article id="kBonusCard" class="card p-4 border-t-4 border-t-slate-400"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Bonus / Short meat</p><p class="mt-2 text-2xl font-bold num" id="kBonus">0</p><p class="text-xs text-slate-500" id="kBonusNote">no data</p><span id="kBonusBadge" class="mt-2 inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-slate-100 text-slate-600">—</span></article>
+    </div>
+
+    <!-- MONTHLY OVERHEADS -->
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-file-invoice-dollar text-amber-600"></i>
+        <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Monthly overheads</h3>
+        <span class="text-xs text-slate-400" id="ovhNote"></span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3">
+        <div class="lg:col-span-2 p-4 border-b lg:border-b-0 lg:border-r border-slate-100">
+          <div id="ovhBreakdown" class="space-y-2"></div>
+        </div>
+        <div class="p-4 bg-slate-50 space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-slate-500">Operating profit (daily)</span><span class="font-bold num" id="ovhOperating">₹0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">Overheads charged</span><span class="font-bold num text-rose-600" id="ovhTotal">₹0</span></div>
+          <div class="border-t-2 border-slate-200 pt-2 flex justify-between items-baseline">
+            <span class="font-bold text-slate-700">Net after overheads</span>
+            <span class="font-bold num text-xl" id="ovhNet">₹0</span>
+          </div>
+          <p class="text-[11px] text-slate-400 leading-snug pt-1">Overheads are whole-month costs. They are excluded from each day&rsquo;s profit and charged once at month end.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLOSING STOCK IN HAND -->
+    <div class="card overflow-hidden mb-6">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-warehouse text-emerald-700"></i>
+        <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Closing stock in hand</h3>
+        <span class="text-xs text-slate-400" id="closingAsAt"></span>
+      </div>
+      <div class="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-slate-100">
+        <div class="p-4">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closing birds</p>
+          <p class="mt-1 text-2xl font-bold num text-slate-900" id="kCloseBirds">0</p>
+          <p class="text-xs text-slate-400">live birds remaining</p>
+        </div>
+        <div class="p-4">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closing bird weight</p>
+          <p class="mt-1 text-2xl font-bold num text-emerald-700" id="kCloseWt">0.000 kg</p>
+          <p class="text-xs text-slate-400">live weight in shed</p>
+        </div>
+        <div class="p-4">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closing meat</p>
+          <p class="mt-1 text-2xl font-bold num text-emerald-700" id="kCloseMeat">0.000 kg</p>
+          <p class="text-xs text-slate-400">dressed meat in cold room</p>
+        </div>
+        <div class="p-4">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Stock value</p>
+          <p class="mt-1 text-2xl font-bold num text-amber-600" id="kCloseValue">₹0</p>
+          <p class="text-xs text-slate-400">carried into tomorrow</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- BRANCH PERFORMANCE + REASONS -->
+    <div data-admin="1" class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
+      <div class="xl:col-span-2 card overflow-hidden">
+        <div class="px-5 py-3 bg-slate-100 flex items-center gap-2">
+          <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Branch performance</h3>
+          <span class="text-xs text-slate-400" id="branchPerfHint"></span>
+        </div>
+        <div class="overflow-x-auto"><table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Revenue</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Cost</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Labour</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Net P/L</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Margin</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Closing stock</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Main reason</th>
+          </tr></thead>
+          <tbody id="branchPerfBody" class="divide-y divide-slate-100"></tbody>
+          <tfoot id="branchPerfFoot" class="bg-emerald-50 font-bold text-emerald-900"></tfoot>
+        </table></div>
+      </div>
+      <div class="card overflow-hidden">
+        <div class="px-5 py-3 bg-slate-100"><h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Where the money went</h3></div>
+        <div id="reasonList" class="p-4 space-y-2"></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div data-admin="1" class="xl:col-span-2 card p-4"><h3 class="font-bold text-slate-800 text-sm uppercase tracking-wide mb-3">Daily profit trend</h3><div class="h-72"><canvas id="chartProfit"></canvas></div></div>
+      <div class="card p-4"><h3 class="font-bold text-slate-800 text-sm uppercase tracking-wide mb-3">Revenue split</h3><div class="h-72"><canvas id="chartSplit"></canvas></div></div>
+      <div class="xl:col-span-2 card p-4"><h3 class="font-bold text-slate-800 text-sm uppercase tracking-wide mb-3">Yield vs expected</h3><div class="h-64"><canvas id="chartYield"></canvas></div></div>
+      <div data-admin="1" class="card p-4"><h3 class="font-bold text-slate-800 text-sm uppercase tracking-wide mb-3">Loss drivers</h3><div class="h-64"><canvas id="chartLoss"></canvas></div></div>
+    </div>
+  </section>
+
+  <!-- ================= DAILY ENTRY ================= -->
+  <section id="view-entry" class="view hidden">
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      <form id="entryForm" class="xl:col-span-2 space-y-5" novalidate>
+
+        <div class="card p-5">
+          <div class="flex flex-wrap items-center gap-4 justify-between">
+            <div class="seg" id="entryCatSeg">
+              <button type="button" data-cat="broiler" class="active">Broiler</button>
+              <button type="button" data-cat="parents">Parents</button>
+            </div>
+            <div id="entryLockNotice" class="hidden text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 rounded-lg px-3 py-2"></div>
+          </div>
+          <div class="grid-f !px-0 !pb-0 !pt-4">
+            <div><label class="lbl" for="f_datetime">Date &amp; time <span class="req">*</span></label><input type="datetime-local" id="f_datetime" class="inp" required /></div>
+            <div><span class="lbl">Branch</span><p id="f_branchLabel" class="inp !bg-slate-100 font-semibold text-emerald-800">—</p></div>
+            <div><span class="lbl">Status</span><p id="f_statusLabel" class="inp !bg-slate-100 font-semibold text-slate-600">New entry</p></div>
+            <div><span class="lbl">Entered by</span><p id="f_byLabel" class="inp !bg-slate-100 font-semibold text-slate-600">—</p></div>
+          </div>
+        </div>
+
+        <div id="rejectNotice" class="hidden card border-rose-300 bg-rose-50 p-5">
+          <p class="font-bold text-rose-800 flex items-center gap-2 mb-1"><i class="fa-solid fa-circle-xmark"></i>Returned by admin</p>
+          <p class="text-sm text-rose-700 mb-3" id="rejectReasonText"></p>
+          <label class="lbl" for="f_explanation">Your explanation <span class="req">*</span></label>
+          <textarea id="f_explanation" rows="2" class="inp" placeholder="Explain the variance to the admin…"></textarea>
+        </div>
+
+        <!-- A: Opening -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-emerald-700"><span class="sec-badge">A</span>Opening Stock <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80" id="carryNote"></span></div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_openBirds">Opening birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_openBirds" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl">Opening bird weight <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_openWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_openWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div data-admin="1"><label class="lbl" for="f_openRate">Opening cost rate (₹/kg)</label><input type="number" min="0" step="0.01" id="f_openRate" class="inp num" placeholder="0.00" /><p class="text-[11px] text-slate-400 mt-1">Carried forward · admin only</p></div>
+            <div><label class="lbl">Open meat (previous day)</label><div class="kgg"><input type="number" min="0" step="1" id="f_openMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_openMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+          </div>
+        </fieldset>
+
+        <!-- B: Purchases -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-emerald-600"><span class="sec-badge">B</span>Purchases (birds bought in)
+            <button type="button" id="btnAddPurchase" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal"><i class="fa-solid fa-plus mr-1"></i>Add purchase</button>
+          </div>
+          <div class="p-5">
+            <div id="purchaseRows" class="space-y-3"></div>
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="calcbox bg-emerald-50 border border-emerald-200"><span class="text-emerald-800">Purchased</span><span class="ml-auto font-bold num text-emerald-900"><span id="o_buyBirds">0</span> birds</span></div>
+              <div class="calcbox bg-emerald-50 border border-emerald-200"><span class="text-emerald-800">Weight</span><span class="ml-auto font-bold num text-emerald-900" id="o_buyWt">0.000 kg</span></div>
+              <div data-admin="1" class="calcbox bg-emerald-50 border border-emerald-200"><span class="text-emerald-800">Purchase value</span><span class="ml-auto font-bold num text-emerald-900" id="o_buyAmt">₹0.00</span></div>
+            </div>
+            <div data-admin="1" class="mt-3 calcbox bg-slate-800 text-white"><i class="fa-solid fa-scale-balanced text-amber-400"></i><span class="font-semibold">Weighted average cost of stock</span><span class="ml-auto font-bold num text-amber-300" id="o_avgRate">₹0.00 / kg</span></div>
+          </div>
+        </fieldset>
+
+        <!-- C: Rates -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-amber-500 !text-emerald-900"><span class="sec-badge !bg-emerald-800 !text-amber-400">C</span>Selling Rates (₹ per kg)</div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_rateSkin">Skin <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkin" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateSkinless">Skinless <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkinless" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateLiver">Liver</label><input type="number" min="0" step="0.01" id="f_rateLiver" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateLive">Live bird price <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateLive" class="inp num" placeholder="0.00" /></div>
+          </div>
+        </fieldset>
+
+        <!-- D: Live sales -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-emerald-800"><span class="sec-badge">D</span>Live Bird Sales &amp; Cutting</div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_liveSoldCount">Live birds sold (nos)</label><input type="number" min="0" step="1" id="f_liveSoldCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl">Live sold weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_liveSoldWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liveSoldWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl" for="f_cutCharges">Cutting charges (₹)</label><input type="number" min="0" step="0.01" id="f_cutCharges" class="inp num" placeholder="0.00" /></div>
+            <div><span class="lbl">Live sale amount</span><div class="calcbox bg-emerald-50 border border-emerald-200"><i class="fa-solid fa-indian-rupee-sign text-emerald-700"></i><span class="ml-auto font-bold num text-emerald-800" id="o_liveAmt">₹0.00</span></div></div>
+          </div>
+        </fieldset>
+
+        <!-- E: Mortality -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-rose-700"><span class="sec-badge !text-rose-900">E</span>Mortality &amp; Damage</div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_mortCount">Mortality (nos)</label><input type="number" min="0" step="1" id="f_mortCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl">Mortality weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_mortWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_mortWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl">Damage meat</label><div class="kgg"><input type="number" min="0" step="1" id="f_damage_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_damage_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+          </div>
+          <div class="px-5 pb-5">
+            <label class="lbl">Mortality photos <span class="req">(required when mortality &gt; 0)</span></label>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="cursor-pointer inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm transition"><i class="fa-solid fa-camera"></i> Upload photos<input type="file" id="f_photos" accept="image/*" multiple capture="environment" class="hidden" /></label>
+              <p class="text-xs text-slate-500">Stored against this branch &amp; date. Compressed automatically.</p>
+            </div>
+            <div id="photoStrip" class="flex flex-wrap gap-3 mt-3"></div>
+          </div>
+        </fieldset>
+
+        <!-- F: Dressing -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-slate-700"><span class="sec-badge !text-slate-900">F</span>Dressing / Processing</div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_dressedCount">Dressed birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_dressedCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl">Live weight dressed <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_dressedWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_dressedWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl">Actual meat obtained <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_actualMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_actualMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+          </div>
+          <div class="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div class="calcbox bg-slate-50 border border-slate-200"><span class="text-slate-600">Expected meat</span><span class="ml-auto font-bold num" id="o_expMeat">0</span></div>
+            <div class="calcbox bg-slate-50 border border-slate-200"><span class="text-slate-600">Waste (<span id="o_wastePct">31</span>%)</span><span class="ml-auto font-bold num" id="o_wasteMeat">0</span></div>
+            <div class="calcbox bg-slate-50 border border-slate-200"><span class="text-slate-600">Actual yield</span><span class="ml-auto font-bold num" id="o_yieldPct">0.0%</span></div>
+            <div class="calcbox bg-slate-50 border border-slate-200" id="o_bonusBox"><span class="text-slate-600">Bonus meat</span><span class="ml-auto font-bold num" id="o_bonusMeat">0</span></div>
+          </div>
+        </fieldset>
+
+        <!-- G: Meat sales -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales</div>
+          <div class="grid-f">
+            <div><label class="lbl">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl">Liver sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_liverSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liverSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_liverAmt" class="num">0.00</span></p></div>
+          </div>
+        </fieldset>
+
+        <!-- H: Closing -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">H</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">meat = open + obtained − skin − skinless − liver − damage</span></div>
+          <div class="grid-f">
+            <div><label class="lbl" for="f_closeBirds">Closing birds <span class="req">*</span> <button type="button" data-auto="closeBirds" class="autoBtn">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
+            <div><label class="lbl">Closing bird weight <span class="req">*</span> <button type="button" data-auto="closeWt" class="autoBtn">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
+            <div><label class="lbl">Closing meat <button type="button" data-auto="closeMeat" class="autoBtn">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeMeat"></p></div>
+            <div class="sm:col-span-2"><label class="lbl" for="f_notes">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
+          </div>
+        </fieldset>
+
+        <div id="validationBox" class="hidden card border-rose-300 bg-rose-50 p-4">
+          <p class="font-bold text-rose-800 flex items-center gap-2 mb-2"><i class="fa-solid fa-circle-exclamation"></i>Complete these before sending to admin</p>
+          <ul id="validationList" class="list-disc list-inside text-sm text-rose-700 space-y-0.5"></ul>
+        </div>
+
+        <div id="formActions" class="flex flex-wrap gap-3"></div>
+      </form>
+
+      <aside>
+        <div class="card overflow-hidden sticky top-36">
+          <div class="bg-slate-800 text-white px-5 py-3 flex items-center gap-2"><i class="fa-solid fa-calculator text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">Day Summary</h3></div>
+          <div id="liveAlerts" class="px-4 pt-4 space-y-2"></div>
+          <dl class="p-5 space-y-2.5 text-sm">
+            <div class="flex justify-between"><dt class="text-slate-500">Birds handled</dt><dd class="font-bold num" id="o_handled">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Expected closing birds</dt><dd class="font-bold num" id="o_expBirds">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Bird variance</dt><dd class="font-bold num" id="o_birdVar">0</dd></div>
+            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Meat available</dt><dd class="font-bold num" id="o_meatAvail">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Expected closing meat</dt><dd class="font-bold num" id="o_expCloseMeat">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Meat variance</dt><dd class="font-bold num" id="o_meatVar">0</dd></div>
+            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Live birds sold (retail)</dt><dd class="font-bold num text-emerald-700" id="o_liveRetail">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Dressed birds</dt><dd class="font-bold num" id="o_dressedCt">0</dd></div>
+            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Total revenue</dt><dd class="font-bold num text-emerald-700" id="o_revenue">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Cost of stock sold</dt><dd class="font-bold num text-rose-600" id="o_cogs">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Labour (this day)</dt><dd class="font-bold num text-rose-600" id="o_labour">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Other expenses</dt><dd class="font-bold num text-rose-600" id="o_otherExp">₹0.00</dd></div>
+            <div data-admin="1" class="border-t-2 border-slate-200 pt-3 flex justify-between items-baseline"><dt class="font-bold text-slate-700">Net profit / loss</dt><dd class="font-bold num text-xl" id="o_netProfit">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between text-xs"><dt class="text-slate-400">Closing stock value (carried)</dt><dd class="font-semibold num text-slate-500" id="o_closeValue">₹0.00</dd></div>
+          </dl>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ================= RECORDS ================= -->
+  <section id="view-records" class="view hidden">
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap items-end gap-3">
+        <div><h2 class="text-lg font-bold text-slate-900" id="recordsTitle">Approvals</h2><p class="text-xs text-slate-500"><span id="recCount">0</span> record(s)</p></div>
+        <div class="flex-1"></div>
+        <div><label class="lbl" for="recFrom">From</label><input type="date" id="recFrom" class="inp" /></div>
+        <div><label class="lbl" for="recTo">To</label><input type="date" id="recTo" class="inp" /></div>
+        <div><label class="lbl" for="recBranch">Branch</label><select id="recBranch" class="inp"></select></div>
+        <div><label class="lbl" for="recCat">Category</label><select id="recCat" class="inp"><option value="">All</option><option value="broiler">Broiler</option><option value="parents">Parents</option></select></div>
+        <div><label class="lbl" for="recStatus">Status</label><select id="recStatus" class="inp"><option value="">All</option><option value="draft">Draft</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Returned</option></select></div>
+        <button id="btnRecExport" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-file-csv"></i> CSV</button>
+        <button id="btnRecPrint" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-print"></i> Print</button>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-100 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-3 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase">Branch</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase">Cat.</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase text-right">Purchased</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase text-right">Meat</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase text-right">Yield</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase text-right">Revenue</th>
+          <th data-admin="1" class="px-4 py-3 font-bold text-xs uppercase text-right">Net P/L</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase">By</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase">Status</th>
+          <th class="px-4 py-3 font-bold text-xs uppercase text-right">Actions</th>
+        </tr></thead>
+        <tbody id="recBody" class="divide-y divide-slate-100"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ================= LABOUR ================= -->
+  <section id="view-workers" class="view hidden">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div><h2 class="text-xl font-bold text-slate-900">Labour — dressers &amp; cutters</h2>
+        <p class="text-sm text-slate-500"><span id="wkBranchLabel" class="font-semibold text-emerald-700">—</span> · paid per working day · tea &amp; tiffin never deducted</p></div>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div><label class="lbl" for="wkDate">Work date</label><input type="date" id="wkDate" class="inp" /></div>
+        <button id="btnAddWorker" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-user-plus"></i> Add worker</button>
+        <button id="btnPayWorker" class="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-hand-holding-dollar"></i> Record payment</button>
+        <button id="btnAddExpense" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-receipt"></i> Log expense</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
+      <article class="card p-4 border-t-4 border-t-emerald-700"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Active workers</p><p class="mt-2 text-2xl font-bold num" id="pkCount">0</p></article>
+      <article class="card p-4 border-t-4 border-t-emerald-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Present today</p><p class="mt-2 text-2xl font-bold num" id="pkToday">0</p></article>
+      <article class="card p-4 border-t-4 border-t-amber-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Wages earned (today)</p><p class="mt-2 text-2xl font-bold num text-amber-600" id="pkEarnToday">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-slate-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Paid to date</p><p class="mt-2 text-2xl font-bold num" id="pkPaid">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-rose-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Outstanding balance</p><p class="mt-2 text-2xl font-bold num text-rose-600" id="pkBalance">₹0</p></article>
+    </div>
+
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex items-center gap-2">
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Attendance for <span id="wkDateLabel" class="text-emerald-700"></span></h3>
+        <span class="text-xs text-slate-400">Tap a worker to mark the day</span>
+      </div>
+      <div id="attendanceGrid" class="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+    </div>
+
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 font-bold text-sm uppercase tracking-wide text-slate-700">Worker ledger &amp; balances</div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Worker</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Role</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Day wage</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Days worked</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Earned</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Paid</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Deductions</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Balance due</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Actions</th>
+        </tr></thead>
+        <tbody id="workerBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="workerFoot" class="bg-rose-50 font-bold text-rose-900"></tfoot>
+      </table></div>
+    </div>
+
+    <div data-admin="1" class="card overflow-hidden">
+      <div class="px-5 py-3 bg-slate-100 flex items-center gap-2">
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Ledger entries — transaction log</h3>
+        <div class="ml-auto"><input type="month" id="wkMonth" class="inp" /></div>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Worker</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Type</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Note</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Amount</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Effect</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right"></th>
+        </tr></thead>
+        <tbody id="ledgerBody" class="divide-y divide-slate-100"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ================= OVERHEADS ================= -->
+  <section id="view-overheads" class="view hidden">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div>
+        <h2 class="text-xl font-bold text-slate-900">Fixed Overheads</h2>
+        <p class="text-sm text-slate-500"><span id="ovhBranchLabel" class="font-semibold text-emerald-700">&mdash;</span> · rent, electricity, supervisor salary and other monthly costs</p>
+      </div>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div><label class="lbl" for="ovhMonth">Month</label><input type="month" id="ovhMonth" class="inp" /></div>
+        <button id="btnAddOverhead" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add overhead</button>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-amber-50 border-l-4 border-amber-500 px-4 py-3 text-xs text-amber-800 mb-5">
+      <i class="fa-solid fa-circle-info mr-1"></i>These costs do <strong>not</strong> affect any single day&rsquo;s profit and loss. They are charged once at the end of the month and appear on the dashboard under &ldquo;Monthly overheads&rdquo;. Every entry needs admin approval before it counts.
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      <article class="card p-4 border-t-4 border-t-emerald-700"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Approved this month</p><p class="mt-2 text-2xl font-bold num text-emerald-700" id="ovkApproved">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-amber-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Awaiting approval</p><p class="mt-2 text-2xl font-bold num text-amber-600" id="ovkPending">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-rose-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Returned</p><p class="mt-2 text-2xl font-bold num text-rose-600" id="ovkRejected">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-slate-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Entries</p><p class="mt-2 text-2xl font-bold num" id="ovkCount">0</p></article>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="px-5 py-3 bg-slate-100 font-bold text-sm uppercase tracking-wide text-slate-700">Overhead entries</div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Month</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Category</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Note</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Amount</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Entered by</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Status</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Actions</th>
+        </tr></thead>
+        <tbody id="ovhBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="ovhFoot" class="bg-emerald-50 font-bold text-emerald-900"></tfoot>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ================= ADMIN ================= -->
+  <section id="view-admin" class="view hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="card overflow-hidden">
+        <div class="px-5 py-3 bg-emerald-800 text-white flex items-center gap-2"><i class="fa-solid fa-store text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">Branches</h3>
+          <button id="btnAddBranch" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
+        <form id="branchAddForm" class="hidden px-5 py-4 bg-emerald-50 border-b border-emerald-100">
+          <div class="flex flex-wrap gap-3 items-end">
+            <div class="w-24"><label class="lbl" for="newBranchCode">Code</label><input id="newBranchCode" class="inp uppercase" maxlength="10" placeholder="B05" /></div>
+            <div class="flex-1 min-w-[180px]"><label class="lbl" for="newBranchName">Branch name</label><input id="newBranchName" class="inp" placeholder="Branch 05 — Airport Road" /></div>
+            <button class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Save</button>
+          </div>
+        </form>
+        <div class="overflow-x-auto"><table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600"><tr class="text-left"><th class="px-5 py-2.5 font-bold text-xs uppercase">Code</th><th class="px-3 py-2.5 font-bold text-xs uppercase">Name</th><th class="px-3 py-2.5 font-bold text-xs uppercase text-right">Records</th><th class="px-5 py-2.5"></th></tr></thead>
+          <tbody id="branchBody" class="divide-y divide-slate-100"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card overflow-hidden">
+        <div class="px-5 py-3 bg-emerald-800 text-white flex items-center gap-2"><i class="fa-solid fa-users-gear text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">User accounts</h3>
+          <button id="btnAddUser" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
+        <form id="userAddForm" class="hidden px-5 py-4 bg-emerald-50 border-b border-emerald-100 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl" for="newUserName">Full name</label><input id="newUserName" class="inp" /></div>
+            <div><label class="lbl" for="newUserLogin">Username</label><input id="newUserLogin" class="inp" /></div>
+            <div><label class="lbl" for="newUserPass">Password</label><input id="newUserPass" class="inp" /></div>
+            <div><label class="lbl" for="newUserRole">Role</label><select id="newUserRole" class="inp"><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
+          </div>
+          <div><label class="lbl">Assigned branches</label><div id="newUserBranches" class="flex flex-wrap gap-2"></div></div>
+          <button class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Create account</button>
+        </form>
+        <div class="overflow-x-auto"><table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600"><tr class="text-left"><th class="px-5 py-2.5 font-bold text-xs uppercase">Name</th><th class="px-3 py-2.5 font-bold text-xs uppercase">Username</th><th class="px-3 py-2.5 font-bold text-xs uppercase">Role</th><th class="px-3 py-2.5 font-bold text-xs uppercase">Branches</th><th class="px-5 py-2.5"></th></tr></thead>
+          <tbody id="userBody" class="divide-y divide-slate-100"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card overflow-hidden lg:col-span-2">
+        <div class="px-5 py-3 bg-slate-900 text-white flex items-center gap-3">
+          <i class="fa-solid fa-clock-rotate-left text-amber-400"></i>
+          <h3 class="font-bold text-sm uppercase tracking-wide">Activity log</h3>
+          <span class="text-xs text-slate-400">admin only · <span id="actCount">0</span> events</span>
+          <div class="ml-auto flex gap-2">
+            <select id="actUser" class="inp !py-1.5 !text-xs"><option value="">All users</option></select>
+            <select id="actKind" class="inp !py-1.5 !text-xs"><option value="">All actions</option></select>
+            <button id="btnActExport" class="text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+            <button id="btnActClear" class="text-xs font-bold bg-rose-600 text-white px-3 py-1.5 rounded-lg hover:bg-rose-700"><i class="fa-solid fa-trash mr-1"></i>Clear</button>
+          </div>
+        </div>
+        <div class="max-h-96 overflow-y-auto"><table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600 sticky top-0"><tr class="text-left">
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">When</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">User</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Role</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Action</th>
+            <th class="px-4 py-2.5 font-bold text-xs uppercase">Detail</th>
+          </tr></thead>
+          <tbody id="actBody" class="divide-y divide-slate-100"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card overflow-hidden lg:col-span-2">
+        <div class="px-5 py-3 bg-slate-700 text-white flex items-center gap-2"><i class="fa-solid fa-sliders text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">Settings &amp; data</h3></div>
+        <div class="grid-f">
+          <div><label class="lbl" for="setWasteBroiler">Broiler waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteBroiler" class="inp num" /></div>
+          <div><label class="lbl" for="setWasteParents">Parents waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteParents" class="inp num" /></div>
+          <div><label class="lbl" for="setTolerance">Yield tolerance ± %</label><input type="number" min="0" max="20" step="0.1" id="setTolerance" class="inp num" /></div>
+          <div><label class="lbl" for="setDayWage">Default day wage (₹)</label><input type="number" min="0" step="10" id="setDayWage" class="inp num" /></div>
+          <div class="flex items-end"><button id="btnSaveSettings" class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg w-full">Save settings</button></div>
+        </div>
+        <div class="px-5 pb-5 flex flex-wrap gap-3">
+          <button id="btnExportAll" class="inline-flex items-center gap-2 text-slate-600 border border-slate-300 bg-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-slate-50"><i class="fa-solid fa-download text-xs"></i> Export all (JSON)</button>
+          <label class="cursor-pointer inline-flex items-center gap-2 text-slate-600 border border-slate-300 bg-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-slate-50"><i class="fa-solid fa-upload text-xs"></i> Import JSON<input type="file" id="importFile" accept="application/json" class="hidden" /></label>
+          <button id="btnSeed" class="inline-flex items-center gap-2 text-slate-600 border border-slate-300 bg-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-slate-50"><i class="fa-solid fa-database text-xs"></i> Load demo data</button>
+          <button id="btnWipe" class="inline-flex items-center gap-2 text-rose-600 border border-rose-200 bg-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-rose-50"><i class="fa-solid fa-trash text-xs"></i> Wipe everything</button>
+          <span id="storageInfo" class="ml-auto self-center text-xs text-slate-400"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="max-w-[1700px] mx-auto px-6 pb-8 text-center text-xs text-slate-400 print:hidden">
+  Venus Chicken Centers · Offline-first console · Data held locally until the database is connected
+</footer>
+</div><!-- /appShell -->
+
+<div id="reviewModal" class="fixed inset-0 z-50 hidden print:hidden">
+  <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" data-close="1"></div>
+  <div class="relative mx-auto my-6 w-[96%] max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col pop">
+    <div class="bg-emerald-800 text-white px-5 py-4 flex items-center gap-3 shrink-0"><i class="fa-solid fa-clipboard-check text-amber-400"></i>
+      <div><h2 class="font-bold" id="reviewTitle">Review entry</h2><p class="text-xs text-emerald-200" id="reviewSub">—</p></div>
+      <button data-close="1" class="ml-auto h-9 w-9 rounded-lg hover:bg-emerald-700 grid place-items-center"><i class="fa-solid fa-xmark"></i></button></div>
+    <div id="reviewBody" class="overflow-y-auto flex-1 p-5 space-y-4"></div>
+    <div id="reviewFoot" class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap gap-3 shrink-0"></div>
+  </div>
+</div>
+
+<div id="genModal" class="fixed inset-0 z-50 hidden print:hidden">
+  <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" data-close="1"></div>
+  <div class="relative mx-auto my-10 w-[95%] max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden pop">
+    <div class="bg-slate-800 text-white px-5 py-4 flex items-center gap-3"><h2 class="font-bold" id="genTitle">—</h2>
+      <button data-close="1" class="ml-auto h-9 w-9 rounded-lg hover:bg-slate-700 grid place-items-center"><i class="fa-solid fa-xmark"></i></button></div>
+    <div id="genBody" class="p-5 max-h-[75vh] overflow-y-auto"></div>
+  </div>
+</div>
+
+<div id="lightbox" class="fixed inset-0 z-[60] hidden bg-slate-900/90 print:hidden" data-close="1">
+  <button data-close="1" class="absolute top-4 right-4 h-11 w-11 rounded-full bg-white/10 text-white grid place-items-center hover:bg-white/20"><i class="fa-solid fa-xmark text-xl"></i></button>
+  <img id="lightboxImg" src="" alt="Mortality photo" class="max-h-[88vh] max-w-[92vw] object-contain absolute inset-0 m-auto rounded-lg shadow-2xl" />
+</div>
+
+<div id="idleModal" class="fixed inset-0 z-[75] hidden print:hidden">
+  <div class="absolute inset-0 bg-slate-900/80 backdrop-blur-sm"></div>
+  <div class="relative mx-auto mt-40 w-[92%] max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden pop text-center p-6">
+    <div class="h-16 w-16 rounded-full bg-amber-100 text-amber-600 grid place-items-center mx-auto mb-3"><i class="fa-solid fa-user-clock text-2xl"></i></div>
+    <h2 class="font-bold text-lg text-slate-900">Still there?</h2>
+    <p class="text-sm text-slate-500 mt-1">You will be signed out in</p>
+    <p class="text-4xl font-bold num text-rose-600 my-2" id="idleCount">30</p>
+    <p class="text-xs text-slate-400 mb-4">Sessions end automatically after <span id="idleLimitTxt">10</span> minutes of inactivity.</p>
+    <button id="btnStayIn" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-lg">Stay signed in</button>
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div id="toast" class="fixed bottom-6 right-6 z-[70] hidden print:hidden"></div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+# ---------------------------------------------------------------------------
+# Venus Chicken Centers — Operations Console
+#
+#   docker compose up -d --build                 → app only, uses DATABASE_URL
+#                                                  from .env (your Neon instance)
+#   docker compose --profile localdb up -d --build
+#                                                → app + a local Postgres 16,
+#                                                  nothing external needed
+#   docker compose --profile tools up -d adminer → database browser on :8080
+#
+# Open http://localhost:8000
+# ---------------------------------------------------------------------------
+
+name: venus-erp
+
+services:
+  # -------------------------------------------------------------------------
+  # Flask application, served by gunicorn
+  # -------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: venus-erp:latest
+    container_name: venus-web
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      # With the localdb profile this points at the bundled Postgres.
+      # Without it, DATABASE_URL from .env wins (Neon, RDS, wherever).
+      DATABASE_URL: ${DATABASE_URL:-postgresql://venus:venus@db:5432/venus}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
+      FLASK_DEBUG: "0"
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      IDLE_ADMIN_MIN: ${IDLE_ADMIN_MIN:-2}
+      IDLE_SUPERVISOR_MIN: ${IDLE_SUPERVISOR_MIN:-10}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      # entrypoint behaviour
+      AUTO_INIT_DB: ${AUTO_INIT_DB:-1}          # create tables on boot
+      WAIT_FOR_DB: ${WAIT_FOR_DB:-1}            # block until the DB answers
+      DB_WAIT_SECONDS: ${DB_WAIT_SECONDS:-60}
+      # Optional: create the first admin on first boot. Leave blank and use
+      # `docker compose exec web python manage.py create-admin` instead.
+      ADMIN_NAME: ${ADMIN_NAME:-System Admin}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false                          # absent unless the profile is on
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    # the app writes nothing to disk; keep the filesystem read-only
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [venusnet]
+
+  # -------------------------------------------------------------------------
+  # Optional local Postgres — only starts with:  --profile localdb
+  # -------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: venus-db
+    profiles: ["localdb"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-venus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-venus}
+      POSTGRES_DB: ${POSTGRES_DB:-venus}
+      # deterministic collation, so ORDER BY behaves the same everywhere
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - venus-pgdata:/var/lib/postgresql/data
+    ports:
+      # bound to localhost only — not reachable from the network
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-venus} -d ${POSTGRES_DB:-venus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [venusnet]
+
+  # -------------------------------------------------------------------------
+  # Optional database browser — only starts with:  --profile tools
+  # -------------------------------------------------------------------------
+  adminer:
+    image: adminer:latest
+    container_name: venus-adminer
+    profiles: ["tools"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ADMINER_PORT:-8080}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+      ADMINER_DESIGN: pepa-linha
+    networks: [venusnet]
+
+volumes:
+  venus-pgdata:
+    name: venus-pgdata
+
+networks:
+  venusnet:
+    name: venus-net
+    driver: bridge

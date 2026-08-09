@@ -1,0 +1,27 @@
+# virtualenvs and caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# secrets never go into the image; they arrive as environment variables
+.env
+
+# vcs and editor noise
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# build artefacts and archives
+*.zip
+
+# test output is regenerated, not shipped
+docs/test-results.csv
