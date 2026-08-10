@@ -51,10 +51,21 @@ var LEDGER_TYPES = {
 var IDLE_MS = { admin: 2*60*1000, supervisor: 10*60*1000 };
 var IDLE_WARN = 30*1000;
 
+/* Hotels & hostels buy under the counter rate. PRODUCTS keeps the three
+   sellable meat lines in one place so the form, the deal and the ledger can
+   never drift apart. */
+var PRODUCTS = [
+  { v:'skin',     t:'Skin',     rate:'rateSkin',     less:'lessSkin',     fixed:'rateSkin'     },
+  { v:'skinless', t:'Skinless', rate:'rateSkinless', less:'lessSkinless', fixed:'rateSkinless' },
+  { v:'liver',    t:'Liver',    rate:'rateLiver',    less:'lessLiver',    fixed:'rateLiver'    }
+];
+function productDef(v){ return PRODUCTS.filter(function(p){ return p.v===v; })[0] || PRODUCTS[0]; }
+
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
+          customers:[], receipts:[], custTotals:{},
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
-          editing:null, photos:[], purchases:[], charts:{} };
+          editing:null, photos:[], purchases:[], hotelSales:[], charts:{} };
 
 /* ---------------- helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -100,14 +111,55 @@ function runChicken(){
 function wasteFor(cat){ return cat==='parents'?num(S.settings.wasteParents):num(S.settings.wasteBroiler); }
 
 function labourFor(date,branch){
-  var earn=0, other=0, days=0;
+  var earn=0, adv=0, other=0, days=0;
   S.ledger.forEach(function(l){
     if(l.branch!==branch || l.date!==date) return;
     var def=LEDGER_TYPES[l.type]||{};
     if(l.type==='work'){ earn+=num(l.amount); days+=num(l.days); }
+    else if(l.type==='advance'){ adv+=num(l.amount); }
     else if(def.shop) other+=num(l.amount);
   });
-  return { wages:earn, other:other, manDays:days };
+  return { wages:earn, advances:adv, other:other, manDays:days };
+}
+
+/* A month's approved overheads spread evenly across the days of that month. */
+function overheadDayShare(date,branch){
+  var month=String(date).slice(0,7), total=0;
+  S.overheads.forEach(function(o){
+    if(o.branch===branch && o.month===month && o.status==='approved') total+=num(o.amount);
+  });
+  var p=String(date).split('-');
+  var dim=new Date(+p[0], +p[1], 0).getDate();
+  return dim ? total/dim : 0;
+}
+
+/* Costs for one branch-day, divided between the entries that share that day,
+   so broiler and parents are not each charged the whole day. */
+function dayCostsFor(date,branch){
+  var lab=labourFor(date,branch);
+  var share=S.entries.filter(function(e){
+    return e.branch===branch && dOf(e.datetime)===date; }).length || 1;
+  return { wages:lab.wages/share, advances:lab.advances/share, other:lab.other/share,
+           manDays:lab.manDays/share, overheads:overheadDayShare(date,branch)/share,
+           shared:share };
+}
+
+/* What one hotel/hostel line is worth. Mirrors price_hotel_line() in calc.py —
+   the server recomputes this before anything is stored, this copy only exists
+   so the figures move while the supervisor is still typing. */
+function priceHotelLine(line,e){
+  line=line||{}; e=e||{};
+  var def=productDef(line.product);
+  var market=num(e[def.rate]);
+  var rate;
+  if(line.rateOverride!==null && line.rateOverride!==undefined && line.rateOverride!=='') rate=num(line.rateOverride);
+  else if(line.mode==='fixed') rate=num(line.fixed);
+  else rate=market-num(line.less);
+  if(rate<0) rate=0;
+  var kg=num(line.weightG)/1000;
+  return { product:def.v, grams:num(line.weightG), market:market, rate:rate,
+           amount:kg*rate, concession:market>rate?kg*(market-rate):0,
+           settled:!!line.settled };
 }
 
 function calc(e){
@@ -141,7 +193,20 @@ function calc(e){
   var liverAmt=num(e.liverSoldG)/1000*num(e.rateLiver);
   var liveAmt=num(e.liveSoldWtG)/1000*num(e.rateLive);
   var cutAmt=num(e.cutCharges);
-  var meatSaleAmt=skinAmt+skinlessAmt+liverAmt;
+  var counterSaleAmt=skinAmt+skinlessAmt+liverAmt;
+
+  /* ---- hotel & hostel sales (extra to the counter figures above) ---- */
+  var hotelLines=(e.hotelSales||[]).map(function(l){ return priceHotelLine(l,e); });
+  var hotelG={skin:0,skinless:0,liver:0};
+  var hotelAmt=0, hotelConcession=0, hotelCash=0, hotelCredit=0;
+  hotelLines.forEach(function(h){
+    hotelG[h.product]+=h.grams;
+    hotelAmt+=h.amount; hotelConcession+=h.concession;
+    if(h.settled) hotelCash+=h.amount; else hotelCredit+=h.amount;
+  });
+  var hotelTotalG=hotelG.skin+hotelG.skinless+hotelG.liver;
+
+  var meatSaleAmt=counterSaleAmt+hotelAmt;
   var revenue=meatSaleAmt+liveAmt+cutAmt;
 
   /* ---- birds & meat balance ---- */
@@ -151,7 +216,7 @@ function calc(e){
   var mortRate=handled>0?(num(e.mortCount)/handled)*100:0;
   var meatAvailG=num(e.openMeatG)+actualMeatG;
   var expCloseWtG=availWtG-num(e.liveSoldWtG)-num(e.mortWtG)-dressedWtG;
-  var expCloseMeatG=meatAvailG-num(e.skinSoldG)-num(e.skinlessSoldG)-num(e.liverSoldG)-num(e.damageG);
+  var expCloseMeatG=meatAvailG-num(e.skinSoldG)-num(e.skinlessSoldG)-num(e.liverSoldG)-hotelTotalG-num(e.damageG);
   var meatVarG=expCloseMeatG-num(e.closeMeatG);
 
   /* ---- profit & loss ---- */
@@ -162,8 +227,10 @@ function calc(e){
   var cogs=(availValue+openMeatValue)-closeValue;
   var grossProfit=revenue-cogs;
 
-  var lab=labourFor(dOf(e.datetime), e.branch);
-  var netProfit=grossProfit-lab.wages-lab.other;
+  var lab=dayCostsFor(dOf(e.datetime), e.branch);
+  var advances=lab.advances;   /* shown, never deducted: it settles wages already counted */
+  var overheads=lab.overheads; /* this day's share of rent, power, salary */
+  var netProfit=grossProfit-lab.wages-lab.other-overheads;
 
   /* ---- loss drivers ---- */
   var mortValue=num(e.mortWtG)/1000*avgRate;
@@ -181,12 +248,16 @@ function calc(e){
     expectedMeatG:expectedMeatG, wasteMeatG:wasteMeatG, varianceG:varianceG, bonusG:bonusG, shortG:shortG,
     yieldPct:yieldPct, yieldLow:yieldLow, yieldHigh:yieldHigh,
     skinAmt:skinAmt, skinlessAmt:skinlessAmt, liverAmt:liverAmt, liveAmt:liveAmt, cutAmt:cutAmt,
-    meatSaleAmt:meatSaleAmt, revenue:revenue,
+    counterSaleAmt:counterSaleAmt, meatSaleAmt:meatSaleAmt, revenue:revenue,
+    hotelAmt:hotelAmt, hotelConcession:hotelConcession, hotelCash:hotelCash, hotelCredit:hotelCredit,
+    hotelSkinG:hotelG.skin, hotelSkinlessG:hotelG.skinless, hotelLiverG:hotelG.liver,
+    hotelTotalG:hotelTotalG, hotelLines:hotelLines,
     handled:handled, expBirds:expBirds, birdVar:birdVar, mortRate:mortRate,
     meatAvailG:meatAvailG, expCloseWtG:expCloseWtG, expCloseMeatG:expCloseMeatG, meatVarG:meatVarG,
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
     closeValue:closeValue, cogs:cogs, grossProfit:grossProfit,
-    labour:lab.wages, otherExp:lab.other, manDays:lab.manDays, netProfit:netProfit,
+    labour:lab.wages, advances:advances, otherExp:lab.other, overheads:overheads,
+    manDays:lab.manDays, netProfit:netProfit,
     mortValue:mortValue, damageValue:damageValue, shortValue:shortValue, bonusValue:bonusValue,
     needsPhoto:needsPhoto, hasData:hasData };
 }
@@ -287,7 +358,7 @@ function applyAutoFill(c){
 
   hb.textContent=S.auto.closeBirds?'Auto: opening + purchased − live sold − mortality − dressed':'Manual — expected '+expB;
   hw.textContent=S.auto.closeWt?'Auto from weights entered above':'Manual — expected '+fmtW(expW);
-  hm.textContent=S.auto.closeMeat?'Auto: open meat + meat obtained − skin − skinless − liver − damage':'Manual — expected '+fmtW(expM);
+  hm.textContent=S.auto.closeMeat?'Auto: open meat + obtained − counter sales − hotel sales − damage':'Manual — expected '+fmtW(expM);
   [['closeBirds',hb],['closeWt',hw],['closeMeat',hm]].forEach(function(x){
     x[1].className='text-[11px] mt-1 '+(S.auto[x[0]]?'text-emerald-600':'text-amber-600');
   });
@@ -353,6 +424,91 @@ function renderPurchases(){
   }).join('');
 }
 
+/* ---------------- hotel & hostel sale lines ---------------- */
+function branchCustomers(){
+  return S.customers.filter(function(c){ return c.branch===S.branch && c.active!==false; });
+}
+function customerById(id){ return S.customers.filter(function(c){ return c.id===id; })[0]||null; }
+
+/* Pull the deal terms off the customer record onto the line, so the row can be
+   priced without another lookup and the server sees what the user was shown. */
+function applyDeal(line){
+  var c=customerById(line.customerId);
+  var def=productDef(line.product);
+  line.mode  = c?c.mode:'less';
+  line.less  = c?num(c[def.less]):0;
+  line.fixed = c?num(c[def.fixed]):0;
+  line.customerName = c?c.name:'';
+  line.kind = c?c.kind:'hotel';
+  return line;
+}
+
+/* The strip under each row: what the deal works out to, and what it earned.
+   Kept separate from the row markup so it can be refreshed on every keystroke
+   without rebuilding the inputs and stealing focus. */
+function hotelRowSummary(l,e){
+  var p=priceHotelLine(l,e);
+  var c=customerById(l.customerId);
+  var dealTxt = !c ? 'choose a customer'
+    : c.mode==='fixed' ? 'fixed '+money(p.rate)+'/kg'
+    : 'market '+money(p.market)+' less '+money(num(l.less))+' = '+money(p.rate)+'/kg';
+  return '<span class="text-slate-500">'+esc(dealTxt)+'</span>'+
+    (p.concession>0?'<span class="text-amber-700 font-semibold">concession '+money(p.concession)+'</span>':'')+
+    '<span class="ml-auto font-bold text-indigo-900">'+money(p.amount)+'</span>'+
+    '<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full '+
+      (l.settled?'bg-emerald-100 text-emerald-800':'bg-rose-100 text-rose-700')+'">'+
+      (l.settled?'paid':'on account')+'</span>';
+}
+
+function refreshHotelTotals(e){
+  qsa('#hotelRows [data-hsum]').forEach(function(el){
+    var l=S.hotelSales[+el.getAttribute('data-hsum')];
+    if(l) el.innerHTML=hotelRowSummary(l,e);
+  });
+}
+
+function renderHotelRows(){
+  var box=$('hotelRows'); if(!box) return;
+  var locked=S.editing?!canEdit(S.editing):false;
+  var list=branchCustomers();
+
+  if(!list.length){
+    box.innerHTML='<p class="text-xs text-slate-400 italic">No hotels or hostels registered for this branch yet. '+
+      'Add them under <b>Hotels &amp; Hostels</b> first, along with the price agreed for skin, skinless and liver.</p>';
+    return;
+  }
+  if(!S.hotelSales.length){
+    box.innerHTML='<p class="text-xs text-slate-400 italic">No hotel or hostel sales today. Click &ldquo;Add sale&rdquo; when one of them takes stock.</p>';
+    return;
+  }
+
+  var e=readForm();
+  box.innerHTML=S.hotelSales.map(function(l,i){
+    var p=priceHotelLine(l,e);
+    var override=(l.rateOverride!==null&&l.rateOverride!==undefined&&l.rateOverride!=='');
+    return '<div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end bg-indigo-50/60 border border-indigo-200 rounded-lg p-3 pop">'+
+      '<div class="sm:col-span-3"><label class="lbl">Hotel / hostel</label><select data-h="customerId" data-i="'+i+'" class="inp" '+(locked?'disabled':'')+'>'+
+        '<option value="">— choose —</option>'+
+        list.map(function(x){ return '<option value="'+esc(x.id)+'"'+(l.customerId===x.id?' selected':'')+'>'+esc(x.name)+' ('+esc(x.kind)+')</option>'; }).join('')+
+      '</select></div>'+
+      '<div class="sm:col-span-2"><label class="lbl">Item</label><select data-h="product" data-i="'+i+'" class="inp" '+(locked?'disabled':'')+'>'+
+        PRODUCTS.map(function(x){ return '<option value="'+x.v+'"'+(l.product===x.v?' selected':'')+'>'+x.t+'</option>'; }).join('')+
+      '</select></div>'+
+      '<div class="sm:col-span-3"><label class="lbl">Weight</label><div class="kgg">'+
+        '<input type="number" min="0" step="1" data-h="kg" data-i="'+i+'" class="inp num" value="'+(l.weightG?Math.floor(l.weightG/1000):'')+'" '+(locked?'disabled':'')+' /><span>kg</span>'+
+        '<input type="number" min="0" max="999" step="1" data-h="g" data-i="'+i+'" class="inp num" value="'+(l.weightG?l.weightG%1000:'')+'" '+(locked?'disabled':'')+' /><span>g</span></div></div>'+
+      '<div class="sm:col-span-2"><label class="lbl">Rate ₹/kg '+(override?'<span class="text-amber-600 font-bold">manual</span>':'')+'</label>'+
+        '<input type="number" min="0" step="0.01" data-h="rateOverride" data-i="'+i+'" class="inp num" value="'+(override?l.rateOverride:'')+'" placeholder="'+p.rate.toFixed(2)+'" '+(locked?'disabled':'')+' /></div>'+
+      '<div class="sm:col-span-1 flex items-center justify-center pb-2"><label class="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer" title="Tick when the money was taken on the day. Untick to put it on their account.">'+
+        '<input type="checkbox" data-h="settled" data-i="'+i+'" class="h-4 w-4 rounded border-slate-300" '+(l.settled?'checked':'')+' '+(locked?'disabled':'')+' /> Paid</label></div>'+
+      '<div class="sm:col-span-1 flex justify-end">'+(locked?'':'<button type="button" data-hrm="'+i+'" class="h-9 w-9 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>')+'</div>'+
+      '<div data-hsum="'+i+'" class="sm:col-span-12 flex flex-wrap items-center gap-2 text-xs border-t border-indigo-200 pt-2">'+
+        hotelRowSummary(l,e)+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
 /* ---------------- form <-> record ---------------- */
 function readForm(){
   var e=S.editing?JSON.parse(JSON.stringify(S.editing)):{};
@@ -368,6 +524,7 @@ function readForm(){
   e.closeBirds=v('f_closeBirds'); e.closeWtG=gv('f_closeWt'); e.closeMeatG=gv('f_closeMeat');
   e.notes=tv('f_notes'); e.explanation=tv('f_explanation');
   e.photos=S.photos.slice();
+  e.hotelSales=S.hotelSales.slice();
   return e;
 }
 
@@ -382,7 +539,10 @@ function fillForm(e){
   setV('f_closeBirds',e.closeBirds); setG('f_closeWt',e.closeWtG); setG('f_closeMeat',e.closeMeatG);
   setV('f_notes',e.notes); setV('f_explanation',e.explanation);
   S.photos=(e.photos||[]).slice(); S.purchases=(e.purchases||[]).slice();
-  renderPhotos(); renderPurchases();
+  /* re-read the deal from the customer record: the agreed concession may have
+     changed since this entry was first written */
+  S.hotelSales=(e.hotelSales||[]).map(function(l){ return applyDeal(Object.assign({},l)); });
+  renderPhotos(); renderPurchases(); renderHotelRows();
 }
 
 /* previous approved day for this branch+category, used for carry-forward */
@@ -392,7 +552,7 @@ function previousDay(){
 }
 
 function blankForm(){
-  fillForm({ datetime:nowLocal(), photos:[], purchases:[] });
+  fillForm({ datetime:nowLocal(), photos:[], purchases:[], hotelSales:[] });
   var p=previousDay(), note='';
   if(p){
     var pc=calc(p);
@@ -438,6 +598,15 @@ function validate(showMarks){
     if(isAdmin() && (num(p.birds)>0||num(p.wtG)>0) && num(p.rate)<=0) miss.push('Purchase line '+(i+1)+' — rate per kg');
     if(num(p.birds)>0 && num(p.wtG)<=0) miss.push('Purchase line '+(i+1)+' — weight');
   });
+  var formNow=readForm();
+  S.hotelSales.forEach(function(l,i){
+    var g=num(l.weightG);
+    if(g>0 && !l.customerId) miss.push('Hotel/hostel line '+(i+1)+' — choose the hotel or hostel');
+    if(l.customerId && g<=0) miss.push('Hotel/hostel line '+(i+1)+' — enter the weight sold');
+    if(g>0 && priceHotelLine(l,formNow).rate<=0)
+      miss.push('Hotel/hostel line '+(i+1)+' — the price works out to ₹0. Set the '+
+        productDef(l.product).t.toLowerCase()+' rate in Section C, or give this customer a fixed rate.');
+  });
   if(v('f_mortCount')>0 && !S.photos.length) miss.push('Mortality photo (mortality is above zero)');
   if(S.editing && S.editing.status==='rejected' && !tv('f_explanation')) miss.push('Explanation for the returned entry');
   return miss;
@@ -457,7 +626,8 @@ function lockForm(locked){
     if(el.id==='f_explanation') return; el.disabled=locked;
   });
   $('btnAddPurchase').disabled=locked;
-  renderPurchases();
+  if($('btnAddHotelSale')) $('btnAddHotelSale').disabled=locked;
+  renderPurchases(); renderHotelRows();
 }
 
 function loadEntry(id){
@@ -677,9 +847,20 @@ function recalc(){
   $('o_meatVar').textContent=fmtW(c.meatVarG);
   $('o_meatVar').className='font-bold num '+(Math.abs(c.meatVarG)>500?'text-rose-600':'text-emerald-700');
 
+  refreshHotelTotals(e);
+  if($('o_hotelWt')) $('o_hotelWt').textContent=fmtW(c.hotelTotalG);
+  if($('o_hotelAmt')) $('o_hotelAmt').textContent=money(c.hotelAmt);
+  if($('o_hotelConc')) $('o_hotelConc').textContent=money(c.hotelConcession);
+  if($('o_hotelCredit')) $('o_hotelCredit').textContent=money(c.hotelCredit);
+  if($('o_counterAmt')) $('o_counterAmt').textContent=money(c.counterSaleAmt);
+  if($('o_hotelAmt2')) $('o_hotelAmt2').textContent=money(c.hotelAmt);
+  if($('o_hotelConc2')) $('o_hotelConc2').textContent=money(c.hotelConcession);
+
   $('o_revenue').textContent=money(c.revenue);
   $('o_cogs').textContent=money(c.cogs);
   $('o_labour').textContent=money(c.labour);
+  if($('o_advances')) $('o_advances').textContent=money(c.advances);
+  if($('o_overheads')) $('o_overheads').textContent=money(c.overheads);
   $('o_otherExp').textContent=money(c.otherExp);
   $('o_netProfit').textContent=money(c.netProfit);
   $('o_netProfit').className='font-bold num text-xl '+(c.netProfit<0?'text-rose-600':'text-emerald-700');
@@ -724,9 +905,19 @@ function aggregate(list){
   var a={ revenue:0, cogs:0, labour:0, other:0, net:0, buyBirds:0, buyWtG:0, buyAmt:0,
     dressed:0, dressedWtG:0, meatG:0, liveBirds:0, liveAmt:0, cutAmt:0, mortCount:0, mortWtG:0, mortValue:0,
     damageValue:0, shortValue:0, bonusValue:0, wasteG:0, bonusG:0, shortG:0, expMeatG:0,
-    skinAmt:0, skinlessAmt:0, liverAmt:0, manDays:0, days:0, avgRateNum:0, avgRateDen:0 };
+    skinAmt:0, skinlessAmt:0, liverAmt:0, manDays:0, days:0, avgRateNum:0, avgRateDen:0,
+    counterAmt:0, hotelAmt:0, hotelConcession:0, hotelCash:0, hotelCredit:0, hotelG:0,
+    byCustomer:{} };
   list.forEach(function(e){
     var c=calc(e);
+    a.counterAmt+=c.counterSaleAmt; a.hotelAmt+=c.hotelAmt;
+    a.hotelConcession+=c.hotelConcession; a.hotelCash+=c.hotelCash;
+    a.hotelCredit+=c.hotelCredit; a.hotelG+=c.hotelTotalG;
+    (e.hotelSales||[]).forEach(function(l,i){
+      var p=c.hotelLines[i]; if(!p||!l.customerId) return;
+      var b=a.byCustomer[l.customerId]||(a.byCustomer[l.customerId]={ g:0, amount:0, concession:0 });
+      b.g+=p.grams; b.amount+=p.amount; b.concession+=p.concession;
+    });
     a.revenue+=c.revenue; a.cogs+=c.cogs;
     a.buyBirds+=c.buyBirds; a.buyWtG+=c.buyWtG; a.buyAmt+=c.buyAmt;
     a.dressed+=num(e.dressedCount); a.dressedWtG+=num(e.dressedWtG); a.meatG+=num(e.actualMeatG);
@@ -747,23 +938,28 @@ function aggregate(list){
 /* Labour is tracked in its own ledger, so it is summed over the date range
    independently of whether a daily entry exists or has been approved.        */
 function labourRange(codes,from,to){
-  var wages=0,other=0,manDays=0,paid=0;
+  var wages=0,other=0,manDays=0,paid=0,advances=0;
   S.ledger.forEach(function(l){
     if(codes.indexOf(l.branch)<0) return;
     if(l.date<from||l.date>to) return;
     var def=LEDGER_TYPES[l.type]||{};
     if(l.type==='work'){ wages+=num(l.amount); manDays+=num(l.days); }
-    else if(l.type==='paid'||l.type==='advance'){ paid+=num(l.amount); }
+    else if(l.type==='advance'){ advances+=num(l.amount); paid+=num(l.amount); }
+    else if(l.type==='paid'){ paid+=num(l.amount); }
     else if(def.shop) other+=num(l.amount);
   });
-  return { wages:wages, other:other, manDays:manDays, paid:paid };
+  return { wages:wages, advances:advances, other:other, manDays:manDays, paid:paid };
 }
 
 /* fold labour into an aggregate for a given scope + range */
 function withLabour(a,codes,from,to){
   var l=labourRange(codes,from,to);
-  a.labour=l.wages; a.other=l.other; a.manDays=l.manDays; a.paidOut=l.paid;
-  a.net=a.revenue-a.cogs-a.labour-a.other;
+  a.labour=l.wages; a.advances=l.advances; a.other=l.other;
+  a.manDays=l.manDays; a.paidOut=l.paid;
+  a.overheads=overheadsFor(codes,monthsInRange(from,to)).total;
+  a.beforeOverheads=a.revenue-a.cogs-a.labour-a.other;
+  /* advances are cash, not cost; overheads are a real cost */
+  a.net=a.beforeOverheads-a.overheads;
   a.margin=a.revenue>0?(a.net/a.revenue)*100:0;
   return a;
 }
@@ -802,6 +998,54 @@ function mainReason(a){
 
 function scopeCodes(){ return S.dashScope==='all' ? myBranches() : [S.branch]; }
 
+/* Who bought over the selected period, what it earned and what they still owe.
+   The balance column comes from the server's running total, not this range,
+   because a debt is a position rather than a period figure. */
+function renderHotelPanel(a){
+  if(!$('dhBody')) return;
+  var ids=Object.keys(a.byCustomer||{});
+  var rows=ids.map(function(id){
+    var c=customerById(id)||{ name:'(removed)', kind:'hotel' };
+    var t=S.custTotals[id]||{};
+    return { id:id, name:c.name, kind:c.kind, g:a.byCustomer[id].g,
+             amount:a.byCustomer[id].amount, concession:a.byCustomer[id].concession,
+             balance:num(t.balance) };
+  }).sort(function(x,y){ return y.amount-x.amount; });
+
+  $('dhNote').textContent=rows.length
+    ? rows.length+' customer(s) bought in this period'
+    : 'no hotel or hostel sales in this period';
+
+  var t={ g:0, amount:0, concession:0, balance:0 };
+  $('dhBody').innerHTML=rows.length?rows.map(function(r){
+    t.g+=r.g; t.amount+=r.amount; t.concession+=r.concession; t.balance+=r.balance;
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(r.name)+'</td>'+
+      '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded '+
+        (r.kind==='hostel'?'bg-violet-100 text-violet-800':'bg-indigo-100 text-indigo-800')+'">'+esc(r.kind)+'</span></td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.g)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">'+money0(r.amount)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num '+(r.concession?'text-amber-700':'text-slate-400')+'">'+(r.concession?'−'+money0(r.concession):'—')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold '+(r.balance>0?'text-rose-600':'text-emerald-700')+'">'+money0(r.balance)+'</td></tr>';
+  }).join(''):'<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">Nothing sold to a hotel or hostel between '+dashRange().from+' and '+dashRange().to+'.</td></tr>';
+
+  $('dhFoot').innerHTML=rows.length?'<tr><td class="px-4 py-2.5" colspan="2">Totals</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+fmtW(t.g)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.amount)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">−'+money0(t.concession)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.balance)+'</td></tr>':'';
+
+  $('dhCounter').textContent=money0(a.counterAmt);
+  $('dhHotel').textContent=money0(a.hotelAmt);
+  $('dhCash').textContent=money0(a.hotelCash);
+  $('dhCredit').textContent=money0(a.hotelCredit);
+  $('dhConc').textContent=money0(a.hotelConcession);
+  $('dhExplain').textContent=a.hotelAmt>0
+    ? 'These sales are already inside the '+money0(a.revenue)+' revenue above. Had the same '
+      +fmtW(a.hotelG)+' gone over the counter it would have fetched '+money0(a.hotelAmt+a.hotelConcession)
+      +', so '+money0(a.hotelConcession)+' was given away as concession to hold this business.'
+    : 'Concession is the gap between the counter rate and what these customers actually pay. Nothing sold to them in this period.';
+}
+
 function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
@@ -813,6 +1057,19 @@ function renderDashboard(){
   $('plRevenue').textContent=money0(a.revenue);
   $('plCogs').textContent=money0(a.cogs);
   $('plLabour').textContent=money0(a.labour);
+  $('plAdvances').textContent=money0(a.advances||0);
+  (function(){
+    var days={}, r2=dashRange(), codes=scopeCodes();
+    S.ledger.forEach(function(l){
+      if(l.type!=='advance') return;
+      if(codes.indexOf(l.branch)<0) return;
+      if(l.date<r2.from||l.date>r2.to) return;
+      days[l.date]=1;
+    });
+    var nd=Object.keys(days).length;
+    var el=$('plAdvancesNote');
+    if(el) el.textContent = nd ? 'cash out on '+nd+' day'+(nd>1?'s':'')+' — not a cost' : 'cash out — not a cost, already in wages';
+  })();
   $('plOther').textContent=money0(a.other);
   $('plNet').textContent=money0(a.net);
   $('plNet').className='mt-1 text-3xl xl:text-4xl font-bold num '+(a.net<0?'text-rose-300':'text-white');
@@ -840,6 +1097,7 @@ function renderDashboard(){
   $('kYield').textContent=pct(a.yieldPct);
   $('kExpYield').textContent=S.dashCat==='parents'?(100-num(S.settings.wasteParents)):(100-num(S.settings.wasteBroiler));
   $('kWaste').textContent=fmtW(a.wasteG);
+  renderHotelPanel(a);
 
   var net=a.bonusG-a.shortG;
   var bEl=$('kBonus'), bd=$('kBonusBadge');
@@ -865,15 +1123,16 @@ function renderDashboard(){
   /* Overheads are month-level: charged once, never spread across days. */
   var months=monthsInRange(r.from,r.to);
   var ovh=overheadsFor(scopeCodes(),months);
-  var afterOvh=a.net-ovh.total;
-  $('ovhOperating').textContent=money0(a.net);
-  $('ovhOperating').className='font-bold num '+(a.net<0?'text-rose-600':'text-emerald-700');
+  var beforeOvh=(a.beforeOverheads!==undefined)?a.beforeOverheads:(a.net+ovh.total);
+  var afterOvh=a.net;                      /* overheads are already inside a.net */
+  $('ovhOperating').textContent=money0(beforeOvh);
+  $('ovhOperating').className='font-bold num '+(beforeOvh<0?'text-rose-600':'text-emerald-700');
   $('ovhTotal').textContent=ovh.total?'−'+money0(ovh.total):'₹0';
   $('ovhNet').textContent=money0(afterOvh);
   $('ovhNet').className='font-bold num text-xl '+(afterOvh<0?'text-rose-600':'text-emerald-700');
-  $('ovhNote').textContent=months.length>1
-    ? months.length+' months ('+months[0]+' → '+months[months.length-1]+') · '+ovh.count+' approved item(s)'
-    : months[0]+' · '+ovh.count+' approved item(s)';
+  $('ovhNote').textContent=(months.length>1
+      ? months.length+' months ('+months[0]+' → '+months[months.length-1]+')'
+      : months[0])+' · '+ovh.count+' approved item(s) · already deducted above';
   var ovhMax=Math.max.apply(null,Object.keys(ovh.by).map(function(k){return ovh.by[k];}).concat([1]));
   $('ovhBreakdown').innerHTML=Object.keys(ovh.by).length
     ? Object.keys(ovh.by).sort(function(x,y){return ovh.by[y]-ovh.by[x];}).map(function(k){
@@ -938,6 +1197,7 @@ function renderReasons(a){
     {k:'Stock cost (birds sold)',v:a.cogs,ic:'fa-basket-shopping',c:'slate'},
     {k:'Labour wages',v:a.labour,ic:'fa-people-group',c:'amber'},
     {k:'Tea, tiffin & shop costs',v:a.other,ic:'fa-mug-hot',c:'amber'},
+    {k:'Overheads (rent, power, salary)',v:a.overheads||0,ic:'fa-file-invoice-dollar',c:'amber'},
     {k:'Mortality loss',v:a.mortValue,ic:'fa-heart-crack',c:'rose'},
     {k:'Damaged meat',v:a.damageValue,ic:'fa-ban',c:'rose'},
     {k:'Yield shortfall',v:a.shortValue,ic:'fa-arrow-trend-down',c:'rose'},
@@ -1130,6 +1390,20 @@ function openReview(id){
   function block(t,rows){ return '<div class="card p-4"><h4 class="font-bold text-xs uppercase tracking-wider text-slate-600 mb-2">'+t+'</h4>'+rows+'</div>'; }
   var purch=(e.purchases||[]).map(function(p){ return row(esc(p.supplier||'Supplier')+' — '+num(p.birds)+' birds', fmtW(p.wtG)+' @ '+money(p.rate)+' = '+money(num(p.wtG)/1000*num(p.rate))); }).join('')||'<p class="text-xs text-slate-400 italic">No purchases.</p>';
   var photos=(e.photos||[]).map(function(src,i){ return '<img src="'+src+'" data-view="'+i+'" alt="Mortality photo '+(i+1)+'" class="h-28 w-28 object-cover rounded-lg border-2 border-slate-200 cursor-zoom-in" />'; }).join('');
+  var hotelBlock=(e.hotelSales||[]).length
+    ? (e.hotelSales||[]).map(function(l,i){
+        var p=c.hotelLines[i]||priceHotelLine(l,e);
+        return row(esc(l.customerName||'—')+' — '+productDef(l.product).t+
+          ' <span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded '+
+          (l.settled?'bg-emerald-100 text-emerald-800':'bg-rose-100 text-rose-700')+'">'+
+          (l.settled?'paid':'on account')+'</span>',
+          fmtW(p.grams)+' @ '+money(p.rate)+' = '+money(p.amount)+
+          (p.concession>0?' <span class="text-amber-700">(−'+money(p.concession)+')</span>':''));
+      }).join('')+
+      row('Total billed',money(c.hotelAmt),'text-indigo-700')+
+      row('Of which on account',money(c.hotelCredit),c.hotelCredit>0?'text-rose-600':'')+
+      row('Concession given',money(c.hotelConcession),'text-amber-700')
+    : '<p class="text-xs text-slate-400 italic">Nothing sold to a hotel or hostel on this day.</p>';
 
   $('reviewBody').innerHTML=alertHtml(warnings(e,c),false)+
     (!isAdmin()?'':'<div class="rounded-xl p-4 text-white '+(c.netProfit<0?'bg-rose-700':'bg-emerald-700')+'">'+
@@ -1147,7 +1421,8 @@ function openReview(id){
       block('Purchases', purch+row('Total purchased',c.buyBirds+' birds · '+fmtW(c.buyWtG)+(isAdmin()?' · '+money(c.buyAmt):''),'text-emerald-700'))+
       block('Live retail sales (no dressing)', row('Live birds sold',num(e.liveSoldCount)+' birds')+row('Live weight sold',fmtWs(e.liveSoldWtG))+row('Live sale amount',money(c.liveAmt),'text-emerald-700')+row('Cutting charges',money(e.cutCharges)))+
       block('Dressing', row('Dressed birds',num(e.dressedCount))+row('Live weight',fmtWs(e.dressedWtG))+row('Expected meat @'+(100-c.wastePct)+'%',fmtWs(c.expectedMeatG))+row('Waste @'+c.wastePct+'%',fmtWs(c.wasteMeatG))+row('Actual meat',fmtWs(e.actualMeatG))+row('Yield',pct(c.yieldPct),c.yieldLow?'text-rose-600':c.yieldHigh?'text-amber-600':'text-emerald-700')+row(c.bonusG>0?'Bonus meat':'Shortfall',(c.bonusG>0?fmtWs(c.bonusG):fmtWs(c.shortG))+(isAdmin()?' ≈ '+money0(c.bonusG>0?c.bonusValue:c.shortValue):''),c.bonusG>0?'text-emerald-700':'text-rose-600'))+
-      block('Sales', row('Skin',fmtW(e.skinSoldG)+' · '+money(c.skinAmt))+row('Skinless',fmtW(e.skinlessSoldG)+' · '+money(c.skinlessAmt))+row('Liver',fmtW(e.liverSoldG)+' · '+money(c.liverAmt))+row('Live birds',num(e.liveSoldCount)+' · '+money(c.liveAmt))+row('Cutting',money(e.cutCharges))+row('Total revenue',money(c.revenue),'text-emerald-700'))+
+      block('Sales', row('Skin (counter)',fmtW(e.skinSoldG)+' · '+money(c.skinAmt))+row('Skinless (counter)',fmtW(e.skinlessSoldG)+' · '+money(c.skinlessAmt))+row('Liver (counter)',fmtW(e.liverSoldG)+' · '+money(c.liverAmt))+row('Hotels &amp; hostels',fmtW(c.hotelTotalG)+' · '+money(c.hotelAmt),'text-indigo-700')+row('Live birds',num(e.liveSoldCount)+' · '+money(c.liveAmt))+row('Cutting',money(e.cutCharges))+row('Total revenue',money(c.revenue),'text-emerald-700'))+
+      block('Hotels &amp; hostels', hotelBlock)+
       block('Mortality & damage', row('Mortality',num(e.mortCount)+' birds')+row('Weight',fmtWs(e.mortWtG))+row('Rate',pct(c.mortRate,2))+
         (isAdmin()?row('Value lost',money0(c.mortValue),'text-rose-600'):'')+row('Damage meat',fmtWs(e.damageG)+(isAdmin()?' ≈ '+money0(c.damageValue):'')))+
       block('Closing (carried forward)', row('Closing birds',num(e.closeBirds))+row('Expected',c.expBirds)+row('Variance',c.birdVar,c.birdVar?'text-rose-600':'text-emerald-700')+row('Closing weight',fmtWs(e.closeWtG))+row('Closing meat',fmtWs(e.closeMeatG))+(isAdmin()?row('Closing stock value',money(c.closeValue),'text-emerald-700'):''))+
@@ -1266,6 +1541,39 @@ function renderWorkers(){
     '<td class="px-4 py-2.5 text-right num">'+money0(tot.paid)+'</td><td class="px-4 py-2.5 text-right num">−'+money0(tot.ded)+'</td>'+
     '<td class="px-4 py-2.5 text-right num">'+money0(tot.bal)+'</td><td></td></tr>':'';
 
+  /* ---- daily labour sheet: present, wage, advance, balance ---- */
+  var sheetAdv=0, sheetEarn=0, sheetBal=0;
+  $('sheetNote').textContent='for '+date+' · advances are deducted from that day\u2019s profit';
+  $('sheetBody').innerHTML=ws.length?ws.map(function(w){
+    var st=workerStats(w.id);
+    var wk=S.ledger.filter(function(x){ return x.workerId===w.id&&x.date===date&&x.type==='work'; })[0];
+    var d=wk?num(wk.days):0;
+    var adv=S.ledger.filter(function(x){ return x.workerId===w.id&&x.date===date&&x.type==='advance'; })
+      .reduce(function(s,x){ return s+num(x.amount); },0);
+    var earned=wk?num(wk.amount):0;
+    sheetAdv+=adv; sheetEarn+=earned; sheetBal+=st.balance;
+    var chip=d===1?'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Full day</span>'
+      :d===0.5?'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-800">Half day</span>'
+      :'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-slate-200 text-slate-600">Absent</span>';
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(w.name)+'</td>'+
+      '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-slate-100 text-slate-700">'+esc(w.role)+'</span></td>'+
+      '<td class="px-4 py-2.5">'+chip+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(w.dayWage)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num '+(earned?'text-emerald-700':'text-slate-400')+'">'+money0(earned)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold '+(adv?'text-rose-600':'text-slate-400')+'">'+(adv?'−'+money0(adv):'—')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold '+(st.balance>0?'text-rose-600':'text-emerald-700')+'">'+money0(st.balance)+'</td>'+
+      '<td class="px-4 py-2.5 text-right whitespace-nowrap">'+
+        '<button data-sheet="adv" data-id="'+w.id+'" title="Give an advance" class="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-100"><i class="fa-solid fa-money-bill-transfer"></i></button>'+
+        (isAdmin()?'<button data-sheet="edit" data-id="'+w.id+'" title="Edit worker" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>':'')+
+      '</td></tr>';
+  }).join(''):'<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">No workers for this branch.</td></tr>';
+  $('sheetFoot').innerHTML=ws.length?'<tr><td class="px-4 py-2.5" colspan="4">Totals for '+date+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(sheetEarn)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+(sheetAdv?'−'+money0(sheetAdv):'₹0')+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(sheetBal)+'</td><td></td></tr>':'';
+
+  renderDayWise();
+
   $('pkCount').textContent=ws.length;
   $('pkToday').textContent=presentToday;
   $('pkEarnToday').textContent=money0(earnToday);
@@ -1292,6 +1600,57 @@ function renderWorkers(){
   }).join(''):'<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No ledger entries for '+m+'.</td></tr>';
 }
 
+/* One row per day, built straight from the ledger records, so the dashboard
+   figure can be traced back to the days it came from. */
+function renderDayWise(){
+  if(!$('dwBody')) return;
+  var from=$('dwFrom').value || monthStart();
+  var to=$('dwTo').value || todayISO();
+  var codes=[S.branch];
+  var byDay={};
+  S.ledger.forEach(function(l){
+    if(codes.indexOf(l.branch)<0) return;
+    if(l.date<from || l.date>to) return;
+    var d=byDay[l.date] || (byDay[l.date]={ days:0, wages:0, adv:0, other:0, who:[] });
+    if(l.type==='work'){ d.days+=num(l.days); d.wages+=num(l.amount); }
+    else if(l.type==='advance'){
+      d.adv+=num(l.amount);
+      var w=S.workers.filter(function(x){return x.id===l.workerId;})[0];
+      d.who.push((w?w.name:'—')+' '+money0(l.amount));
+    }
+    else if((LEDGER_TYPES[l.type]||{}).shop) d.other+=num(l.amount);
+  });
+
+  var dates=Object.keys(byDay).sort().reverse();
+  var t={ days:0, wages:0, adv:0, other:0 };
+  $('dwNote').textContent=dates.length+' day(s) with labour activity';
+  $('dwBody').innerHTML=dates.length?dates.map(function(d){
+    var r=byDay[d], charged=r.wages+r.other;   /* advances are not a cost */
+    t.days+=r.days; t.wages+=r.wages; t.adv+=r.adv; t.other+=r.other;
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold whitespace-nowrap">'+d+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+r.days+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(r.wages)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num '+(r.other?'text-amber-700':'text-slate-400')+'">'+(r.other?money0(r.other):'—')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-rose-700">'+money0(charged)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num '+(r.adv?'text-slate-600':'text-slate-400')+'">'+(r.adv?money0(r.adv):'—')+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500">'+esc(r.who.join(', ')||'—')+'</td></tr>';
+  }).join(''):'<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No labour activity between '+from+' and '+to+'.</td></tr>';
+
+  var grand=t.wages+t.other;   /* what actually hits the P&L */
+  $('dwFoot').innerHTML=dates.length?'<tr><td class="px-4 py-2.5">Totals '+from+' → '+to+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+t.days+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.wages)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.other)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(grand)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.adv)+'</td><td></td></tr>':'';
+
+  $('dwReconcile').textContent=dates.length
+    ? 'Charged to profit: '+money0(t.wages)+' wages + '+money0(t.other)+' overheads = '+money0(grand)
+      +' for '+(S.branches[S.branch]||S.branch)+'. The '+money0(t.adv)+' of advances is cash paid against '
+      +'wages already counted, so it is not deducted again — it only reduces what each worker is still owed.'
+    : 'Nothing recorded in this range.';
+}
+
 function markAttendance(workerId,days){
   var date=$('wkDate').value||todayISO();
   var w=S.workers.filter(function(x){return x.id===workerId;})[0]; if(!w) return;
@@ -1315,7 +1674,7 @@ function workerModal(w){
     '<div class="grid grid-cols-2 gap-3">'+
       '<div><label class="lbl" for="wkRole">Role</label><select id="wkRole" class="inp">'+
         ['dresser','cutter','helper','cashier','driver'].map(function(r){ return '<option value="'+r+'"'+(w.role===r?' selected':'')+'>'+r.charAt(0).toUpperCase()+r.slice(1)+'</option>'; }).join('')+'</select></div>'+
-      '<div><label class="lbl" for="wkWage">Wage per day (₹)</label><input type="number" min="0" step="10" id="wkWage" class="inp num" value="'+(w.dayWage||S.settings.dayWage||'')+'" /></div>'+
+      '<div><label class="lbl" for="wkWage">Wage per day (₹)</label><input type="number" min="0" step="10" id="wkWage" class="inp num" value="'+(w.dayWage||S.settings.dayWage||700)+'" /></div>'+
     '</div>'+
     '<div><label class="lbl" for="wkPhone">Phone (optional)</label><input id="wkPhone" class="inp" value="'+esc(w.phone||'')+'" /></div>'+
     '<button id="wkSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg mt-2">Save worker</button></div>');
@@ -1508,6 +1867,7 @@ function exportCsv(){
     'Avg Cost Rate','Skin Rate','Skinless Rate','Liver Rate','Live Rate','Live Sold Nos','Live Sold Wt','Live Amount','Cutting',
     'Mortality Nos','Mortality Wt','Mortality Value','Photos','Damage Meat','Damage Value','Dressed Birds','Dressed Live Wt',
     'Expected Meat','Waste %','Waste Meat','Actual Meat','Yield %','Bonus Meat','Short Meat','Skin Sold','Skinless Sold','Liver Sold',
+    'Counter Sales','Hotel Wt','Hotel Sales','Hotel Paid','Hotel On Account','Concession Given',
     'Revenue','Stock Cost','Labour','Other Exp','Net Profit','Closing Birds','Closing Wt','Closing Meat','Closing Value',
     'Status','Entered By','Reviewed By','Reject Reason','Explanation','Remarks'];
   var drop=isAdmin()?[]:head.map(function(x,i){ return COST.indexOf(x)>=0?i:-1; }).filter(function(i){ return i>=0; });
@@ -1520,6 +1880,8 @@ function exportCsv(){
     num(e.mortCount), kg(e.mortWtG), c.mortValue.toFixed(2), (e.photos||[]).length, kg(e.damageG), c.damageValue.toFixed(2),
     num(e.dressedCount), kg(e.dressedWtG), kg(c.expectedMeatG), c.wastePct, kg(c.wasteMeatG), kg(e.actualMeatG),
     c.yieldPct.toFixed(2), kg(c.bonusG), kg(c.shortG), kg(e.skinSoldG), kg(e.skinlessSoldG), kg(e.liverSoldG),
+    c.counterSaleAmt.toFixed(2), kg(c.hotelTotalG), c.hotelAmt.toFixed(2),
+    c.hotelCash.toFixed(2), c.hotelCredit.toFixed(2), c.hotelConcession.toFixed(2),
     c.revenue.toFixed(2), c.cogs.toFixed(2), c.labour.toFixed(2), c.otherExp.toFixed(2), c.netProfit.toFixed(2),
     num(e.closeBirds), kg(e.closeWtG), kg(e.closeMeatG), c.closeValue.toFixed(2),
     e.status, userName(e.createdBy), e.reviewedBy?userName(e.reviewedBy):'', e.rejectReason||'', e.explanation||'', e.notes||''
@@ -1566,6 +1928,7 @@ function showView(name){
   qsa('#mainNav .tab-btn').forEach(function(b){ b.classList.toggle('active',b.getAttribute('data-view')===name); });
   if(name==='dashboard') renderDashboard();
   if(name==='records') renderRecords();
+  if(name==='customers') renderCustomers();
   if(name==='workers') renderWorkers();
   if(name==='overheads') renderOverheads();
   if(name==='admin') renderAdmin();
@@ -1661,6 +2024,7 @@ function startApp(user,fresh){
   $('dashFrom').value=monthStart(); $('dashTo').value=todayISO();
   $('recFrom').value=addDays(todayISO(),-30); $('recTo').value=todayISO();
   $('wkDate').value=todayISO(); $('wkMonth').value=todayISO().slice(0,7);
+  $('dwFrom').value=monthStart(); $('dwTo').value=todayISO();
   $('ovhMonth').value=todayISO().slice(0,7);
   if(isAdmin()) $('recStatus').value='pending';
   bumpActivity(); tickSession();
@@ -2001,6 +2365,9 @@ function bootstrap() {
     S.workers = d.workers || [];
     S.ledger = d.ledger || [];
     S.overheads = d.overheads || [];
+    S.customers = d.customers || [];
+    S.custTotals = d.customerTotals || {};
+    S.receipts = d.receipts || [];
     S.users = d.users || [];
     S.settings = d.settings || {};
     IDLE_MS[d.user.role] = (d.idleMinutes || 10) * 60 * 1000;
@@ -2012,6 +2379,7 @@ function refreshAllViews() {
   refreshBranchSelects();
   renderRecords();
   renderDashboard();
+  renderCustomers();
   renderWorkers();
   renderOverheads();
   updatePendingBadge();
@@ -2070,11 +2438,16 @@ function saveEntry(status) {
     ? api('PUT', '/entries/' + S.editing.id, e)
     : api('POST', '/entries', e);
 
+  var hadHotel = (e.hotelSales || []).length > 0;
   p.then(function (rec) {
     upsertEntry(rec);
     toast(status === 'draft' ? 'Draft saved.' : status === 'pending' ? 'Sent to admin for approval.' : 'Changes saved.');
-    loadEntry(rec.id);
-    renderRecords(); renderDashboard(); updatePendingBadge();
+    /* hotel lines move customer balances, so pull the fresh totals back */
+    return (hadHotel || (rec.hotelSales || []).length ? bootstrap() : Promise.resolve())
+      .then(function () {
+        loadEntry(rec.id);
+        renderRecords(); renderDashboard(); renderCustomers(); updatePendingBadge();
+      });
   }).catch(apiFail);
 }
 
@@ -2090,8 +2463,11 @@ function decide(id, verdict, reason) {
     toast(verdict === 'approved' ? 'Approved and saved as a record.' : 'Returned to supervisor.',
       verdict === 'approved' ? 'success' : 'warn');
     closeModal('reviewModal');
-    if (S.editing && S.editing.id === id) loadEntry(id);
-    renderRecords(); renderDashboard(); updatePendingBadge();
+    /* approving turns pending hotel bills into real debt */
+    return ((rec.hotelSales || []).length ? bootstrap() : Promise.resolve()).then(function () {
+      if (S.editing && S.editing.id === id) loadEntry(id);
+      renderRecords(); renderDashboard(); renderCustomers(); updatePendingBadge();
+    });
   }).catch(apiFail);
 }
 
@@ -2121,6 +2497,274 @@ function repriceReview(id) {
       rates: (e.purchases || []).map(function (p) { return num(p.rate); })
     }).then(function (rec) { upsertEntry(rec); }).catch(function () { });
   }, 500);
+}
+
+/* ---------------- hotels & hostels ---------------- */
+function dealText(c, product) {
+  var def = productDef(product);
+  if (c.mode === 'fixed') {
+    var f = num(c[def.fixed]);
+    return f > 0 ? '<span class="font-semibold num">' + money(f) + '</span><span class="text-[10px] text-slate-400 block">fixed</span>'
+                 : '<span class="text-slate-300">—</span>';
+  }
+  var l = num(c[def.less]);
+  return l > 0 ? '<span class="font-semibold num text-amber-700">−' + money(l) + '</span><span class="text-[10px] text-slate-400 block">off market</span>'
+               : '<span class="num">market</span><span class="text-[10px] text-slate-400 block">no concession</span>';
+}
+
+function renderCustomers() {
+  if (!$('custBody') || !S.branch) return;
+  $('custBranchLabel').textContent = S.branches[S.branch] || '—';
+  var filter = $('custFilter') ? $('custFilter').value : '';
+  var all = S.customers.filter(function (c) { return c.branch === S.branch; });
+  var list = all.filter(function (c) {
+    if (filter === 'hotel' || filter === 'hostel') return c.kind === filter;
+    if (filter === 'due') return num((S.custTotals[c.id] || {}).balance) > 0.005;
+    return true;
+  }).sort(function (a, b) { return a.code < b.code ? -1 : 1; });
+
+  var t = { billed: 0, received: 0, balance: 0, concession: 0, pending: 0 };
+  all.forEach(function (c) {
+    var x = S.custTotals[c.id] || {};
+    t.billed += num(x.credit) + num(x.cash);
+    t.received += num(x.receipts);
+    t.balance += num(x.balance);
+    t.pending += num(x.pending);
+  });
+  /* concession over all time, straight from the approved entries on hand */
+  S.entries.forEach(function (e) {
+    if (e.branch !== S.branch || e.status !== 'approved') return;
+    var c = calc(e); t.concession += c.hotelConcession;
+  });
+
+  $('ckCount').textContent = all.length;
+  $('ckBilled').textContent = money0(t.billed);
+  $('ckReceived').textContent = money0(t.received);
+  $('ckOutstanding').textContent = money0(t.balance);
+  $('ckConcession').textContent = money0(t.concession);
+  $('custNote').textContent = list.length + ' shown' +
+    (t.pending > 0 ? ' · ' + money0(t.pending) + ' still awaiting approval, not counted in any balance' : '');
+
+  var badge = $('custBadge');
+  if (badge) {
+    var owing = all.filter(function (c) { return num((S.custTotals[c.id] || {}).balance) > 0.005; }).length;
+    badge.textContent = owing;
+    badge.classList.toggle('hidden', owing === 0);
+  }
+
+  var ft = { billed: 0, received: 0, balance: 0 };
+  $('custBody').innerHTML = list.length ? list.map(function (c) {
+    var x = S.custTotals[c.id] || {};
+    var billed = num(x.credit) + num(x.cash), received = num(x.receipts), bal = num(x.balance);
+    ft.billed += billed; ft.received += received; ft.balance += bal;
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-mono text-xs text-slate-500">' + esc(c.code) + '</td>' +
+      '<td class="px-4 py-2.5 font-semibold">' + esc(c.name) +
+        (c.contact || c.phone ? '<span class="block text-xs text-slate-400">' + esc([c.contact, c.phone].filter(Boolean).join(' · ')) + '</span>' : '') +
+        (c.active === false ? '<span class="text-[10px] font-bold uppercase text-slate-400">inactive</span>' : '') + '</td>' +
+      '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded ' +
+        (c.kind === 'hostel' ? 'bg-violet-100 text-violet-800' : 'bg-indigo-100 text-indigo-800') + '">' + esc(c.kind) + '</span></td>' +
+      '<td class="px-4 py-2.5 text-xs">' + dealText(c, 'skin') + '</td>' +
+      '<td class="px-4 py-2.5 text-xs">' + dealText(c, 'skinless') + '</td>' +
+      '<td class="px-4 py-2.5 text-xs">' + dealText(c, 'liver') + '</td>' +
+      '<td class="px-4 py-2.5 text-right num">' + money0(billed) + '</td>' +
+      '<td class="px-4 py-2.5 text-right num text-slate-500">' + money0(received) + '</td>' +
+      '<td class="px-4 py-2.5 text-right num font-bold ' + (bal > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(bal) + '</td>' +
+      '<td class="px-4 py-2.5 text-right whitespace-nowrap">' +
+        '<button data-cact="ledger" data-id="' + c.id + '" title="Ledger" class="h-8 w-8 rounded-lg text-slate-700 hover:bg-slate-100"><i class="fa-solid fa-book-open"></i></button>' +
+        '<button data-cact="pay" data-id="' + c.id + '" title="Record a receipt" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-hand-holding-dollar"></i></button>' +
+        '<button data-cact="edit" data-id="' + c.id + '" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>' +
+        (isAdmin() ? '<button data-cact="del" data-id="' + c.id + '" title="Remove" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>' : '') +
+      '</td></tr>';
+  }).join('') : '<tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">' +
+      (all.length ? 'No customer matches this filter.' : 'No hotels or hostels for this branch yet. Add one to start billing them at an agreed price.') + '</td></tr>';
+
+  $('custFoot').innerHTML = list.length ? '<tr><td class="px-4 py-2.5" colspan="6">Totals</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(ft.billed) + '</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(ft.received) + '</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(ft.balance) + '</td><td></td></tr>' : '';
+}
+
+function customerModal(c) {
+  c = c || {};
+  var isNew = !c.id;
+  var mode = c.mode || 'less';
+  var row = function (label, lessId, fixedId, lessVal, fixedVal) {
+    return '<tr><td class="py-2 pr-3 font-semibold text-sm">' + label + '</td>' +
+      '<td class="py-2 pr-2"><input type="number" min="0" step="0.5" id="' + lessId + '" class="inp num" value="' + (lessVal || '') + '" placeholder="0.00" /></td>' +
+      '<td class="py-2"><input type="number" min="0" step="0.5" id="' + fixedId + '" class="inp num" value="' + (fixedVal || '') + '" placeholder="0.00" /></td></tr>';
+  };
+  openGen(isNew ? 'Add a hotel or hostel' : 'Edit ' + c.name,
+    '<div class="space-y-3">' +
+    '<div class="grid grid-cols-3 gap-3">' +
+      '<div class="col-span-2"><label class="lbl" for="cuName">Name</label><input id="cuName" class="inp" value="' + esc(c.name || '') + '" placeholder="e.g. Grand Palace Hotel" /></div>' +
+      '<div><label class="lbl" for="cuKind">Type</label><select id="cuKind" class="inp">' +
+        ['hotel', 'hostel'].map(function (k) { return '<option value="' + k + '"' + (c.kind === k ? ' selected' : '') + '>' + k.charAt(0).toUpperCase() + k.slice(1) + '</option>'; }).join('') +
+      '</select></div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="cuContact">Contact person</label><input id="cuContact" class="inp" value="' + esc(c.contact || '') + '" placeholder="Optional" /></div>' +
+      '<div><label class="lbl" for="cuPhone">Phone</label><input id="cuPhone" class="inp" value="' + esc(c.phone || '') + '" placeholder="Optional" /></div>' +
+    '</div>' +
+    '<div><label class="lbl" for="cuMode">How is their price set?</label><select id="cuMode" class="inp">' +
+      '<option value="less"' + (mode === 'less' ? ' selected' : '') + '>Market rate minus a concession (usual)</option>' +
+      '<option value="fixed"' + (mode === 'fixed' ? ' selected' : '') + '>A flat contract rate</option>' +
+    '</select></div>' +
+    '<div class="rounded-lg border border-slate-200 overflow-hidden">' +
+      '<div class="bg-slate-100 px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-600">Agreed price (₹ per kg)</div>' +
+      '<div class="p-3"><table class="w-full"><thead><tr class="text-left">' +
+        '<th class="pb-1"></th>' +
+        '<th class="pb-1 text-[11px] font-bold uppercase text-amber-700" id="thLess">Less than market</th>' +
+        '<th class="pb-1 text-[11px] font-bold uppercase text-slate-500" id="thFixed">Fixed rate</th>' +
+      '</tr></thead><tbody>' +
+        row('Skin', 'cuLessSkin', 'cuRateSkin', c.lessSkin, c.rateSkin) +
+        row('Skinless', 'cuLessSkinless', 'cuRateSkinless', c.lessSkinless, c.rateSkinless) +
+        row('Liver', 'cuLessLiver', 'cuRateLiver', c.lessLiver, c.rateLiver) +
+      '</tbody></table>' +
+      '<p id="cuHint" class="mt-2 text-xs rounded-lg px-3 py-2 font-semibold border"></p></div>' +
+    '</div>' +
+    (isNew || isAdmin()
+      ? '<div><label class="lbl" for="cuOpening">Balance already owed (₹)</label><input type="number" step="1" id="cuOpening" class="inp num" value="' + (c.openingBalance || '') + '" placeholder="0" />' +
+        '<p class="text-[11px] text-slate-400 mt-1">What they owed before this system started. Leave blank if nothing.</p></div>'
+      : '') +
+    (isNew ? '' : '<label class="inline-flex items-center gap-2 text-sm font-semibold"><input type="checkbox" id="cuActive" class="h-4 w-4 rounded border-slate-300" ' + (c.active !== false ? 'checked' : '') + ' /> Active — show in the daily entry</label>') +
+    '<button id="cuSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg mt-2">' + (isNew ? 'Add customer' : 'Save changes') + '</button></div>');
+
+  var upd = function () {
+    var m = tv('cuMode'), h = $('cuHint');
+    ['cuLessSkin', 'cuLessSkinless', 'cuLessLiver'].forEach(function (id) { $(id).disabled = (m === 'fixed'); });
+    ['cuRateSkin', 'cuRateSkinless', 'cuRateLiver'].forEach(function (id) { $(id).disabled = (m === 'less'); });
+    $('thLess').className = 'pb-1 text-[11px] font-bold uppercase ' + (m === 'less' ? 'text-amber-700' : 'text-slate-300');
+    $('thFixed').className = 'pb-1 text-[11px] font-bold uppercase ' + (m === 'fixed' ? 'text-emerald-700' : 'text-slate-300');
+    if (m === 'fixed') {
+      h.className = 'mt-2 text-xs rounded-lg px-3 py-2 font-semibold border bg-emerald-50 text-emerald-800 border-emerald-200';
+      h.textContent = 'They pay this rate whatever the counter price does. The difference against the counter rate is still recorded as concession.';
+    } else {
+      h.className = 'mt-2 text-xs rounded-lg px-3 py-2 font-semibold border bg-amber-50 text-amber-800 border-amber-200';
+      h.textContent = 'Example: if skin is ₹250 at the counter today and you enter 50 here, this customer is billed ₹200 per kg, and ₹50 a kg shows as concession given.';
+    }
+  };
+  $('cuMode').addEventListener('change', upd); upd();
+
+  bind('cuSave', function () {
+    var name = tv('cuName');
+    if (!name) { toast('Enter the name.', 'error'); return; }
+    var body = { branch: S.branch, name: name, kind: tv('cuKind'), mode: tv('cuMode'),
+      contact: tv('cuContact'), phone: tv('cuPhone'),
+      lessSkin: v('cuLessSkin'), lessSkinless: v('cuLessSkinless'), lessLiver: v('cuLessLiver'),
+      rateSkin: v('cuRateSkin'), rateSkinless: v('cuRateSkinless'), rateLiver: v('cuRateLiver') };
+    if ($('cuOpening')) body.openingBalance = v('cuOpening');
+    if ($('cuActive')) body.active = $('cuActive').checked;
+
+    var p = c.id ? api('PUT', '/customers/' + c.id, body) : api('POST', '/customers', body);
+    p.then(function () { return bootstrap(); })
+      .then(function () {
+        closeModal('genModal');
+        renderCustomers(); renderHotelRows(); recalc(); renderDashboard();
+        toast(c.id ? 'Saved.' : name + ' added.');
+      }).catch(apiFail);
+  });
+}
+
+function receiptModal(cid) {
+  var c = customerById(cid); if (!c) return;
+  var t = S.custTotals[cid] || {};
+  openGen('Receipt from ' + c.name,
+    '<div class="space-y-3">' +
+    '<div class="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">' +
+      '<b>' + esc(c.name) + '</b> · ' + esc(c.kind) + '<br>' +
+      'Billed ' + money0(num(t.credit) + num(t.cash)) + ' · received ' + money0(num(t.receipts)) +
+      ' · <b>balance due ' + money0(num(t.balance)) + '</b></div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="rcDate">Date received</label><input type="date" id="rcDate" class="inp" value="' + todayISO() + '" /></div>' +
+      '<div><label class="lbl" for="rcAmt">Amount (₹)</label><input type="number" min="0" step="1" id="rcAmt" class="inp num" /></div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="rcMode">Mode</label><select id="rcMode" class="inp">' +
+        [['cash', 'Cash'], ['upi', 'UPI'], ['bank', 'Bank transfer'], ['cheque', 'Cheque']]
+          .map(function (m) { return '<option value="' + m[0] + '">' + m[1] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label class="lbl" for="rcNote">Reference</label><input id="rcNote" class="inp" placeholder="Optional" /></div>' +
+    '</div>' +
+    '<button id="rcSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Record receipt</button></div>');
+  bind('rcSave', function () {
+    if (v('rcAmt') <= 0) { toast('Enter an amount.', 'error'); return; }
+    api('POST', '/customers/' + cid + '/payments', { date: tv('rcDate'), amount: v('rcAmt'),
+      mode: tv('rcMode'), note: tv('rcNote') })
+      .then(function () { return bootstrap(); })
+      .then(function () {
+        closeModal('genModal'); renderCustomers(); renderDashboard();
+        toast(money0(v('rcAmt')) + ' received from ' + c.name + '.');
+      }).catch(apiFail);
+  });
+}
+
+function openCustomerLedger(cid) {
+  api('GET', '/customers/' + cid + '/ledger').then(function (d) {
+    var c = d.customer, t = d.totals;
+    var head = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">' +
+      '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><p class="text-[10px] font-bold uppercase text-slate-500">Opening</p><p class="font-bold num">' + money0(t.opening) + '</p></div>' +
+      '<div class="rounded-lg bg-emerald-50 border border-emerald-200 p-3"><p class="text-[10px] font-bold uppercase text-emerald-700">Billed on account</p><p class="font-bold num">' + money0(t.credit) + '</p></div>' +
+      '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><p class="text-[10px] font-bold uppercase text-slate-500">Received</p><p class="font-bold num">' + money0(t.receipts) + '</p></div>' +
+      '<div class="rounded-lg ' + (t.balance > 0.005 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200') + ' border p-3">' +
+        '<p class="text-[10px] font-bold uppercase text-slate-500">Balance due</p><p class="font-bold num text-lg ' + (t.balance > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(t.balance) + '</p></div>' +
+      '</div>';
+
+    var note = '<p class="text-xs text-slate-500 mb-3">Cash sales settle on the day and never touch the balance. ' +
+      (t.pending > 0 ? 'A further <b>' + money0(t.pending) + '</b> is sold but not yet approved, so it is listed below and excluded from the balance.' : 'Everything sold has been approved.') + '</p>';
+
+    var rows = d.rows.length ? d.rows.map(function (r) {
+      if (r.kind === 'receipt') {
+        return '<tr class="rowhover bg-emerald-50/40"><td class="px-3 py-2 whitespace-nowrap">' + r.date + '</td>' +
+          '<td class="px-3 py-2" colspan="4"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Receipt</span> ' +
+          esc(r.mode) + (r.note ? ' · ' + esc(r.note) : '') + '</td>' +
+          '<td class="px-3 py-2 text-right num text-emerald-700 font-bold">−' + money0(r.amount) + '</td>' +
+          '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
+      }
+      var chip = r.status !== 'approved'
+        ? '<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-800">' + esc(r.status) + '</span>'
+        : r.settled ? '<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-200 text-slate-700">paid</span>'
+                    : '<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-rose-100 text-rose-700">on account</span>';
+      return '<tr class="rowhover' + (r.status !== 'approved' ? ' opacity-60' : '') + '"><td class="px-3 py-2 whitespace-nowrap">' + r.date + '</td>' +
+        '<td class="px-3 py-2">' + esc(productDef(r.product).t) + '</td>' +
+        '<td class="px-3 py-2 text-right num">' + fmtW(r.weightG) + '</td>' +
+        '<td class="px-3 py-2 text-right num text-xs text-slate-500">' + money(r.marketRate) + '</td>' +
+        '<td class="px-3 py-2 text-right num">' + money(r.rate) + (r.concession > 0 ? '<span class="block text-[10px] text-amber-700">−' + money(r.concession) + '</span>' : '') + '</td>' +
+        '<td class="px-3 py-2 text-right num font-semibold">' + money0(r.amount) + ' ' + chip + '</td>' +
+        '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="px-3 py-10 text-center text-slate-400">Nothing on this ledger yet.</td></tr>';
+
+    openGen(c.name + ' — ledger',
+      head + note +
+      '<div class="overflow-x-auto max-h-[45vh] overflow-y-auto border border-slate-200 rounded-lg"><table class="min-w-full text-sm">' +
+      '<thead class="bg-slate-50 text-slate-600 sticky top-0"><tr class="text-left">' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase">Date</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase">Item</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase text-right">Weight</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase text-right">Market</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase text-right">Their rate</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase text-right">Amount</th>' +
+        '<th class="px-3 py-2 font-bold text-xs uppercase text-right">Balance</th>' +
+      '</tr></thead><tbody class="divide-y divide-slate-100">' + rows + '</tbody></table></div>' +
+      '<div class="flex flex-wrap gap-3 mt-4">' +
+        '<button id="cuLedPay" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-hand-holding-dollar mr-1"></i> Record a receipt</button>' +
+        '<button id="cuLedCsv" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-file-csv mr-1"></i> CSV</button>' +
+      '</div>');
+
+    bind('cuLedPay', function () { receiptModal(cid); });
+    bind('cuLedCsv', function () {
+      var out = [['Date', 'Kind', 'Item', 'Weight kg', 'Market rate', 'Their rate', 'Concession', 'Amount', 'Status', 'Balance']];
+      d.rows.forEach(function (r) {
+        out.push(r.kind === 'receipt'
+          ? [r.date, 'Receipt', r.mode, '', '', '', '', -r.amount, 'received', r.balance]
+          : [r.date, 'Sale', r.product, (r.weightG / 1000).toFixed(3), r.marketRate, r.rate,
+             r.concession, r.amount, r.status + (r.settled ? ' / paid' : ' / on account'), r.balance]);
+      });
+      var csv = out.map(function (row) {
+        return row.map(function (x) { var s = String(x == null ? '' : x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+      }).join('\r\n');
+      download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }),
+        'VCC_ledger_' + c.code + '_' + todayISO() + '.csv');
+    });
+  }).catch(apiFail);
 }
 
 /* ---------------- labour ---------------- */
@@ -2153,6 +2797,40 @@ function workerModal(w) {
     var p = w.id ? api('PUT', '/workers/' + w.id, body) : api('POST', '/workers', body);
     p.then(function () { return bootstrap(); })
       .then(function () { closeModal('genModal'); renderWorkers(); toast('Worker saved.'); })
+      .catch(apiFail);
+  });
+}
+
+/* Give a worker an advance on a chosen date. The amount comes off that
+   day's profit and shows on the dashboard beside the overheads. */
+function advanceModal(workerId) {
+  var w = S.workers.filter(function (x) { return x.id === workerId; })[0];
+  if (!w) return;
+  var st = workerStats(w.id);
+  openGen('Advance to ' + w.name,
+    '<div class="space-y-3">' +
+    '<div class="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">' +
+      '<b>' + esc(w.name) + '</b> · ' + esc(w.role) + ' · ' + money0(w.dayWage) + '/day<br>' +
+      'Days worked ' + st.days + ' · earned ' + money0(st.earned) +
+      ' · balance due <b>' + money0(st.balance) + '</b></div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="advDate">Date taken</label><input type="date" id="advDate" class="inp" value="' + ($('wkDate').value || todayISO()) + '" /></div>' +
+      '<div><label class="lbl" for="advAmt">Advance (₹)</label><input type="number" min="0" step="10" id="advAmt" class="inp num" /></div>' +
+    '</div>' +
+    '<div><label class="lbl" for="advNote">Note</label><input id="advNote" class="inp" placeholder="Optional" /></div>' +
+    '<p class="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-800 border border-amber-200 font-semibold">' +
+      'Deducted from that day&rsquo;s profit and shown on the dashboard as “Advances paid”. ' +
+      'It also reduces what the worker is still owed.</p>' +
+    '<button id="advSave" class="w-full bg-amber-500 hover:bg-amber-600 text-emerald-900 font-bold text-sm px-5 py-2.5 rounded-lg">Record advance</button></div>');
+  bind('advSave', function () {
+    if (v('advAmt') <= 0) { toast('Enter an amount.', 'error'); return; }
+    api('POST', '/ledger', { branch: w.branch, workerId: w.id, date: tv('advDate'),
+      type: 'advance', amount: v('advAmt'), note: tv('advNote') })
+      .then(function () { return bootstrap(); })
+      .then(function () {
+        closeModal('genModal'); renderWorkers(); recalc(); renderDashboard();
+        toast('Advance of ' + money0(v('advAmt')) + ' recorded.');
+      })
       .catch(apiFail);
   });
 }
@@ -2236,6 +2914,7 @@ function startApp(user, fresh) {
   $('dashFrom').value = monthStart(); $('dashTo').value = todayISO();
   $('recFrom').value = addDays(todayISO(), -30); $('recTo').value = todayISO();
   $('wkDate').value = todayISO(); $('wkMonth').value = todayISO().slice(0, 7);
+  $('dwFrom').value = monthStart(); $('dwTo').value = todayISO();
   $('ovhMonth').value = todayISO().slice(0, 7);
   if (isAdmin()) $('recStatus').value = 'pending';
   bumpActivity(); tickSession();
@@ -2306,7 +2985,8 @@ function wire() {
   });
   $('branchSelect').addEventListener('change', function () {
     S.branch = this.value; refreshBranchSelects(); runChicken();
-    loadEntry(null); renderDashboard(); renderRecords(); renderWorkers(); renderOverheads();
+    loadEntry(null); renderDashboard(); renderRecords(); renderCustomers();
+    renderWorkers(); renderOverheads();
   });
   qsa('#entryCatSeg button').forEach(function (b) { b.addEventListener('click', function () { S.cat = b.getAttribute('data-cat'); syncSegs(); loadEntry(null); }); });
   qsa('#dashCatSeg button').forEach(function (b) { b.addEventListener('click', function () { S.dashCat = b.getAttribute('data-cat'); syncSegs(); renderDashboard(); }); });
@@ -2345,6 +3025,73 @@ function wire() {
     var b = ev.target.closest('[data-prm]'); if (!b) return;
     S.purchases.splice(+b.getAttribute('data-prm'), 1); renderPurchases(); recalc();
   });
+  /* ---- hotel & hostel sale lines ---- */
+  $('btnAddHotelSale').addEventListener('click', function () {
+    if (!branchCustomers().length) {
+      toast('Add a hotel or hostel for this branch first.', 'warn');
+      showView('customers');
+      return;
+    }
+    S.hotelSales.push(applyDeal({ customerId: '', product: 'skinless', weightG: 0,
+      rateOverride: null, settled: false, note: '' }));
+    renderHotelRows(); recalc();
+  });
+  $('hotelRows').addEventListener('change', function (ev) {
+    var el = ev.target.closest('[data-h]'); if (!el) return;
+    var f = el.getAttribute('data-h');
+    /* a changed customer or item pulls a different deal, so the row is rebuilt */
+    if (f === 'customerId' || f === 'product') {
+      var l = S.hotelSales[+el.getAttribute('data-i')]; if (!l) return;
+      l[f] = el.value;
+      applyDeal(l);
+      renderHotelRows(); recalc();
+    }
+  });
+  $('hotelRows').addEventListener('input', function (ev) {
+    var el = ev.target.closest('[data-h]'); if (!el) return;
+    var i = +el.getAttribute('data-i'), f = el.getAttribute('data-h');
+    var l = S.hotelSales[i]; if (!l) return;
+    if (f === 'settled') l.settled = el.checked;
+    else if (f === 'rateOverride') l.rateOverride = (el.value === '' ? null : num(el.value));
+    else if (f === 'kg' || f === 'g') {
+      var kgEl = $('hotelRows').querySelector('[data-h="kg"][data-i="' + i + '"]');
+      var gEl = $('hotelRows').querySelector('[data-h="g"][data-i="' + i + '"]');
+      l.weightG = num(kgEl && kgEl.value) * 1000 + num(gEl && gEl.value);
+    } else return;
+    recalc();
+  });
+  $('hotelRows').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-hrm]'); if (!b) return;
+    S.hotelSales.splice(+b.getAttribute('data-hrm'), 1); renderHotelRows(); recalc();
+  });
+
+  /* ---- hotels & hostels view ---- */
+  $('btnAddCustomer').addEventListener('click', function () { customerModal(null); });
+  $('custFilter').addEventListener('change', renderCustomers);
+  $('custBody').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-cact]'); if (!b) return;
+    var id = b.getAttribute('data-id'), act = b.getAttribute('data-cact');
+    var c = customerById(id); if (!c) return;
+    if (act === 'ledger') openCustomerLedger(id);
+    else if (act === 'pay') receiptModal(id);
+    else if (act === 'edit') customerModal(c);
+    else if (act === 'del') {
+      if (!confirm('Remove "' + c.name + '"?')) return;
+      api('DELETE', '/customers/' + id).then(function () { return bootstrap(); })
+        .then(function () { renderCustomers(); renderHotelRows(); toast('Removed.', 'warn'); })
+        .catch(function (err) {
+          if (err && err.payload && err.payload.error === 'in_use') {
+            if (!confirm(err.message + '\n\nDelete anyway, including its ledger?')) return;
+            api('DELETE', '/customers/' + id + '?force=1').then(function () { return bootstrap(); })
+              .then(function () { renderCustomers(); renderHotelRows(); recalc(); renderDashboard();
+                toast('Removed with its ledger.', 'warn'); }).catch(apiFail);
+            return;
+          }
+          apiFail(err);
+        });
+    }
+  });
+
   qsa('[data-auto]').forEach(function (b) {
     b.addEventListener('click', function () {
       var k = b.getAttribute('data-auto'); S.auto[k] = !S.auto[k]; recalc();
@@ -2393,12 +3140,34 @@ function wire() {
   /* ---- labour ---- */
   $('wkDate').addEventListener('change', renderWorkers);
   $('wkMonth').addEventListener('change', renderWorkers);
+  ['dwFrom', 'dwTo'].forEach(function (id) { $(id).addEventListener('change', renderDayWise); });
+  $('dwMonth').addEventListener('click', function () {
+    $('dwFrom').value = monthStart(); $('dwTo').value = todayISO(); renderDayWise();
+  });
+  $('dwExport').addEventListener('click', function () {
+    var rows = [['Date', 'Man-days', 'Wages', 'Advances', 'Tea/tiffin', 'Total deducted', 'Who took an advance']];
+    [...document.querySelectorAll('#dwBody tr')].forEach(function (tr) {
+      if (tr.children.length < 7) return;
+      rows.push([...tr.children].map(function (td) { return td.textContent.trim(); }));
+    });
+    var csv = rows.map(function (r) {
+      return r.map(function (c) { var s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+    }).join('\r\n');
+    download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }),
+      'VCC_labour_daywise_' + todayISO() + '.csv');
+  });
   $('btnAddWorker').addEventListener('click', function () { workerModal(null); });
   $('btnPayWorker').addEventListener('click', function () { ledgerModal('pay'); });
   $('btnAddExpense').addEventListener('click', function () { ledgerModal('exp'); });
   $('attendanceGrid').addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-att]'); if (!b) return;
     markAttendance(b.getAttribute('data-att'), parseFloat(b.getAttribute('data-days')));
+  });
+  $('sheetBody').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-sheet]'); if (!b) return;
+    var id = b.getAttribute('data-id');
+    if (b.getAttribute('data-sheet') === 'adv') advanceModal(id);
+    else workerModal(S.workers.filter(function (x) { return x.id === id; })[0]);
   });
   $('workerBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-wact]'); if (!b) return;

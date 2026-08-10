@@ -1,22 +1,74 @@
-# ---------------------------------------------------------------------------
-# Venus Chicken Centers — Operations Console
+# ===========================================================================
+#  Venus Chicken Centers — Operations Console
+# ===========================================================================
 #
-#   docker compose up -d --build                 → app only, uses DATABASE_URL
-#                                                  from .env (your Neon instance)
-#   docker compose --profile localdb up -d --build
-#                                                → app + a local Postgres 16,
-#                                                  nothing external needed
-#   docker compose --profile tools up -d adminer → database browser on :8080
+#  A) Use your own PostgreSQL (Neon, RDS, anywhere)
+#         docker compose up -d --build
+#     Reads DATABASE_URL from .env.
 #
-# Open http://localhost:8000
-# ---------------------------------------------------------------------------
+#  B) Everything self-contained, including the database
+#         docker compose --profile localdb up -d --build
+#     Starts PostgreSQL 16 in a container with a persistent volume.
+#
+#  C) Add a database browser on http://localhost:8080
+#         docker compose --profile tools up -d
+#
+#  D) Take a backup into ./backups
+#         docker compose --profile backup run --rm db-backup
+#
+#  Then open  http://localhost:8000
+#
+#  Useful:
+#     docker compose logs -f web
+#     docker compose exec web python manage.py create-admin
+#     docker compose exec web python manage.py seed
+#     docker compose down            (stop; keeps the data volume)
+#     docker compose down -v         (stop and DELETE the local database)
+# ===========================================================================
 
-name: venus-erp
+name: venus
+
+# --------------------------------------------------------------------------
+# Settings shared by the app containers
+# --------------------------------------------------------------------------
+x-app-env: &app-env
+  # With --profile localdb this falls back to the bundled Postgres.
+  # Otherwise DATABASE_URL from .env wins.
+  DATABASE_URL: ${DATABASE_URL:-postgresql://venus:venus@db:5432/venus}
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is not set — copy .env.example to .env and fill it in}
+  FLASK_DEBUG: "0"
+  TZ: ${TZ:-Asia/Kolkata}
+
+  # Session behaviour
+  COOKIE_SECURE: ${COOKIE_SECURE:-0}          # set to 1 once you serve over HTTPS
+  IDLE_ADMIN_MIN: ${IDLE_ADMIN_MIN:-2}
+  IDLE_SUPERVISOR_MIN: ${IDLE_SUPERVISOR_MIN:-10}
+
+  # Connection pool — Neon closes idle connections, so recycle before it does
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+
+  # Start-up behaviour, handled by docker/entrypoint.sh
+  WAIT_FOR_DB: ${WAIT_FOR_DB:-1}              # block until the database answers
+  DB_WAIT_SECONDS: ${DB_WAIT_SECONDS:-90}
+  AUTO_INIT_DB: ${AUTO_INIT_DB:-1}            # create any missing tables
+
+  # Optional first-boot administrator. Leave blank to create one by hand with
+  #   docker compose exec web python manage.py create-admin
+  ADMIN_NAME: ${ADMIN_NAME:-System Admin}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
-  # -------------------------------------------------------------------------
-  # Flask application, served by gunicorn
-  # -------------------------------------------------------------------------
+  # ------------------------------------------------------------------------
+  # The Flask application, served by gunicorn
+  # ------------------------------------------------------------------------
   web:
     build:
       context: .
@@ -24,73 +76,50 @@ services:
     image: venus-erp:latest
     container_name: venus-web
     restart: unless-stopped
+    init: true                      # reap zombie processes, forward signals
+    stop_grace_period: 30s
     ports:
       - "${APP_PORT:-8000}:8000"
-    environment:
-      # With the localdb profile this points at the bundled Postgres.
-      # Without it, DATABASE_URL from .env wins (Neon, RDS, wherever).
-      DATABASE_URL: ${DATABASE_URL:-postgresql://venus:venus@db:5432/venus}
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
-      FLASK_DEBUG: "0"
-      COOKIE_SECURE: ${COOKIE_SECURE:-0}
-      IDLE_ADMIN_MIN: ${IDLE_ADMIN_MIN:-2}
-      IDLE_SUPERVISOR_MIN: ${IDLE_SUPERVISOR_MIN:-10}
-      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
-      # entrypoint behaviour
-      AUTO_INIT_DB: ${AUTO_INIT_DB:-1}          # create tables on boot
-      WAIT_FOR_DB: ${WAIT_FOR_DB:-1}            # block until the DB answers
-      DB_WAIT_SECONDS: ${DB_WAIT_SECONDS:-60}
-      # Optional: create the first admin on first boot. Leave blank and use
-      # `docker compose exec web python manage.py create-admin` instead.
-      ADMIN_NAME: ${ADMIN_NAME:-System Admin}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-    depends_on:
-      db:
-        condition: service_healthy
-        required: false                          # absent unless the profile is on
+    environment: *app-env
+    # No depends_on: the entrypoint waits for the database itself, which keeps
+    # this file working on every Compose v2 and in both profiles.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 25s
-    # the app writes nothing to disk; keep the filesystem read-only
-    read_only: true
+      start_period: 40s
+    read_only: true                 # the app writes nothing to disk
     tmpfs:
-      - /tmp
+      - /tmp:size=64m
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
           memory: 512M
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
     networks: [venusnet]
 
-  # -------------------------------------------------------------------------
-  # Optional local Postgres — only starts with:  --profile localdb
-  # -------------------------------------------------------------------------
+  # ------------------------------------------------------------------------
+  # Bundled PostgreSQL — only with:  --profile localdb
+  # ------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     container_name: venus-db
     profiles: ["localdb"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-venus}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-venus}
       POSTGRES_DB: ${POSTGRES_DB:-venus}
-      # deterministic collation, so ORDER BY behaves the same everywhere
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: ${TZ:-Asia/Kolkata}
     volumes:
       - venus-pgdata:/var/lib/postgresql/data
     ports:
-      # bound to localhost only — not reachable from the network
+      # localhost only — not reachable from the rest of the network
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-venus} -d ${POSTGRES_DB:-venus}"]
@@ -102,11 +131,12 @@ services:
       resources:
         limits:
           memory: 512M
+    logging: *default-logging
     networks: [venusnet]
 
-  # -------------------------------------------------------------------------
-  # Optional database browser — only starts with:  --profile tools
-  # -------------------------------------------------------------------------
+  # ------------------------------------------------------------------------
+  # Database browser — only with:  --profile tools
+  # ------------------------------------------------------------------------
   adminer:
     image: adminer:latest
     container_name: venus-adminer
@@ -117,6 +147,31 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: db
       ADMINER_DESIGN: pepa-linha
+      TZ: ${TZ:-Asia/Kolkata}
+    logging: *default-logging
+    networks: [venusnet]
+
+  # ------------------------------------------------------------------------
+  # One-shot backup into ./backups — only with:  --profile backup
+  #     docker compose --profile backup run --rm db-backup
+  # Works against the bundled database or your own, whatever DATABASE_URL is.
+  # ------------------------------------------------------------------------
+  db-backup:
+    image: postgres:16-alpine
+    container_name: venus-backup
+    profiles: ["backup"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://venus:venus@db:5432/venus}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        stamp=$$(date +%Y%m%d-%H%M%S)
+        echo "Dumping to /backups/venus-$$stamp.sql.gz"
+        pg_dump "$$DATABASE_URL" | gzip > "/backups/venus-$$stamp.sql.gz"
+        echo "Done: $$(ls -lh /backups/venus-$$stamp.sql.gz | awk '{print $$5}')"
     networks: [venusnet]
 
 volumes:

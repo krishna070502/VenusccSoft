@@ -30,8 +30,10 @@ os.environ["IDLE_SUPERVISOR_MIN"] = "10"
 
 from app import create_app                                    # noqa: E402
 from app.extensions import db                                 # noqa: E402
-from app.calc import compute_entry, costing_gaps, months_in_range, validate_for_submission  # noqa: E402
-from app.models import (ActivityLog, Branch, DailyEntry, LabourLedger,       # noqa: E402
+from app.calc import (compute_entry, costing_gaps, months_in_range,          # noqa: E402
+                      price_hotel_line, validate_for_submission)
+from app.models import (ActivityLog, Branch, Customer, CustomerPayment,      # noqa: E402
+                        CustomerSale, DailyEntry, LabourLedger,
                         Overhead, Setting, User, Worker)
 
 app = create_app()
@@ -123,7 +125,7 @@ def test_infrastructure():
          "GET /healthz", "ok",
          lambda: ADMIN.get("/healthz").get_json()["status"])
     case("Infrastructure", "All tables created",
-         "db.create_all()", 11,
+         "db.create_all()", 14,
          lambda: len(db.metadata.tables))
     case("Infrastructure", "SPA shell is served",
          "GET /", True,
@@ -738,6 +740,134 @@ def _tea_is_shop_cost():
 
 
 # ===========================================================================
+# 8b. Advances deducted from the day's profit
+# ===========================================================================
+def test_advances():
+    print("\n[8b] Daily advances")
+    from app.api import labour_for
+    day = D(16)
+    w = SUP.post("/api/workers", json={"branch": "B01", "name": "AdvTest",
+                                       "role": "cutter", "dayWage": 700}).get_json()
+
+    case("Advances", "Default day wage is 700", "settings.dayWage", 700.0,
+         lambda: ADMIN.get("/api/bootstrap").get_json()["settings"]["dayWage"])
+    case("Advances", "Admin can change a wage after the worker exists",
+         "PUT dayWage 750", 750.0,
+         lambda: ADMIN.put(f"/api/workers/{w['id']}",
+                           json={"dayWage": 750}).get_json()["dayWage"])
+    ADMIN.put(f"/api/workers/{w['id']}", json={"dayWage": 700})
+
+    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                  "type": "work", "days": 1})
+    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                  "type": "advance", "amount": 500})
+
+    case("Advances", "Wages and advances are reported separately",
+         "700 wage + 500 advance", (700.0, 500.0),
+         lambda: _labour_split(day))
+    case("Advances", "Several advances on one day add up",
+         "second advance of 200", 700.0,
+         lambda: _second_advance(w["id"], day))
+    case("Advances", "Only wages and overheads hit the profit, never advances",
+         "net = revenue − cogs − wages − other", True,
+         lambda: _net_excludes_advances(day))
+    case("Advances", "A large advance does not swing the day's profit",
+         "₹5,000 advance on a quiet day", True,
+         lambda: _big_advance_ignored())
+    case("Advances", "A day with no advance shows zero", "different day", 0.0,
+         lambda: _advances_on(D(15)))
+    case("Advances", "Advances stay with their own branch",
+         "B02 advance does not touch B01", True,
+         lambda: _branch_isolated(day))
+    case("Advances", "The advance still reduces what the worker is owed",
+         "earned − advances", True,
+         lambda: _balance_reduced(w["id"]))
+    case("Advances", "Supervisors never see the advance figures",
+         "supervisor payload", True,
+         lambda: all("advances" not in e["calc"]
+                     for e in SUP.get("/api/entries").get_json()))
+
+
+def _labour_split(day):
+    from app.api import labour_for
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        lab = labour_for(b.id, date.fromisoformat(day))
+        return (lab["wages"], lab["advances"])
+
+
+def _second_advance(wid, day):
+    SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
+                                  "type": "advance", "amount": 200})
+    from app.api import labour_for
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        return labour_for(b.id, date.fromisoformat(day))["advances"]
+
+
+def _advances_on(day):
+    from app.api import labour_for
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        return labour_for(b.id, date.fromisoformat(day))["advances"]
+
+
+def _net_excludes_advances(day):
+    r = SUP.post("/api/entries", json=base_entry(businessDate=day, submit=True))
+    if r.status_code != 201:
+        return f"submit failed {r.status_code}"
+    eid = r.get_json()["id"]
+    ADMIN.post(f"/api/entries/{eid}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    c = [e for e in ADMIN.get("/api/entries").get_json() if e["id"] == eid][0]["calc"]
+    charged = round(c["revenue"] - c["cogs"] - c["labour"] - c["otherExp"], 2)
+    # advances present, reported, but not subtracted
+    return (c["advances"] > 0
+            and abs(c["netProfit"] - charged) < 0.01
+            and abs(c["netProfit"] - (charged - c["advances"])) > 1)
+
+
+def _big_advance_ignored():
+    day = D(17)
+    w = SUP.post("/api/workers", json={"branch": "B01", "name": "BigAdv",
+                                       "role": "cutter", "dayWage": 700}).get_json()
+    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                  "type": "work", "days": 1})
+    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                  "type": "advance", "amount": 5000})
+    r = SUP.post("/api/entries", json=base_entry(businessDate=day, submit=True))
+    if r.status_code != 201:
+        return f"submit failed {r.status_code}"
+    eid = r.get_json()["id"]
+    ADMIN.post(f"/api/entries/{eid}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    c = [e for e in ADMIN.get("/api/entries").get_json() if e["id"] == eid][0]["calc"]
+    return (c["advances"] == 5000.0 and c["labour"] == 700.0
+            and abs(c["netProfit"] - (c["revenue"] - c["cogs"] - c["labour"] - c["otherExp"])) < 0.01)
+
+
+def _branch_isolated(day):
+    from app.api import labour_for
+    w2 = ADMIN.post("/api/workers", json={"branch": "B02", "name": "OtherBranch",
+                                          "role": "cutter", "dayWage": 700}).get_json()
+    ADMIN.post("/api/ledger", json={"branch": "B02", "workerId": w2["id"], "date": day,
+                                    "type": "advance", "amount": 900})
+    with app.app_context():
+        b1 = Branch.query.filter_by(code="B01").first()
+        b2 = Branch.query.filter_by(code="B02").first()
+        return (labour_for(b1.id, date.fromisoformat(day))["advances"] == 700.0
+                and labour_for(b2.id, date.fromisoformat(day))["advances"] == 900.0)
+
+
+def _balance_reduced(wid):
+    with app.app_context():
+        rows = LabourLedger.query.filter_by(worker_id=wid).all()
+        earned = sum(float(r.amount) for r in rows if r.kind == "work")
+        adv = sum(float(r.amount) for r in rows if r.kind == "advance")
+        return earned > 0 and adv > 0 and (earned - adv) == earned - 700.0
+
+
+# ===========================================================================
 # 9. Overheads
 # ===========================================================================
 def test_overheads():
@@ -775,19 +905,52 @@ def test_overheads():
          lambda: SUP.delete(f"/api/overheads/{oid}").status_code)
     case("Overheads", "Admin can delete", "DELETE as admin", 200,
          lambda: ADMIN.delete(f"/api/overheads/{oid}").status_code)
-    case("Overheads", "Overheads never touch a day's profit",
-         "compare entry netProfit with and without overheads", True,
-         lambda: _overheads_excluded_from_daily())
+    case("Overheads", "A day carries its share of the month's overheads",
+         "monthly total ÷ days in month", True,
+         lambda: _overhead_day_share_applied())
+    case("Overheads", "Two categories on one day split the day's costs",
+         "broiler + parents on the same date", True,
+         lambda: _day_costs_split())
 
 
-def _overheads_excluded_from_daily():
-    """The daily calculation must ignore overheads entirely."""
-    e = base_entry()
-    before = compute_entry(e, SETTINGS, {"wages": 0, "other": 0, "manDays": 0})["netProfit"]
-    ADMIN.post("/api/overheads", json={"branch": "B01", "month": TODAY.strftime("%Y-%m"),
-                                       "category": "rent", "amount": 99999})
-    after = compute_entry(e, SETTINGS, {"wages": 0, "other": 0, "manDays": 0})["netProfit"]
-    return before == after
+def _overhead_day_share_applied():
+    """Each trading day carries monthly overheads ÷ days in that month."""
+    import calendar
+    from app.api import overhead_day_share
+    month = TODAY.strftime("%Y-%m")
+    ADMIN.post("/api/overheads", json={"branch": "B01", "month": month,
+                                       "category": "rent", "amount": 31000})
+    dim = calendar.monthrange(TODAY.year, TODAY.month)[1]
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        share = overhead_day_share(b.id, TODAY)
+    expected_total = sum(float(o["amount"]) for o in
+                         ADMIN.get("/api/bootstrap").get_json()["overheads"]
+                         if o["branch"] == "B01" and o["month"] == month
+                         and o["status"] == "approved")
+    return abs(share - expected_total / dim) < 0.02
+
+
+def _day_costs_split():
+    """Costs belong to the branch-day, so entries on one day share them."""
+    from app.api import day_costs_for, labour_for
+    day = TODAY - timedelta(days=19)
+    w = ADMIN.post("/api/workers", json={"branch": "B01", "name": "SplitTest",
+                                         "role": "cutter", "dayWage": 700}).get_json()
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"],
+                                    "date": day.isoformat(), "type": "work", "days": 1})
+    for cat in ("broiler", "parents"):
+        r = ADMIN.post("/api/entries", json=base_entry(businessDate=day.isoformat(),
+                                                       category=cat, submit=True))
+        if r.status_code == 201:
+            ADMIN.post(f"/api/entries/{r.get_json()['id']}/decision",
+                       json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        full = labour_for(b.id, day)["wages"]
+        per = day_costs_for(b.id, day)
+    # two entries share the day, so each carries half the wage
+    return per["shared"] == 2 and abs(per["wages"] * 2 - full) < 0.01
 
 
 # ===========================================================================
@@ -1038,6 +1201,300 @@ def cleanup():
     return not os.path.exists(TMP_DB)
 
 
+# ===========================================================================
+# 15. Hotels & hostels
+# ===========================================================================
+HOTEL = {}
+
+
+def test_hotels():
+    print("\n[15] Hotels & hostels")
+
+    # ---- pure pricing, no database ---------------------------------------
+    market = {"rateSkin": 250, "rateSkinless": 300, "rateLiver": 130}
+    case("Hotel pricing", "Market 250 less 50 bills at 200",
+         "skin, less=50", 200.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 20_000, "mode": "less", "less": 50}, market)["rate"]))
+    case("Hotel pricing", "20 kg at 200 is ₹4,000",
+         "20 kg skin", 4000.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 20_000, "mode": "less", "less": 50}, market)["amount"]))
+    case("Hotel pricing", "Concession is the gap against market",
+         "50/kg over 20 kg", 1000.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 20_000, "mode": "less", "less": 50}, market)["concession"]))
+    case("Hotel pricing", "A fixed rate ignores the market",
+         "fixed 180, market 250", 180.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 1_000, "mode": "fixed", "fixed": 180,
+              "less": 999}, market)["rate"]))
+    case("Hotel pricing", "A fixed rate still records the concession",
+         "fixed 180 vs market 250, 10 kg", 700.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 10_000, "mode": "fixed", "fixed": 180}, market)["concession"]))
+    case("Hotel pricing", "A one-off override beats the standing deal",
+         "override 210", 210.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 1_000, "mode": "less", "less": 50,
+              "rateOverride": 210}, market)["rate"]))
+    case("Hotel pricing", "A concession bigger than the market floors at zero",
+         "market 130 less 500", 0.0,
+         lambda: float(price_hotel_line(
+             {"product": "liver", "weightG": 1_000, "mode": "less", "less": 500}, market)["rate"]))
+    case("Hotel pricing", "No concession means they pay the counter rate",
+         "skinless, less=0", 300.0,
+         lambda: float(price_hotel_line(
+             {"product": "skinless", "weightG": 1_000, "mode": "less", "less": 0}, market)["rate"]))
+    case("Hotel pricing", "Each product uses its own market rate",
+         "liver line", 130.0,
+         lambda: float(price_hotel_line(
+             {"product": "liver", "weightG": 1_000, "mode": "less", "less": 0}, market)["rate"]))
+    case("Hotel pricing", "An unknown product falls back to skin, never crashes",
+         "product='wings'", "skin",
+         lambda: price_hotel_line({"product": "wings", "weightG": 1_000}, market)["product"])
+
+    # ---- creating customers ----------------------------------------------
+    r = SUP.post("/api/customers", json={
+        "branch": "B01", "name": "Grand Palace", "kind": "hotel", "mode": "less",
+        "lessSkin": 50, "lessSkinless": 60, "lessLiver": 20, "phone": "9876543210"})
+    HOTEL["a"] = r.get_json() if r.status_code == 201 else {}
+    case("Hotels", "A supervisor may register a hotel",
+         "POST /api/customers", 201, lambda: r.status_code)
+    case("Hotels", "The code is allocated automatically",
+         "no code supplied", "H01", lambda: HOTEL["a"].get("code"))
+    case("Hotels", "The agreed concession is stored",
+         "lessSkinless=60", 60.0, lambda: HOTEL["a"].get("lessSkinless"))
+
+    r2 = ADMIN.post("/api/customers", json={
+        "branch": "B01", "name": "Vidya Hostel", "kind": "hostel", "mode": "fixed",
+        "rateSkin": 190, "rateSkinless": 220, "rateLiver": 100, "openingBalance": 1500})
+    HOTEL["b"] = r2.get_json() if r2.status_code == 201 else {}
+    case("Hotels", "An admin may register a hostel on a fixed rate",
+         "POST /api/customers", 201, lambda: r2.status_code)
+    case("Hotels", "Codes increment within a branch",
+         "second customer", "H02", lambda: HOTEL["b"].get("code"))
+    case("Hotels", "An opening balance is carried in",
+         "openingBalance=1500", 1500.0, lambda: HOTEL["b"].get("openingBalance"))
+    case("Hotels", "A blank name is rejected",
+         "name=''", 422,
+         lambda: SUP.post("/api/customers", json={"branch": "B01", "name": " "}).status_code)
+    case("Hotels", "A duplicate code inside a branch is refused",
+         "code=H01 again", 409,
+         lambda: SUP.post("/api/customers",
+                          json={"branch": "B01", "name": "Clash", "code": "H01"}).status_code)
+    case("Hotels", "The same code is fine in a different branch",
+         "B02 code=H01", 201,
+         lambda: ADMIN.post("/api/customers",
+                            json={"branch": "B02", "name": "Far Inn", "code": "H01"}).status_code)
+    case("Hotels", "A supervisor cannot register one in another branch",
+         "ravi -> B02", 403,
+         lambda: SUP.post("/api/customers",
+                          json={"branch": "B02", "name": "Not Mine"}).status_code)
+    case("Hotels", "A negative concession is rejected",
+         "lessSkin=-10", 422,
+         lambda: SUP.post("/api/customers",
+                          json={"branch": "B01", "name": "Neg", "lessSkin": -10}).status_code)
+    case("Hotels", "A non-numeric concession is a 422, not a crash",
+         "lessSkin='abc'", 422,
+         lambda: SUP.post("/api/customers",
+                          json={"branch": "B01", "name": "Bad", "lessSkin": "abc"}).status_code)
+    case("Hotels", "An unknown kind falls back to hotel",
+         "kind='motel'", "hotel",
+         lambda: SUP.post("/api/customers",
+                          json={"branch": "B01", "name": "Fallback",
+                                "kind": "motel"}).get_json()["kind"])
+
+    # ---- sales on a daily entry ------------------------------------------
+    day = D(40)
+    payload = base_entry(businessDate=day, skinSoldG=20_000, skinlessSoldG=10_000,
+                         liverSoldG=1_000, closeMeatG=0, submit=True,
+                         hotelSales=[
+                             {"customerId": HOTEL["a"]["id"], "product": "skin",
+                              "weightG": 20_000, "settled": False},
+                             {"customerId": HOTEL["b"]["id"], "product": "skinless",
+                              "weightG": 5_000, "settled": True}])
+    r3 = SUP.post("/api/entries", json=payload)
+    HOTEL["entry"] = r3.get_json() if r3.status_code == 201 else {}
+    calc = HOTEL["entry"].get("calc", {})
+
+    case("Hotel sales", "Hotel lines save with the entry",
+         "2 lines", 2, lambda: len(HOTEL["entry"].get("hotelSales", [])))
+    # base_entry has rateSkin 200, so Grand Palace (less 50) pays 150 -> 20 kg = 3000
+    case("Hotel sales", "The bill uses market minus the concession",
+         "200 − 50 over 20 kg", 3000.0, lambda: calc.get("hotelAmt") - 1100.0)
+    case("Hotel sales", "The hostel's fixed rate is honoured",
+         "220 × 5 kg", 1100.0,
+         lambda: HOTEL["entry"]["hotelSales"][1]["amount"])
+    case("Hotel sales", "Concession is totalled",
+         "50×20kg + (230−220)×5kg", 1050.0, lambda: calc.get("hotelConcession"))
+    case("Hotel sales", "Cash and account sales are split",
+         "1 of each", [1100.0, 3000.0],
+         lambda: [calc.get("hotelCash"), calc.get("hotelCredit")])
+    case("Hotel sales", "Hotel weight leaves the meat pool",
+         "open 5kg + meat 56kg − counter 31kg − hotel 25kg − damage 1kg", 4_000,
+         lambda: calc.get("expCloseMeatG"))
+    case("Hotel sales", "Hotel money is inside revenue",
+         "counter + hotel + live + cutting",
+         round(calc.get("counterSaleAmt", 0) + calc.get("hotelAmt", 0)
+               + calc.get("liveAmt", 0) + calc.get("cutAmt", 0), 2),
+         lambda: calc.get("revenue"))
+    case("Hotel sales", "The market rate of the day is snapshotted",
+         "skin line", 200.0,
+         lambda: HOTEL["entry"]["hotelSales"][0]["marketRate"])
+
+    case("Hotel sales", "A line for another branch's customer is refused",
+         "B01 entry, B02 customer", 422,
+         lambda: SUP.post("/api/entries", json=base_entry(
+             businessDate=D(41),
+             hotelSales=[{"customerId": ADMIN.post("/api/customers", json={
+                 "branch": "B02", "name": "Cross Branch"}).get_json()["id"],
+                 "product": "skin", "weightG": 1_000}])).status_code)
+    case("Hotel sales", "An unknown customer id is refused",
+         "customerId='nope'", 422,
+         lambda: SUP.post("/api/entries", json=base_entry(
+             businessDate=D(42),
+             hotelSales=[{"customerId": "nope", "product": "skin",
+                          "weightG": 1_000}])).status_code)
+    case("Hotel sales", "Empty rows left behind are ignored",
+         "blank line", 0,
+         lambda: len(SUP.post("/api/entries", json=base_entry(
+             businessDate=D(43),
+             hotelSales=[{"customerId": "", "product": "skin", "weightG": 0}]
+         )).get_json()["hotelSales"]))
+    case("Hotel sales", "A weight with no customer blocks submission",
+         "weight but no customer", True,
+         lambda: any("choose the hotel" in m for m in validate_for_submission(
+             base_entry(hotelSales=[{"product": "skin", "weightG": 5_000}]), False, False)))
+    case("Hotel sales", "A customer with no weight blocks submission",
+         "customer but no weight", True,
+         lambda: any("enter the weight" in m for m in validate_for_submission(
+             base_entry(hotelSales=[{"customerId": "x", "product": "skin",
+                                     "weightG": 0}]), False, False)))
+    case("Hotel sales", "A line pricing to zero blocks submission",
+         "liver rate 0, less deal", True,
+         lambda: any("₹0" in m for m in validate_for_submission(
+             base_entry(rateLiver=0, hotelSales=[{"customerId": "x", "product": "liver",
+                                                  "weightG": 5_000, "mode": "less",
+                                                  "less": 0}]), False, False)))
+
+    # ---- balances & the ledger -------------------------------------------
+    led = SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger").get_json()
+    case("Hotel ledger", "The statement lists the sale",
+         "1 row", 1, lambda: len(led["rows"]))
+    case("Hotel ledger", "An unapproved sale does not become debt",
+         "entry is pending", 0.0, lambda: led["totals"]["balance"])
+    case("Hotel ledger", "It is reported as pending instead",
+         "pending bucket", 3000.0, lambda: led["totals"]["pending"])
+
+    ADMIN.post(f"/api/entries/{HOTEL['entry']['id']}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    led2 = SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger").get_json()
+    case("Hotel ledger", "Approval turns the sale into a real balance",
+         "after approval", 3000.0, lambda: led2["totals"]["balance"])
+    case("Hotel ledger", "Nothing is left pending",
+         "after approval", 0.0, lambda: led2["totals"]["pending"])
+
+    led_b = ADMIN.get(f"/api/customers/{HOTEL['b']['id']}/ledger").get_json()
+    case("Hotel ledger", "A cash sale never touches the balance",
+         "hostel paid on the day", 1500.0, lambda: led_b["totals"]["balance"])
+    case("Hotel ledger", "The opening balance is the starting point",
+         "opening 1500", 1500.0, lambda: led_b["totals"]["opening"])
+
+    # ---- receipts ---------------------------------------------------------
+    case("Hotel receipts", "A supervisor may record a receipt",
+         "₹1,200 cash", 201,
+         lambda: SUP.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                          json={"amount": 1200, "mode": "cash",
+                                "date": D(29)}).status_code)
+    case("Hotel receipts", "The balance falls by what was received",
+         "3000 − 1200", 1800.0,
+         lambda: SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger")
+                    .get_json()["totals"]["balance"])
+    case("Hotel receipts", "A zero receipt is rejected",
+         "amount=0", 422,
+         lambda: SUP.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                          json={"amount": 0}).status_code)
+    case("Hotel receipts", "A non-numeric amount is a 422, not a crash",
+         "amount='lots'", 422,
+         lambda: SUP.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                          json={"amount": "lots"}).status_code)
+    case("Hotel receipts", "An unknown payment mode falls back to cash",
+         "mode='barter'", "cash",
+         lambda: SUP.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                          json={"amount": 1, "mode": "barter"}).get_json()["mode"])
+    case("Hotel receipts", "The running balance is carried down the statement",
+         "last row", True,
+         lambda: SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger")
+                    .get_json()["rows"][-1]["balance"] == 1799.0)
+    case("Hotel receipts", "A supervisor cannot delete a receipt",
+         "DELETE /api/payments", 403,
+         lambda: SUP.delete("/api/payments/whatever").status_code)
+
+    # ---- repricing --------------------------------------------------------
+    SUP.put(f"/api/customers/{HOTEL['a']['id']}", json={"lessSkin": 80})
+    case("Hotels", "Editing the deal does not rewrite an approved bill",
+         "approved line stays at 150", 150.0,
+         lambda: [r for r in SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger")
+                  .get_json()["rows"] if r["kind"] == "sale"][0]["rate"])
+
+    draft = SUP.post("/api/entries", json=base_entry(
+        businessDate=D(44), rateSkin=200,
+        hotelSales=[{"customerId": HOTEL["a"]["id"], "product": "skin",
+                     "weightG": 10_000}])).get_json()
+    case("Hotels", "A draft bill picks up the new deal",
+         "200 − 80", 120.0, lambda: draft["hotelSales"][0]["rate"])
+    case("Hotels", "Changing the market rate reprices the draft",
+         "rateSkin 200 -> 260", 180.0,
+         lambda: SUP.put(f"/api/entries/{draft['id']}", json={"rateSkin": 260})
+                    .get_json()["hotelSales"][0]["rate"])
+
+    # ---- access control ---------------------------------------------------
+    case("Hotel RBAC", "A supervisor cannot see another branch's ledger",
+         "ravi -> B02 customer", 403,
+         lambda: SUP.get("/api/customers/%s/ledger" % ADMIN.post(
+             "/api/customers", json={"branch": "B02", "name": "Hidden Inn"}
+         ).get_json()["id"]).status_code)
+    case("Hotel RBAC", "A supervisor cannot delete a customer",
+         "DELETE /api/customers", 403,
+         lambda: SUP.delete(f"/api/customers/{HOTEL['a']['id']}").status_code)
+    case("Hotel RBAC", "Deleting a customer with history needs confirmation",
+         "no ?force", 409,
+         lambda: ADMIN.delete(f"/api/customers/{HOTEL['a']['id']}").status_code)
+    case("Hotel RBAC", "Anonymous callers get nothing",
+         "GET /api/customers", 401,
+         lambda: ANON.get("/api/customers").status_code)
+    case("Hotel RBAC", "A supervisor sees only their own branch's customers",
+         "ravi", True,
+         lambda: all(c["branch"] == "B01"
+                     for c in SUP.get("/api/customers").get_json()["customers"]))
+    case("Hotel RBAC", "Bootstrap carries customers and their balances",
+         "GET /api/bootstrap", True,
+         lambda: "customers" in SUP.get("/api/bootstrap").get_json()
+         and "customerTotals" in SUP.get("/api/bootstrap").get_json())
+
+    # ---- deletion ---------------------------------------------------------
+    spare = ADMIN.post("/api/customers",
+                       json={"branch": "B01", "name": "Closes Down"}).get_json()
+    case("Hotels", "A customer with no history deletes cleanly",
+         "DELETE", 200,
+         lambda: ADMIN.delete(f"/api/customers/{spare['id']}").status_code)
+    case("Hotels", "Forced deletion removes the ledger with it",
+         "?force=1", 200,
+         lambda: ADMIN.delete(f"/api/customers/{HOTEL['b']['id']}?force=1").status_code)
+    case("Hotels", "Its sale lines go with it",
+         "cascade", 1,
+         lambda: len(ADMIN.get(f"/api/entries?from={D(40)}&to={D(40)}")
+                     .get_json()[0]["hotelSales"]))
+    case("Hotels", "The entry itself survives the customer being removed",
+         "entry still there", 1,
+         lambda: len(ADMIN.get(f"/api/entries?from={D(40)}&to={D(40)}").get_json()))
+    case("Hotels", "The gone customer no longer appears in the list",
+         "GET /api/customers", False,
+         lambda: any(c["id"] == HOTEL["b"]["id"]
+                     for c in ADMIN.get("/api/customers").get_json()["customers"]))
+
+
 if __name__ == "__main__":
     print("=" * 78)
     print("VENUS CHICKEN CENTERS — FULL MODULE TEST SUITE")
@@ -1056,7 +1513,9 @@ if __name__ == "__main__":
     test_date_permission()
     test_photos()
     test_labour()
+    test_advances()
     test_overheads()
+    test_hotels()
     test_admin_modules()
     test_activity()
     test_robustness()

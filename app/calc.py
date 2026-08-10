@@ -30,12 +30,57 @@ def waste_pct_for(category: str, settings: dict) -> Decimal:
     return _d(settings.get(key, 21 if category == "parents" else 31))
 
 
+# --------------------------------------------------------------------------
+# Hotel & hostel pricing
+# --------------------------------------------------------------------------
+PRODUCTS = ("skin", "skinless", "liver")
+MARKET_KEY = {"skin": "rateSkin", "skinless": "rateSkinless", "liver": "rateLiver"}
+PRODUCT_LABEL = {"skin": "skin", "skinless": "skinless", "liver": "liver"}
+
+
+def price_hotel_line(line: dict, entry: dict) -> dict:
+    """
+    Work out what one hotel/hostel line is worth.
+
+    The market rate is whatever the shop is charging at the counter that day
+    (Section C of the entry). The hotel's own rate is that market rate less the
+    agreed concession — so if skin is ₹250 today and this hotel is on ₹50 less,
+    they are billed ₹200. A fixed-rate customer ignores the market, and a
+    one-off override beats both. The gap between the two is the concession, and
+    it is reported rather than hidden.
+    """
+    product = line.get("product") if line.get("product") in PRODUCTS else "skin"
+    market = _d(entry.get(MARKET_KEY[product]))
+
+    override = line.get("rateOverride")
+    if override not in (None, ""):
+        rate = _d(override)
+    elif line.get("mode") == "fixed":
+        rate = _d(line.get("fixed"))
+    else:
+        rate = market - _d(line.get("less"))
+    if rate < D0:
+        rate = D0
+
+    grams = int(line.get("weightG") or 0)
+    kg = _d(grams) / Decimal(1000)
+    amount = kg * rate
+    concession = kg * (market - rate) if market > rate else D0
+
+    return {"product": product, "grams": grams, "market": market, "rate": rate,
+            "amount": amount, "concession": concession,
+            "settled": bool(line.get("settled")),
+            "customerId": line.get("customerId") or "",
+            "customerName": line.get("customerName") or ""}
+
+
 def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> dict:
     """
     `entry` is the dict form of a DailyEntry (see DailyEntry.to_dict).
     `labour` is {'wages': x, 'other': y, 'manDays': z} for that branch and day.
     """
-    labour = labour or {"wages": 0, "other": 0, "manDays": 0}
+    labour = labour or {"wages": 0, "advances": 0, "other": 0,
+                        "overheads": 0, "manDays": 0}
 
     waste_pct = waste_pct_for(entry.get("category"), settings)
     exp_yield = Decimal(100) - waste_pct
@@ -81,7 +126,30 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     liver_amt = sale("liverSoldG", "rateLiver")
     live_amt = sale("liveSoldWtG", "rateLive")
     cut_amt = _d(entry.get("cutCharges"))
-    meat_sale_amt = skin_amt + skinless_amt + liver_amt
+    counter_sale_amt = skin_amt + skinless_amt + liver_amt
+
+    # ---- hotel & hostel sales -------------------------------------------
+    # These are sales in addition to the counter figures above, so their
+    # weight comes out of the same meat pool and their money goes into the
+    # same revenue line — just at a contracted price rather than the
+    # over-the-counter one.
+    hotel_lines = [price_hotel_line(l, entry) for l in (entry.get("hotelSales") or [])]
+    hotel_g = {"skin": 0, "skinless": 0, "liver": 0}
+    hotel_amt = D0
+    hotel_conc = D0
+    hotel_cash = D0
+    hotel_credit = D0
+    for h in hotel_lines:
+        hotel_g[h["product"]] += h["grams"]
+        hotel_amt += h["amount"]
+        hotel_conc += h["concession"]
+        if h["settled"]:
+            hotel_cash += h["amount"]
+        else:
+            hotel_credit += h["amount"]
+    hotel_total_g = hotel_g["skin"] + hotel_g["skinless"] + hotel_g["liver"]
+
+    meat_sale_amt = counter_sale_amt + hotel_amt
     revenue = meat_sale_amt + live_amt + cut_amt
 
     # ---- bird & meat balance --------------------------------------------
@@ -95,10 +163,12 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
                       - int(entry.get("mortWtG") or 0) - dressed_wt_g)
 
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
-    # liver draws from the same meat pool as skin and skinless
+    # liver draws from the same meat pool as skin and skinless, and so does
+    # everything that went out to a hotel or hostel
     exp_close_meat_g = (meat_avail_g - int(entry.get("skinSoldG") or 0)
                         - int(entry.get("skinlessSoldG") or 0)
                         - int(entry.get("liverSoldG") or 0)
+                        - hotel_total_g
                         - int(entry.get("damageG") or 0))
     meat_var_g = exp_close_meat_g - int(entry.get("closeMeatG") or 0)
 
@@ -111,8 +181,13 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     gross_profit = revenue - cogs
 
     wages = _d(labour.get("wages"))
+    advances = _d(labour.get("advances"))
     other_exp = _d(labour.get("other"))
-    net_profit = gross_profit - wages - other_exp
+    overheads = _d(labour.get("overheads"))
+    # Wages, shop extras and this day's share of the monthly overheads are all
+    # real costs. An advance is cash moving against wages already counted, so
+    # it is reported for visibility but never deducted again.
+    net_profit = gross_profit - wages - other_exp - overheads
 
     # ---- loss drivers ----------------------------------------------------
     mort_value = _d(entry.get("mortWtG") or 0) / Decimal(1000) * avg_rate
@@ -134,14 +209,27 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "yieldPct": float(round(yield_pct, 2)), "yieldLow": yield_low, "yieldHigh": yield_high,
         "skinAmt": money(skin_amt), "skinlessAmt": money(skinless_amt),
         "liverAmt": money(liver_amt), "liveAmt": money(live_amt), "cutAmt": money(cut_amt),
+        "counterSaleAmt": money(counter_sale_amt),
         "meatSaleAmt": money(meat_sale_amt), "revenue": money(revenue),
+        # hotels & hostels
+        "hotelAmt": money(hotel_amt), "hotelConcession": money(hotel_conc),
+        "hotelCash": money(hotel_cash), "hotelCredit": money(hotel_credit),
+        "hotelSkinG": hotel_g["skin"], "hotelSkinlessG": hotel_g["skinless"],
+        "hotelLiverG": hotel_g["liver"], "hotelTotalG": hotel_total_g,
+        "hotelCount": len([h for h in hotel_lines if h["grams"] > 0]),
+        "hotelLines": [{"customerId": h["customerId"], "customerName": h["customerName"],
+                        "product": h["product"], "weightG": h["grams"],
+                        "marketRate": money(h["market"]), "rate": money(h["rate"]),
+                        "amount": money(h["amount"]), "concession": money(h["concession"]),
+                        "settled": h["settled"]} for h in hotel_lines],
         "handled": handled, "expBirds": exp_birds, "birdVar": bird_var,
         "mortRate": float(round(mort_rate, 2)),
         "expCloseWtG": exp_close_wt_g, "meatAvailG": meat_avail_g,
         "expCloseMeatG": exp_close_meat_g, "meatVarG": meat_var_g,
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),
         "cogs": money(cogs), "grossProfit": money(gross_profit),
-        "labour": money(wages), "otherExp": money(other_exp),
+        "labour": money(wages), "advances": money(advances),
+        "otherExp": money(other_exp), "overheads": money(overheads),
         "manDays": float(labour.get("manDays") or 0),
         "netProfit": money(net_profit),
         "mortValue": money(mort_value), "damageValue": money(damage_value),
@@ -192,6 +280,20 @@ def validate_for_submission(entry: dict, is_admin: bool, is_first_entry: bool) -
             missing.append(f"Purchase line {i} — rate per kg")
         if birds > 0 and wt <= 0:
             missing.append(f"Purchase line {i} — weight")
+
+    for i, h in enumerate(entry.get("hotelSales") or [], start=1):
+        grams = int(h.get("weightG") or 0)
+        if grams > 0 and not h.get("customerId"):
+            missing.append(f"Hotel/hostel line {i} — choose the hotel or hostel")
+        if h.get("customerId") and grams <= 0:
+            missing.append(f"Hotel/hostel line {i} — enter the weight sold")
+        if grams > 0:
+            priced = price_hotel_line(h, entry)
+            if priced["rate"] <= 0:
+                missing.append(
+                    f"Hotel/hostel line {i} — the price works out to ₹0. "
+                    f"Set the {PRODUCT_LABEL[priced['product']]} rate in Section C, "
+                    f"or give this customer a fixed rate.")
 
     if int(entry.get("mortCount") or 0) > 0 and not (entry.get("photos") or []):
         missing.append("Mortality photo (mortality is above zero)")

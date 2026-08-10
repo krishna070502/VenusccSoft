@@ -51,6 +51,37 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ---
 
+## Docker
+
+```bash
+docker compose up -d --build                    # uses DATABASE_URL from .env
+docker compose --profile localdb up -d --build  # bundles PostgreSQL 16 too
+docker compose --profile tools up -d            # + Adminer on :8080
+docker compose --profile backup run --rm db-backup   # dump into ./backups
+```
+
+Then open <http://localhost:8000>.
+
+| | |
+|---|---|
+| Logs | `docker compose logs -f web` |
+| Create an admin | `docker compose exec web python manage.py create-admin` |
+| Load demo data | `docker compose exec web python manage.py seed` |
+| Stop, keep data | `docker compose down` |
+| Stop, wipe local DB | `docker compose down -v` |
+
+Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env` and the first boot creates
+the administrator for you.
+
+The image is multi-stage, so no compiler ships in the runtime layer. It runs as
+an unprivileged user on a read-only filesystem with `no-new-privileges`, and
+`/healthz` backs the container healthcheck.
+
+There is deliberately no `depends_on` on the web service. The entrypoint waits
+for the database itself, which means the same file works whether the database
+is the bundled container or your own, and on every Compose v2 rather than only
+2.20 and newer.
+
 ## Commands
 
 | Command | Purpose |
@@ -76,7 +107,7 @@ venus/
 │  ├─ __init__.py        factory, error handlers, page route
 │  ├─ config.py          environment settings, connection pooling
 │  ├─ extensions.py      the SQLAlchemy instance
-│  ├─ models.py          11 tables
+│  ├─ models.py          14 tables
 │  ├─ calc.py            the authoritative calculation engine
 │  ├─ security.py        sessions, idle timeout, RBAC, audit
 │  ├─ api.py             REST endpoints
@@ -90,7 +121,7 @@ venus/
 │  ├─ schema.sql         the DDL, for provisioning by hand
 │  └─ test-report.md     latest test run
 ├─ tests/
-│  └─ test_api.py        190-case suite
+│  └─ test_api.py        266-case suite
 ├─ docker-compose.yml
 ├─ manage.py  run.py  wsgi.py
 ├─ requirements.txt
@@ -109,6 +140,9 @@ venus/
 | `daily_entries` | One row per branch + category + day |
 | `purchases` | Birds bought in; several suppliers per day allowed |
 | `mortality_photos` | Compressed JPEGs attached to an entry |
+| `customers` | Hotels and hostels, per branch, with the price agreed for each |
+| `customer_sales` | What each hotel took on a given day, at market and at their rate |
+| `customer_payments` | Money received against a hotel's outstanding balance |
 | `workers` | Dressers, cutters and helpers, with a daily wage |
 | `labour_ledger` | Attendance, payments, advances, tea and tiffin |
 | `overheads` | Rent, electricity, supervisor salary — monthly, approved |
@@ -123,8 +157,12 @@ Design choices worth knowing:
   category, enforced by the database, not just the UI.
 * **`UNIQUE (worker_id, entry_date, kind)`** — re-marking attendance replaces
   the day rather than stacking duplicates.
+* **`UNIQUE (branch_id, code)` on customers** — hotel codes are unique inside a
+  branch, so two shops can both have an `H01`.
+* **`customer_sales.line_no`** keeps the rows in the order they were typed. The
+  primary key is a random UUID, so ordering by it would shuffle them.
 * Indexes on the columns the dashboard filters by: branch + date, status,
-  branch + month.
+  branch + month, customer + date.
 
 ---
 
@@ -163,6 +201,35 @@ server-side:
 
 ---
 
+## Hotels & hostels
+
+A hotel does not pay the counter price. You register it once under
+**Hotels & Hostels** with the concession agreed for skin, skinless and liver —
+"fifty rupees under market for skinless" — and from then on every sale is
+priced from that day's Section C rate:
+
+```
+their rate  =  today's market rate  −  agreed concession
+concession  =  (market − their rate) × kg          reported, never hidden
+```
+
+A customer can be put on a flat contract rate instead, and any single line can
+be overridden for a one-off price. Both figures are stored on every sale line,
+so the discount handed out over a period can always be added up.
+
+* Hotel sales are **additional to** the counter figures in Section G. Their
+  weight comes out of the same meat pool, so closing meat allows for them.
+* Each line is marked **paid** or **on account**. Paid settles on the day; on
+  account adds to that customer's balance.
+* Every hotel has its **own ledger** — dated sales, receipts and a running
+  balance, exportable to CSV.
+* A sale only becomes real debt **once the admin approves the day**. Until then
+  it is listed as pending and excluded from every balance.
+* Both admins and supervisors can register a customer and record a receipt.
+  Only an admin can delete one, or change an opening balance.
+
+---
+
 ## Verified
 
 46 automated checks pass against the API: authentication, RBAC denials for
@@ -175,3 +242,8 @@ The calculation engine was checked against the same worked example used
 throughout: 200 kg opening at ₹120 plus 205 kg bought at ₹130 gives a
 weighted average of **₹125.06/kg**; revenue **₹17,180.00**; closing meat
 **9.000 kg** with liver correctly drawn from the meat pool.
+
+The hotel module adds 41 API cases and 38 browser-level checks driven through
+the real UI in jsdom: a hotel on ₹50 under a ₹250 market is billed ₹200/kg,
+20 kg comes to ₹4,000 with ₹1,000 recorded as concession, that 20 kg leaves the
+closing meat, and the balance only appears on the ledger after approval.

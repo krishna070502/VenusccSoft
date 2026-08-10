@@ -55,10 +55,11 @@ def create_app(config_object=Config) -> Flask:
 
     @app.errorhandler(FieldError)
     def _field(e):
-        """A non-numeric value arrived where a number belongs."""
+        """A value arrived that the server cannot use."""
         db.session.rollback()
         return jsonify({"error": "validation",
-                        "message": f"'{e.field}' must be a number."}), 422
+                        "field": e.field,
+                        "message": e.message or f"'{e.field}' must be a number."}), 422
 
     @app.errorhandler(IntegrityError)
     def _integrity(e):

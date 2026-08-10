@@ -14,3 +14,6 @@ __pycache__/
 
 # generated test output
 docs/test-results.csv
+
+# database dumps
+backups/*.sql.gz

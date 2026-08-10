@@ -5,12 +5,18 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from .extensions import db
-from .models import (Branch, DailyEntry, LabourLedger, Overhead, Purchase,
-                     User, Worker, utcnow)
+from .models import (Branch, Customer, CustomerPayment, CustomerSale, DailyEntry,
+                     LabourLedger, Overhead, Purchase, User, Worker, utcnow)
 
 SUPPLIERS = ["Sunrise Poultry", "Green Valley", "Deccan Agro"]
 WORKER_NAMES = [("Suresh", "dresser"), ("Mahesh", "dresser"),
                 ("Anil", "cutter"), ("Vikram", "cutter")]
+# name, hotel/hostel, concession off market for skin / skinless / liver
+CUSTOMERS = [
+    ("Grand Palace Hotel", "hotel", 40, 50, 20),
+    ("Sunrise Residency", "hotel", 25, 30, 10),
+    ("Vidya Boys Hostel", "hostel", 55, 65, 30),
+]
 
 
 def load_demo(admin: User) -> dict:
@@ -20,18 +26,38 @@ def load_demo(admin: User) -> dict:
     Overhead.query.delete()
     LabourLedger.query.delete()
     Worker.query.delete()
+    CustomerPayment.query.delete()
+    CustomerSale.query.delete()
+    Customer.query.delete()
     DailyEntry.query.delete()
     db.session.flush()
 
     today = date.today()
     branches = Branch.query.filter_by(is_active=True).all()
-    made = {"entries": 0, "workers": 0, "ledger": 0, "overheads": 0}
+    made = {"entries": 0, "workers": 0, "ledger": 0, "overheads": 0,
+            "customers": 0, "hotelSales": 0}
+
+    # ---- hotels & hostels ------------------------------------------------
+    by_branch = {}
+    for br in branches:
+        by_branch[br.id] = []
+        for n, (name, kind, ls, lsl, ll) in enumerate(CUSTOMERS, start=1):
+            c = Customer(branch_id=br.id, code=f"H{n:02d}", name=f"{name} ({br.code})",
+                         kind=kind, price_mode="less",
+                         less_skin=Decimal(ls), less_skinless=Decimal(lsl),
+                         less_liver=Decimal(ll),
+                         phone=f"98{random.randint(10000000, 99999999)}",
+                         created_by_id=supervisor.id)
+            db.session.add(c)
+            db.session.flush()
+            by_branch[br.id].append(c)
+            made["customers"] += 1
 
     # ---- labour ---------------------------------------------------------
     for br in branches:
         for name, role in WORKER_NAMES:
             w = Worker(branch_id=br.id, name=f"{name} ({br.code})", role=role,
-                       day_wage=Decimal("650" if role == "dresser" else "600"),
+                       day_wage=Decimal("700"),
                        joined_on=today - timedelta(days=30))
             db.session.add(w)
             db.session.flush()
@@ -103,14 +129,34 @@ def load_demo(admin: User) -> dict:
                 skinless = int((open_m + meat - skin) * random.uniform(0.55, 0.85))
                 liver = dr_c * 35
                 dmg = random.randint(0, 900)
-                close_m = max(open_m + meat - skin - skinless - liver - dmg, 0)
+
+                # a couple of hotels take stock most days, at their agreed price
+                r_skinless = r_skin + 35
+                hotel_rows, hotel_g = [], 0
+                for cust in random.sample(by_branch[br.id],
+                                          k=random.randint(0, len(by_branch[br.id]))):
+                    product = random.choice(["skin", "skinless"])
+                    grams = random.randint(4, 22) * 1000
+                    market = r_skin if product == "skin" else r_skinless
+                    rate = max(market - float(cust.less_for(product)), 0)
+                    hotel_rows.append(CustomerSale(
+                        customer_id=cust.id, branch_id=br.id,
+                        line_no=len(hotel_rows), product=product,
+                        weight_g=grams, market_rate=Decimal(str(market)),
+                        rate=Decimal(str(round(rate, 2))),
+                        amount=Decimal(str(round(grams / 1000 * rate, 2))),
+                        settled=random.random() < 0.35))
+                    hotel_g += grams
+                    made["hotelSales"] += 1
+
+                close_m = max(open_m + meat - skin - skinless - liver - hotel_g - dmg, 0)
                 status = "approved" if i > 1 else ("pending" if i == 1 else "draft")
 
                 e = DailyEntry(
                     branch_id=br.id, category=cat, business_date=d,
                     open_birds=open_b, open_weight_g=open_w, open_meat_g=open_m,
                     open_rate=Decimal(str(round(open_rate, 2))),
-                    rate_skin=Decimal(str(r_skin)), rate_skinless=Decimal(str(r_skin + 35)),
+                    rate_skin=Decimal(str(r_skin)), rate_skinless=Decimal(str(r_skinless)),
                     rate_liver=Decimal("130"), rate_live=Decimal(str(round(avg_rate * 1.16))),
                     live_sold_count=live_c, live_sold_weight_g=live_c * avg,
                     cutting_charges=Decimal(str(live_c * 8)),
@@ -125,10 +171,23 @@ def load_demo(admin: User) -> dict:
                 e.purchases.append(Purchase(supplier=random.choice(SUPPLIERS),
                                             birds=buy_b, weight_g=buy_w,
                                             rate=Decimal(str(buy_rate))))
+                for row in hotel_rows:
+                    e.hotel_sales.append(row)
                 db.session.add(e)
                 made["entries"] += 1
 
                 open_b, open_w, open_m, open_rate = close_b, close_b * avg, close_m, avg_rate
+
+    # ---- a few receipts against the hotel ledgers ------------------------
+    for br in branches:
+        for cust in by_branch[br.id]:
+            for _ in range(random.randint(0, 2)):
+                db.session.add(CustomerPayment(
+                    customer_id=cust.id, branch_id=br.id,
+                    pay_date=today - timedelta(days=random.randint(1, 12)),
+                    amount=Decimal(random.choice([2000, 3000, 5000, 7500])),
+                    mode=random.choice(["cash", "upi", "bank"]),
+                    note="Part settlement", created_by_id=supervisor.id))
 
     db.session.flush()
     return made

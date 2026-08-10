@@ -49,6 +49,7 @@ class Branch(db.Model):
     entries = relationship("DailyEntry", back_populates="branch", cascade="all, delete-orphan")
     workers = relationship("Worker", back_populates="branch", cascade="all, delete-orphan")
     overheads = relationship("Overhead", back_populates="branch", cascade="all, delete-orphan")
+    customers = relationship("Customer", back_populates="branch", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {"id": self.id, "code": self.code, "name": self.name,
@@ -172,6 +173,12 @@ class DailyEntry(db.Model):
                              cascade="all, delete-orphan", order_by="Purchase.id")
     photos = relationship("MortalityPhoto", back_populates="entry",
                           cascade="all, delete-orphan", order_by="MortalityPhoto.id")
+    # ordered by line_no, NOT by id: the primary key is a random uuid, so
+    # ordering by it would shuffle the rows and break the client's index-based
+    # match between a form row and its computed figures
+    hotel_sales = relationship("CustomerSale", back_populates="entry",
+                               cascade="all, delete-orphan",
+                               order_by="CustomerSale.line_no")
 
     __table_args__ = (
         UniqueConstraint("branch_id", "category", "business_date",
@@ -223,6 +230,7 @@ class DailyEntry(db.Model):
             "rejectReason": self.reject_reason or "",
             "photos": [p.data_url for p in self.photos],
             "purchases": [p.to_dict(include_costs) for p in self.purchases],
+            "hotelSales": [s.to_dict() for s in self.hotel_sales],
         }
         # Buying prices are admin-only; strip them for supervisors.
         d["openRate"] = float(self.open_rate) if include_costs else 0
@@ -260,6 +268,181 @@ class MortalityPhoto(db.Model):
     uploaded_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     entry = relationship("DailyEntry", back_populates="photos")
+
+
+# --------------------------------------------------------------------------
+# Hotels & hostels — contract buyers priced off the day's market rate
+#
+# A hotel does not pay the counter price. The shop agrees a concession, e.g.
+# "fifty rupees under market for skinless", and that is what gets billed. Both
+# figures are kept on every sale line — the market rate of the day and the rate
+# actually charged — so the discount handed out is always visible and can be
+# added up, rather than silently disappearing into a lower revenue number.
+#
+# Each customer belongs to ONE branch and carries its own ledger.
+# --------------------------------------------------------------------------
+PRODUCT_KINDS = ("skin", "skinless", "liver")
+
+
+class Customer(db.Model):
+    __tablename__ = "customers"
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    code = Column(String(16), nullable=False)
+    name = Column(String(160), nullable=False)
+    kind = Column(String(16), nullable=False, default="hotel")   # 'hotel' | 'hostel'
+    contact_person = Column(String(160))
+    phone = Column(String(32))
+    address = Column(Text)
+
+    # How this customer's price is worked out:
+    #   'less'  — today's market rate MINUS a fixed concession (the usual deal)
+    #   'fixed' — a flat contract rate, whatever the market does
+    price_mode = Column(String(8), nullable=False, default="less")
+    less_skin = Column(Numeric(12, 2), nullable=False, default=0)
+    less_skinless = Column(Numeric(12, 2), nullable=False, default=0)
+    less_liver = Column(Numeric(12, 2), nullable=False, default=0)
+    rate_skin = Column(Numeric(12, 2), nullable=False, default=0)
+    rate_skinless = Column(Numeric(12, 2), nullable=False, default=0)
+    rate_liver = Column(Numeric(12, 2), nullable=False, default=0)
+
+    # What they already owed on the day they were added to the system.
+    opening_balance = Column(Numeric(14, 2), nullable=False, default=0)
+
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    branch = relationship("Branch", back_populates="customers")
+    sales = relationship("CustomerSale", back_populates="customer",
+                         cascade="all, delete-orphan")
+    payments = relationship("CustomerPayment", back_populates="customer",
+                            cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("branch_id", "code", name="uq_customer_branch_code"),
+        CheckConstraint("kind IN ('hotel','hostel')", name="ck_customer_kind"),
+        CheckConstraint("price_mode IN ('less','fixed')", name="ck_customer_price_mode"),
+        Index("ix_customer_branch_active", "branch_id", "is_active"),
+    )
+
+    def less_for(self, product: str) -> float:
+        return float({"skin": self.less_skin, "skinless": self.less_skinless,
+                      "liver": self.less_liver}.get(product, 0) or 0)
+
+    def fixed_for(self, product: str) -> float:
+        return float({"skin": self.rate_skin, "skinless": self.rate_skinless,
+                      "liver": self.rate_liver}.get(product, 0) or 0)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "branch": self.branch.code, "code": self.code,
+            "name": self.name, "kind": self.kind,
+            "contact": self.contact_person or "", "phone": self.phone or "",
+            "address": self.address or "",
+            "mode": self.price_mode,
+            "lessSkin": float(self.less_skin), "lessSkinless": float(self.less_skinless),
+            "lessLiver": float(self.less_liver),
+            "rateSkin": float(self.rate_skin), "rateSkinless": float(self.rate_skinless),
+            "rateLiver": float(self.rate_liver),
+            "openingBalance": float(self.opening_balance),
+            "active": self.is_active,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class CustomerSale(db.Model):
+    """
+    One product line sold to one hotel or hostel on one daily entry.
+
+    `market_rate`, `rate` and `amount` are snapshots recomputed by the server
+    every time the entry is saved, so a report never has to reload the entry to
+    know what was charged, and the admin changing the day's market rate flows
+    straight through to the bill.
+    """
+    __tablename__ = "customer_sales"
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    entry_id = Column(String(32), ForeignKey("daily_entries.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    customer_id = Column(String(32), ForeignKey("customers.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False)
+
+    line_no = Column(Integer, nullable=False, default=0)  # position on the form
+    product = Column(String(16), nullable=False)          # skin | skinless | liver
+    weight_g = Column(Integer, nullable=False, default=0)
+    market_rate = Column(Numeric(12, 2), nullable=False, default=0)
+    rate = Column(Numeric(12, 2), nullable=False, default=0)
+    rate_override = Column(Numeric(12, 2))                # NULL = derived from the deal
+    amount = Column(Numeric(14, 2), nullable=False, default=0)
+    # True  -> paid in cash on the day, settles immediately
+    # False -> on account, adds to what the customer owes
+    settled = Column(Boolean, nullable=False, default=False)
+    note = Column(Text)
+
+    entry = relationship("DailyEntry", back_populates="hotel_sales")
+    customer = relationship("Customer", back_populates="sales")
+
+    __table_args__ = (
+        CheckConstraint("product IN ('skin','skinless','liver')", name="ck_sale_product"),
+        Index("ix_sale_customer", "customer_id"),
+        Index("ix_sale_branch", "branch_id"),
+    )
+
+    def to_dict(self):
+        c = self.customer
+        return {
+            "id": self.id,
+            "customerId": self.customer_id,
+            "customerName": c.name if c else "",
+            "customerCode": c.code if c else "",
+            "kind": c.kind if c else "hotel",
+            "product": self.product,
+            "weightG": self.weight_g,
+            "marketRate": float(self.market_rate),
+            "rate": float(self.rate),
+            "rateOverride": float(self.rate_override) if self.rate_override is not None else None,
+            "amount": float(self.amount),
+            "settled": self.settled,
+            "note": self.note or "",
+            # the deal itself, so the browser can reprice while the user types
+            "mode": c.price_mode if c else "less",
+            "less": c.less_for(self.product) if c else 0,
+            "fixed": c.fixed_for(self.product) if c else 0,
+        }
+
+
+class CustomerPayment(db.Model):
+    """Money received from a hotel or hostel against its outstanding balance."""
+    __tablename__ = "customer_payments"
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    customer_id = Column(String(32), ForeignKey("customers.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False)
+    pay_date = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(14, 2), nullable=False, default=0)
+    mode = Column(String(16), nullable=False, default="cash")
+    note = Column(Text)
+    created_by_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    customer = relationship("Customer", back_populates="payments")
+    branch = relationship("Branch")
+
+    __table_args__ = (
+        CheckConstraint("mode IN ('cash','upi','bank','cheque')", name="ck_payment_mode"),
+        Index("ix_payment_customer_date", "customer_id", "pay_date"),
+    )
+
+    def to_dict(self):
+        return {"id": self.id, "customerId": self.customer_id,
+                "branch": self.branch.code if self.branch else "",
+                "date": self.pay_date.isoformat(), "amount": float(self.amount),
+                "mode": self.mode, "note": self.note or ""}
 
 
 # --------------------------------------------------------------------------

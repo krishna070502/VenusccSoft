@@ -182,6 +182,7 @@
       <button data-view="dashboard" data-admin="1" class="tab-btn active flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-chart-line text-xs"></i> Dashboard</button>
       <button data-view="entry" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-pen-to-square text-xs"></i> Daily Entry</button>
       <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Hostels <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Labour</button>
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
@@ -229,7 +230,7 @@
       </div>
     </div>
     <div id="plHero" data-admin="1" class="rounded-2xl shadow-lg overflow-hidden mb-5 bg-gradient-to-br from-emerald-800 to-emerald-900 text-white">
-      <div class="grid grid-cols-2 lg:grid-cols-5 divide-x divide-white/10">
+      <div class="grid grid-cols-2 lg:grid-cols-6 divide-x divide-white/10">
         <div class="p-5">
           <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Revenue</p>
           <p class="mt-1 text-2xl xl:text-3xl font-bold num" id="plRevenue">₹0</p>
@@ -246,14 +247,19 @@
           <p class="text-[11px] text-emerald-300 mt-1"><span id="plManDays" class="num">0</span> man-days</p>
         </div>
         <div class="p-5">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Advances paid <span class="normal-case tracking-normal opacity-70">(memo)</span></p>
+          <p class="mt-1 text-2xl xl:text-3xl font-bold num text-emerald-200" id="plAdvances">₹0</p>
+          <p class="text-[11px] text-emerald-300 mt-1" id="plAdvancesNote">cash out — not a cost, already in wages</p>
+        </div>
+        <div class="p-5">
           <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Other expenses</p>
           <p class="mt-1 text-2xl xl:text-3xl font-bold num text-amber-300" id="plOther">₹0</p>
           <p class="text-[11px] text-emerald-300 mt-1">tea, tiffin &amp; shop costs</p>
         </div>
         <div class="p-5 col-span-2 lg:col-span-1" id="plNetBox">
-          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Operating profit / loss</p>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Net profit / loss</p>
           <p class="mt-1 text-3xl xl:text-4xl font-bold num" id="plNet">₹0</p>
-          <p class="text-[11px] mt-1"><span id="plMargin" class="num font-bold">0.0%</span> <span class="text-emerald-300">margin · before overheads</span></p>
+          <p class="text-[11px] mt-1"><span id="plMargin" class="num font-bold">0.0%</span> <span class="text-emerald-300">margin · after all costs</span></p>
         </div>
       </div>
     </div>
@@ -270,6 +276,39 @@
       <article id="kBonusCard" class="card p-4 border-t-4 border-t-slate-400"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Bonus / Short meat</p><p class="mt-2 text-2xl font-bold num" id="kBonus">0</p><p class="text-xs text-slate-500" id="kBonusNote">no data</p><span id="kBonusBadge" class="mt-2 inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-slate-100 text-slate-600">—</span></article>
     </div>
 
+    <!-- HOTEL & HOSTEL SALES -->
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-utensils text-indigo-600"></i>
+        <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Hotel &amp; hostel sales</h3>
+        <span class="text-xs text-slate-400" id="dhNote"></span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3">
+        <div class="lg:col-span-2 overflow-x-auto border-b lg:border-b-0 lg:border-r border-slate-100">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+              <th class="px-4 py-2.5 font-bold text-xs uppercase">Customer</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase">Type</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Weight</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Billed</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Concession</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Balance due</th>
+            </tr></thead>
+            <tbody id="dhBody" class="divide-y divide-slate-100"></tbody>
+            <tfoot id="dhFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+          </table>
+        </div>
+        <div class="p-4 bg-slate-50 space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-slate-500">Counter meat sales</span><span class="font-bold num" id="dhCounter">₹0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">Hotel &amp; hostel sales</span><span class="font-bold num text-indigo-700" id="dhHotel">₹0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">Paid on the day</span><span class="font-bold num text-emerald-700" id="dhCash">₹0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">On account</span><span class="font-bold num text-rose-600" id="dhCredit">₹0</span></div>
+          <div class="border-t border-dashed pt-2 flex justify-between"><span class="text-slate-500">Concession given</span><span class="font-bold num text-amber-700" id="dhConc">₹0</span></div>
+          <p class="text-[11px] text-slate-500 leading-snug" id="dhExplain">Concession is the gap between the counter rate and the price these customers actually pay. It is already reflected in revenue — shown here so the discount handed out over the period is visible.</p>
+        </div>
+      </div>
+    </div>
+
     <!-- MONTHLY OVERHEADS -->
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
@@ -282,13 +321,13 @@
           <div id="ovhBreakdown" class="space-y-2"></div>
         </div>
         <div class="p-4 bg-slate-50 space-y-2 text-sm">
-          <div class="flex justify-between"><span class="text-slate-500">Operating profit (daily)</span><span class="font-bold num" id="ovhOperating">₹0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">Profit before overheads</span><span class="font-bold num" id="ovhOperating">₹0</span></div>
           <div class="flex justify-between"><span class="text-slate-500">Overheads charged</span><span class="font-bold num text-rose-600" id="ovhTotal">₹0</span></div>
           <div class="border-t-2 border-slate-200 pt-2 flex justify-between items-baseline">
-            <span class="font-bold text-slate-700">Net after overheads</span>
+            <span class="font-bold text-slate-700">Net profit (matches the headline)</span>
             <span class="font-bold num text-xl" id="ovhNet">₹0</span>
           </div>
-          <p class="text-[11px] text-slate-400 leading-snug pt-1">Overheads are whole-month costs. They are excluded from each day&rsquo;s profit and charged once at month end.</p>
+          <p class="text-[11px] text-slate-400 leading-snug pt-1">Each month&rsquo;s overheads are spread evenly across the days of that month, so every day carries its share of rent, power and salary.</p>
         </div>
       </div>
     </div>
@@ -473,7 +512,7 @@
 
         <!-- G: Meat sales -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales</div>
+          <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">counter &amp; walk-in — hotels go in Section H</span></div>
           <div class="grid-f">
             <div><label class="lbl">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
             <div><label class="lbl">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
@@ -481,9 +520,26 @@
           </div>
         </fieldset>
 
-        <!-- H: Closing -->
+        <!-- H: Hotel & hostel sales -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">H</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">meat = open + obtained − skin − skinless − liver − damage</span></div>
+          <div class="sec-head bg-indigo-700"><span class="sec-badge !text-indigo-900">H</span>Hotel &amp; Hostel Sales
+            <button type="button" id="btnAddHotelSale" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal"><i class="fa-solid fa-plus mr-1"></i>Add sale</button>
+          </div>
+          <div class="p-5">
+            <div id="hotelRows" class="space-y-3"></div>
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div class="calcbox bg-indigo-50 border border-indigo-200"><span class="text-indigo-800">Weight sold</span><span class="ml-auto font-bold num text-indigo-900" id="o_hotelWt">0.000 kg</span></div>
+              <div class="calcbox bg-indigo-50 border border-indigo-200"><span class="text-indigo-800">Sale value</span><span class="ml-auto font-bold num text-indigo-900" id="o_hotelAmt">₹0.00</span></div>
+              <div class="calcbox bg-amber-50 border border-amber-200"><span class="text-amber-800">Concession given</span><span class="ml-auto font-bold num text-amber-800" id="o_hotelConc">₹0.00</span></div>
+              <div class="calcbox bg-rose-50 border border-rose-200"><span class="text-rose-800">On account</span><span class="ml-auto font-bold num text-rose-700" id="o_hotelCredit">₹0.00</span></div>
+            </div>
+            <p class="mt-3 text-[11px] text-slate-500">Priced at the day&rsquo;s Section&nbsp;C market rate less each customer&rsquo;s agreed concession. This weight also comes out of the meat pool, so the closing meat below allows for it.</p>
+          </div>
+        </fieldset>
+
+        <!-- I: Closing -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">meat = open + obtained − counter sales − hotel sales − damage</span></div>
           <div class="grid-f">
             <div><label class="lbl" for="f_closeBirds">Closing birds <span class="req">*</span> <button type="button" data-auto="closeBirds" class="autoBtn">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
             <div><label class="lbl">Closing bird weight <span class="req">*</span> <button type="button" data-auto="closeWt" class="autoBtn">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
@@ -513,10 +569,15 @@
             <div class="flex justify-between"><dt class="text-slate-500">Meat variance</dt><dd class="font-bold num" id="o_meatVar">0</dd></div>
             <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Live birds sold (retail)</dt><dd class="font-bold num text-emerald-700" id="o_liveRetail">0</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Dressed birds</dt><dd class="font-bold num" id="o_dressedCt">0</dd></div>
-            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Total revenue</dt><dd class="font-bold num text-emerald-700" id="o_revenue">₹0.00</dd></div>
+            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Counter meat sales</dt><dd class="font-bold num" id="o_counterAmt">₹0.00</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Hotel &amp; hostel sales</dt><dd class="font-bold num text-indigo-700" id="o_hotelAmt2">₹0.00</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Concession given <span class="text-[10px] uppercase tracking-wide text-slate-400">memo</span></dt><dd class="font-bold num text-amber-700" id="o_hotelConc2">₹0.00</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Total revenue</dt><dd class="font-bold num text-emerald-700" id="o_revenue">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Cost of stock sold</dt><dd class="font-bold num text-rose-600" id="o_cogs">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Labour (this day)</dt><dd class="font-bold num text-rose-600" id="o_labour">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Advances paid <span class="text-[10px] uppercase tracking-wide text-slate-400">memo</span></dt><dd class="font-bold num text-slate-500" id="o_advances">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Other expenses</dt><dd class="font-bold num text-rose-600" id="o_otherExp">₹0.00</dd></div>
+            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Overheads (day&rsquo;s share)</dt><dd class="font-bold num text-rose-600" id="o_overheads">₹0.00</dd></div>
             <div data-admin="1" class="border-t-2 border-slate-200 pt-3 flex justify-between items-baseline"><dt class="font-bold text-slate-700">Net profit / loss</dt><dd class="font-bold num text-xl" id="o_netProfit">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between text-xs"><dt class="text-slate-400">Closing stock value (carried)</dt><dd class="font-semibold num text-slate-500" id="o_closeValue">₹0.00</dd></div>
           </dl>
@@ -558,6 +619,50 @@
     </div>
   </section>
 
+  <!-- ================= HOTELS & HOSTELS ================= -->
+  <section id="view-customers" class="view hidden">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div><h2 class="text-xl font-bold text-slate-900">Hotels &amp; Hostels</h2>
+        <p class="text-sm text-slate-500"><span id="custBranchLabel" class="font-semibold text-emerald-700">—</span> · contract buyers priced under the counter rate · each keeps its own ledger</p></div>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div><label class="lbl" for="custFilter">Show</label><select id="custFilter" class="inp"><option value="">All</option><option value="hotel">Hotels only</option><option value="hostel">Hostels only</option><option value="due">With a balance due</option></select></div>
+        <button id="btnAddCustomer" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add hotel / hostel</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
+      <article class="card p-4 border-t-4 border-t-indigo-600"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Customers</p><p class="mt-2 text-2xl font-bold num" id="ckCount">0</p></article>
+      <article class="card p-4 border-t-4 border-t-emerald-600"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Billed to date</p><p class="mt-2 text-2xl font-bold num text-emerald-700" id="ckBilled">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-slate-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Received</p><p class="mt-2 text-2xl font-bold num" id="ckReceived">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-rose-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Outstanding</p><p class="mt-2 text-2xl font-bold num text-rose-600" id="ckOutstanding">₹0</p></article>
+      <article class="card p-4 border-t-4 border-t-amber-500"><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Concession given</p><p class="mt-2 text-2xl font-bold num text-amber-600" id="ckConcession">₹0</p></article>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-utensils text-indigo-600"></i>
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Customers &amp; agreed prices</h3>
+        <span class="text-xs text-slate-400" id="custNote"></span>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Code</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Name</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Type</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Skin</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Skinless</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Liver</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Billed</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Received</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Balance due</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Actions</th>
+        </tr></thead>
+        <tbody id="custBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="custFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+      </table></div>
+    </div>
+  </section>
+
   <!-- ================= LABOUR ================= -->
   <section id="view-workers" class="view hidden">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
@@ -585,6 +690,56 @@
         <span class="text-xs text-slate-400">Tap a worker to mark the day</span>
       </div>
       <div id="attendanceGrid" class="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+    </div>
+
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-money-bill-transfer text-amber-600"></i>
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Daily labour sheet</h3>
+        <span class="text-xs text-slate-400" id="sheetNote"></span>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Worker</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Role</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Present</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Day wage</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Earned today</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Advance taken</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Balance due</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Actions</th>
+        </tr></thead>
+        <tbody id="sheetBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="sheetFoot" class="bg-amber-50 font-bold text-amber-900"></tfoot>
+      </table></div>
+    </div>
+
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <i class="fa-solid fa-calendar-week text-rose-600"></i>
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Day-wise labour &amp; deductions</h3>
+        <span class="text-xs text-slate-400" id="dwNote"></span>
+        <div class="ml-auto flex items-end gap-2">
+          <div><label class="lbl" for="dwFrom">From</label><input type="date" id="dwFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="dwTo">To</label><input type="date" id="dwTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="dwMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50">This month</button>
+          <button id="dwExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Man-days</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Wages</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Tea / tiffin</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Charged to P&amp;L</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Advances <span class="normal-case tracking-normal text-slate-400">(memo)</span></th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Who took an advance</th>
+        </tr></thead>
+        <tbody id="dwBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="dwFoot" class="bg-rose-50 font-bold text-rose-900"></tfoot>
+      </table></div>
+      <p class="px-5 py-2 text-[11px] text-slate-500 border-t border-slate-100" id="dwReconcile"></p>
     </div>
 
     <div class="card overflow-hidden mb-5">
