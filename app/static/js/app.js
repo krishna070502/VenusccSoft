@@ -24,10 +24,12 @@ var DB = {
 };
 
 var DEFAULT_BRANCHES = { B01:'Branch 01 — Main Hub', B02:'Branch 02 — Downtown' };
-var DEFAULT_USERS = [
-  { id:'u1', name:'System Admin', username:'admin', password:'admin123', role:'admin', branches:['B01','B02'], active:true },
-  { id:'u2', name:'Ravi Kumar', username:'ravi', password:'ravi123', role:'supervisor', branches:['B01'], active:true }
-];
+/* Left over from the browser-only version, which kept accounts in
+   localStorage. Authentication is server-side now — loadAll() below is
+   replaced by bootstrap() — so this is dead, and it is deliberately empty:
+   shipping usernames and passwords in a file anyone can read is not something
+   to leave lying around just because nothing reads it any more. */
+var DEFAULT_USERS = [];
 var DEFAULT_SETTINGS = { wasteBroiler:31, wasteParents:21, tolerance:2, dayWage:600 };
 var OVERHEAD_CATS = [
   { v:'supervisor_salary', t:'Supervisor salary', ic:'fa-user-tie' },

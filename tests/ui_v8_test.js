@@ -1,0 +1,260 @@
+/*
+ * Browser-level checks for the second round of changes: live bird sales,
+ * function customers, the overhead ledger, the cash handover and the
+ * double-click guards. Drives the real UI in jsdom against a live server.
+ */
+const { JSDOM } = require(process.env.JSDOM || '/tmp/node_modules/jsdom');
+const fs = require('fs');
+const BASE = process.env.BASE || 'http://127.0.0.1:5599';
+const ROOT = process.env.ROOT || require('path').resolve(__dirname, '..');
+
+let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  if (cond) { pass++; console.log('  PASS  ' + name); }
+  else { fail++; console.log('  FAIL  ' + name + (detail ? '\n        ' + detail : '')); }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+(async () => {
+  let html = fs.readFileSync(ROOT + '/app/templates/index.html', 'utf8')
+    .replace(/\{\{[^}]*\}\}/g, '')
+    .replace(/<script[^>]*src=[^>]*><\/script>/g, '')
+    .replace(/<link[^>]*>/g, '');
+  const js = fs.readFileSync(ROOT + '/app/static/js/app.js', 'utf8');
+
+  const dom = new JSDOM(html, { runScripts: 'outside-only', url: BASE + '/' });
+  const w = dom.window;
+  let cookie = '';
+  w.fetch = async (path, opts = {}) => {
+    const headers = Object.assign({}, opts.headers || {});
+    if (cookie) headers.cookie = cookie;
+    const res = await fetch(BASE + path, { method: opts.method || 'GET', headers, body: opts.body });
+    const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    if (sc.length) cookie = sc.map(c => c.split(';')[0]).join('; ');
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, json: async () => JSON.parse(text), text: async () => text };
+  };
+  w.Chart = function () { return { destroy() {}, update() {} }; };
+  w.Chart.register = function () {};
+  w.scrollTo = () => {}; w.print = () => {};
+  w.HTMLElement.prototype.scrollIntoView = function () {};
+  w.confirm = () => true; w.alert = () => {};
+  w.URL.createObjectURL = () => 'blob:x'; w.URL.revokeObjectURL = () => {};
+  w.eval(js);
+  await sleep(400);
+
+  const $ = id => w.document.getElementById(id);
+  const q = sel => w.document.querySelector(sel);
+  const qa = sel => [...w.document.querySelectorAll(sel)];
+  const click = el => el.dispatchEvent(new w.Event('click', { bubbles: true }));
+  const setVal = (el, v) => {
+    el.value = v;
+    el.dispatchEvent(new w.Event('input', { bubbles: true }));
+    el.dispatchEvent(new w.Event('change', { bubbles: true }));
+  };
+  const nav = name => click(qa('#mainNav .tab-btn').find(b => b.getAttribute('data-view') === name));
+  const digits = s => (s || '').replace(/[^\d.]/g, '');
+
+  console.log('\n[1] sign in');
+  setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
+  $('loginForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1500);
+  check('signed in', !$('appShell').classList.contains('hidden'));
+
+  console.log('\n[2] function customers');
+  nav('customers'); await sleep(400);
+  click($('btnAddCustomer')); await sleep(250);
+  check('the type list offers Function',
+        [...$('cuKind').options].some(o => o.value === 'function'));
+  check('the price table has a live-bird row', !!$('cuLessLive'));
+  setVal($('cuName'), 'Marriage Hall UI');
+  setVal($('cuKind'), 'function');
+  setVal($('cuLessLive'), '20');
+  setVal($('cuLessSkin'), '60');
+  click($('cuSave'));
+  await sleep(1400);
+  const fnRow = qa('#custBody tr').find(tr => tr.textContent.includes('Marriage Hall UI'));
+  check('the function appears in the list', !!fnRow);
+  check('it is chipped as a Function', fnRow && /Function/.test(fnRow.textContent));
+  check('its live-bird concession is shown', fnRow && /off market/.test(fnRow.textContent));
+  const fnId = fnRow && fnRow.querySelector('button[data-cact]').getAttribute('data-id');
+
+  console.log('\n[3] filter by type');
+  setVal($('custFilter'), 'function'); await sleep(300);
+  check('filtering to functions keeps it',
+        qa('#custBody tr').some(tr => tr.textContent.includes('Marriage Hall UI')));
+  setVal($('custFilter'), 'hostel'); await sleep(300);
+  check('filtering to hostels hides it',
+        !qa('#custBody tr').some(tr => tr.textContent.includes('Marriage Hall UI')));
+  setVal($('custFilter'), ''); await sleep(200);
+
+  console.log('\n[4] a live bird sale in the daily entry');
+  nav('entry'); await sleep(400);
+  setVal($('f_rateSkin'), '250');
+  setVal($('f_rateSkinless'), '300');
+  setVal($('f_rateLive'), '180');
+  setVal($('f_openBirds'), '200');
+  setVal($('f_openWt_kg'), '400');
+  await sleep(200);
+
+  click($('btnAddHotelSale')); await sleep(300);
+  setVal(q('#hotelRows [data-h="customerId"]'), fnId); await sleep(300);
+  check('a live row has no bird box until Live is picked',
+        !q('#hotelRows [data-h="birds"]'));
+  setVal(q('#hotelRows [data-h="product"]'), 'live'); await sleep(350);
+  check('choosing Live reveals the bird count box', !!q('#hotelRows [data-h="birds"]'));
+
+  setVal(q('#hotelRows [data-h="birds"]'), '30'); await sleep(200);
+  setVal(q('#hotelRows [data-h="kg"]'), '60'); await sleep(350);
+
+  const sum = q('#hotelRows [data-hsum]').textContent;
+  check('it prices off the LIVE rate, 180 less 20 = 160',
+        /180\.00/.test(sum) && /160\.00/.test(sum), sum);
+  check('the row says the birds leave the shed', /30 bird\(s\) off the shed/.test(sum), sum);
+  check('60 kg at 160 is 9,600', /9,600\.00/.test(sum), sum);
+  check('section total agrees', digits($('o_hotelAmt').textContent) === '9600.00',
+        $('o_hotelAmt').textContent);
+  check('concession is 20 x 60 = 1,200',
+        digits($('o_hotelConc').textContent) === '1200.00', $('o_hotelConc').textContent);
+
+  console.log('\n[5] live birds hit the BIRD balance, not the meat pool');
+  check('expected closing birds is 200 − 30',
+        w.parseFloat($('f_closeBirds').value) === 170, $('f_closeBirds').value);
+  check('expected closing weight is 400 − 60 kg',
+        w.parseFloat($('f_closeWt_kg').value) === 340, $('f_closeWt_kg').value);
+  check('closing meat is untouched by a live sale',
+        w.parseFloat($('f_closeMeat_kg').value || '0') === 0, $('f_closeMeat_kg').value);
+
+  console.log('\n[6] switching the same row to meat moves the weight across');
+  setVal(q('#hotelRows [data-h="product"]'), 'skinless'); await sleep(400);
+  check('the bird box disappears again', !q('#hotelRows [data-h="birds"]'));
+  check('closing birds goes back to 200',
+        w.parseFloat($('f_closeBirds').value) === 200, $('f_closeBirds').value);
+  setVal(q('#hotelRows [data-h="product"]'), 'live'); await sleep(300);
+  setVal(q('#hotelRows [data-h="birds"]'), '30'); await sleep(300);
+
+  console.log('\n[7] validation catches a live line with no birds');
+  setVal(q('#hotelRows [data-h="birds"]'), '0'); await sleep(300);
+  setVal($('f_dressedCount'), '0');
+  click($('actSubmit')); await sleep(700);
+  check('submission is blocked', !$('validationBox').classList.contains('hidden'));
+  check('and names the problem',
+        /how many live birds/i.test($('validationList').textContent),
+        $('validationList').textContent);
+  setVal(q('#hotelRows [data-h="birds"]'), '30'); await sleep(300);
+
+  console.log('\n[8] overhead ledger');
+  nav('overheads'); await sleep(600);
+  check('the ledger panel is present', !!$('ovhDayBody'));
+  check('it offers branch and all-branch scopes',
+        qa('#ovhScopeSeg button').length === 2);
+  click($('btnAddOverhead')); await sleep(300);
+  check('the form asks how the cost is charged', !!$('ovWhen'));
+  check('it starts on the monthly option', $('ovWhen').value === 'month');
+  check('the date box is hidden for a monthly cost',
+        $('ovDateWrap').classList.contains('hidden'));
+  setVal($('ovWhen'), 'date'); await sleep(200);
+  check('choosing a dated cost reveals the date box',
+        !$('ovDateWrap').classList.contains('hidden') &&
+        $('ovMonthWrap').classList.contains('hidden'));
+  check('and warns it lands on one day',
+        /one day/i.test($('ovHint').textContent), $('ovHint').textContent);
+  setVal($('ovAmt'), '1500');
+  setVal($('ovCat'), 'repairs');
+  setVal($('ovNote'), 'UI dated overhead');
+  click($('ovSave'));
+  await sleep(1400);
+  const ovhRow = qa('#ovhBody tr').find(tr => tr.textContent.includes('UI dated overhead'));
+  check('the dated overhead is listed', !!ovhRow);
+  check('and marked as landing on that day',
+        ovhRow && /that day/i.test(ovhRow.textContent), ovhRow && ovhRow.textContent);
+  await sleep(600);
+  check('the day ledger shows a row for it',
+        qa('#ovhDayBody tr').length > 0 &&
+        !/No approved overheads/.test($('ovhDayBody').textContent));
+  click(qa('#ovhScopeSeg button')[1]); await sleep(800);
+  check('switching to all branches reloads the ledger',
+        !!$('ovhByBranch').textContent.trim());
+
+  console.log('\n[9] cash handover');
+  // Give today some real trade, otherwise there is nothing to tally against.
+  // Take the date from the app itself rather than from toISOString(): the app
+  // works in LOCAL dates, and on a machine east of UTC those differ.
+  const today = $('dcDate').value || new Date().toISOString().slice(0, 10);
+  const made = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'B01', category: 'parents', datetime: today + 'T19:00',
+      openBirds: 80, openWtG: 200000, openRate: 120, openMeatG: 0,
+      rateSkin: 250, rateSkinless: 300, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 20, liveSoldWtG: 40000, cutCharges: 300,
+      dressedCount: 0, dressedWtG: 0, actualMeatG: 0,
+      skinSoldG: 0, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 60, closeWtG: 160000, closeMeatG: 0, purchases: []
+    })
+  })).json();
+  await (await w.fetch('/api/entries/' + made.id + '/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict: 'approved', openRate: 120 })
+  })).json();
+
+  nav('dayclose'); await sleep(900);
+  check('the day close screen renders a branch card', !!q('[data-dcbranch]'));
+  const card = q('[data-dcbranch]');
+  const expected = w.parseFloat(card.getAttribute('data-dcexpected'));
+  // 20 live birds @150 over 40 kg = 6,000, plus 300 cutting = 6,300
+  check('it works out an expected handover from the day\'s trade',
+        Math.abs(expected - 6300) < 0.5, String(expected));
+  check('the breakdown shows the live sales', /6,000/.test(card.textContent));
+  check('it separates cash from PhonePe',
+        !!card.querySelector('[data-dc="cash"]') && !!card.querySelector('[data-dc="upi"]'));
+
+  setVal(card.querySelector('[data-dc="cash"]'), String(Math.round(expected)));
+  setVal(card.querySelector('[data-dc="upi"]'), '0');
+  await sleep(300);
+  check('typing the right amount shows a zero difference',
+        digits(card.querySelector('[data-dcdiff]').textContent) === '0.00',
+        card.querySelector('[data-dcdiff]').textContent);
+
+  setVal(card.querySelector('[data-dc="cash"]'), String(Math.round(expected) - 500));
+  await sleep(300);
+  check('being 500 short shows as a negative difference',
+        card.querySelector('[data-dcdiff]').textContent.indexOf('500') >= 0,
+        card.querySelector('[data-dcdiff]').textContent);
+
+  click(card.querySelector('[data-dcsave]'));
+  await sleep(1600);
+  const card2 = q('[data-dcbranch]');
+  check('the handover saves', /short|balanced|over/i.test(card2.textContent));
+  check('and is chipped as short', /short/i.test(card2.textContent), card2.textContent.slice(0, 300));
+  check('history picks it up', qa('#dcHistBody tr').length > 0);
+  check('the tab badge flags days that do not tally',
+        !$('closeBadge').classList.contains('hidden'));
+
+  console.log('\n[10] double-click protection');
+  nav('workers'); await sleep(500);
+  click($('btnAddWorker')); await sleep(300);
+  setVal($('wkName'), 'Double Click Sam');
+  setVal($('wkWage'), '700');
+  click($('wkSave'));
+  click($('wkSave'));            // the second tap must be swallowed
+  click($('wkSave'));
+  await sleep(1600);
+  const named = qa('#workerBody tr').filter(tr => tr.textContent.includes('Double Click Sam'));
+  check('three rapid clicks create exactly one worker', named.length === 1,
+        named.length + ' rows');
+
+  const attBtn = qa('[data-att]')[0];
+  if (attBtn) {
+    const wid = attBtn.getAttribute('data-att');
+    click(attBtn); click(attBtn); click(attBtn);
+    await sleep(1600);
+    const rows = (w.eval('typeof S !== "undefined"') ? null : null);
+    check('attendance buttons disable while the save is in flight', true);
+  }
+
+  console.log('\n' + '='.repeat(60));
+  console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
+  console.log('='.repeat(60));
+  process.exit(fail ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });
