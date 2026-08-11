@@ -37,6 +37,29 @@ python run.py
 
 ---
 
+## Upgrading an existing installation
+
+`db.create_all()` only ever creates *tables*. It will not add a *column* to a
+table that already exists, so an installation set up by an earlier release ends
+up one or more columns short, and the first query that touches them fails —
+which is how a missing `overheads.spend_date` showed up as a 500 straight after
+signing in.
+
+The app now closes that gap itself on start-up, and there is a command for it:
+
+```
+python manage.py upgrade-db
+```
+
+It creates missing tables, runs `ALTER TABLE ... ADD COLUMN` for every column
+the models have and the database has not, and creates missing indexes. It never
+drops or rewrites anything, it is safe to run repeatedly, and a database that is
+already current reports no changes. Set `AUTO_UPGRADE_DB=0` to run migrations
+yourself; the app then returns a **503 saying what is missing and what to run**,
+rather than a bare 500.
+
+---
+
 ## Before anything else — rotate the database password
 
 The connection string was shared in a chat and is written into `.env`.
@@ -86,7 +109,8 @@ is the bundled container or your own, and on every Compose v2 rather than only
 
 | Command | Purpose |
 |---|---|
-| `python manage.py init-db` | Create every table (safe to re-run) |
+| `python manage.py init-db` | Create every table, then upgrade (safe to re-run) |
+| `python manage.py upgrade-db` | Bring an older database up to the current models |
 | `python manage.py create-admin` | Interactive administrator account |
 | `python manage.py seed` | Load the 14-day demo dataset |
 | `python manage.py reset-db` | Drop and recreate everything |
@@ -107,8 +131,9 @@ venus/
 │  ├─ __init__.py        factory, error handlers, page route
 │  ├─ config.py          environment settings, connection pooling
 │  ├─ extensions.py      the SQLAlchemy instance
-│  ├─ models.py          14 tables
+│  ├─ models.py          15 tables
 │  ├─ calc.py            the authoritative calculation engine
+│  ├─ schema.py          brings an older database up to the models
 │  ├─ security.py        sessions, idle timeout, RBAC, audit
 │  ├─ api.py             REST endpoints
 │  ├─ seed.py            demo dataset
@@ -121,7 +146,7 @@ venus/
 │  ├─ schema.sql         the DDL, for provisioning by hand
 │  └─ test-report.md     latest test run
 ├─ tests/
-│  └─ test_api.py        266-case suite
+│  └─ test_api.py        367-case suite
 ├─ docker-compose.yml
 ├─ manage.py  run.py  wsgi.py
 ├─ requirements.txt
@@ -140,12 +165,13 @@ venus/
 | `daily_entries` | One row per branch + category + day |
 | `purchases` | Birds bought in; several suppliers per day allowed |
 | `mortality_photos` | Compressed JPEGs attached to an entry |
-| `customers` | Hotels and hostels, per branch, with the price agreed for each |
+| `customers` | Hotels, hostels and functions, per branch, with the price agreed for each |
 | `customer_sales` | What each hotel took on a given day, at market and at their rate |
 | `customer_payments` | Money received against a hotel's outstanding balance |
 | `workers` | Dressers, cutters and helpers, with a daily wage |
 | `labour_ledger` | Attendance, payments, advances, tea and tiffin |
-| `overheads` | Rent, electricity, supervisor salary — monthly, approved |
+| `overheads` | Rent, power, salaries — monthly and spread, or dated and charged to one day |
+| `day_close` | The cash and PhonePe handed over at close, per branch per day |
 | `settings` | Waste percentages, tolerance, default wage |
 | `activity_log` | Every login and mutation, with user, role, branch and IP |
 
@@ -201,12 +227,43 @@ server-side:
 
 ---
 
-## Hotels & hostels
+## Performance
 
-A hotel does not pay the counter price. You register it once under
-**Hotels & Hostels** with the concession agreed for skin, skinless and liver —
-"fifty rupees under market for skinless" — and from then on every sale is
-priced from that day's Section C rate:
+The first version loaded everything and cost three queries per entry. Measured
+on the demo dataset, with a 50 KB mortality photo on every entry:
+
+| | Queries | Payload | Time |
+|---|---|---|---|
+| Before | 358 | 270 KB (+2.8 MB of photos) | 487 ms |
+| After | **23** | **337 KB, photos excluded** | **103 ms** |
+
+Three things changed:
+
+* **`DayCostIndex`** resolves labour and overheads for every branch-day in
+  three grouped queries instead of three per entry. The query count no longer
+  grows with the number of records — pinned by a test that adds 40 entries and
+  asserts the count barely moves.
+* **Eager loading.** `entries_query()` pulls purchases, photos, hotel lines and
+  user names in one round trip each rather than one per row.
+* **Photos are deferred and opt-in.** `MortalityPhoto.data_url` is a deferred
+  column, so counting photos no longer drags the base64 off the disk. Lists
+  carry `photoCount`; the browser fetches images from
+  `/api/entries/<id>/photos` only when an entry is opened.
+
+Paging is real: `/api/entries?page=&pageSize=` returns rows with `total` and
+`pages`, capped at 1,000. The first load takes a **120-day window** rather than
+"the newest 2,000 and quietly lose the rest" — and when a report asks for dates
+outside that window the browser widens it first, so a date range can never
+silently omit days that simply had not been fetched.
+
+---
+
+## Hotels, hostels & functions
+
+A hotel does not pay the counter price. Register it once under
+**Hotels & Functions** with the concession agreed for skin, skinless, liver and
+live birds — "fifty rupees under market for skinless" — and from then on every
+sale is priced from that day's Section C rate:
 
 ```
 their rate  =  today's market rate  −  agreed concession
@@ -217,8 +274,12 @@ A customer can be put on a flat contract rate instead, and any single line can
 be overridden for a one-off price. Both figures are stored on every sale line,
 so the discount handed out over a period can always be added up.
 
-* Hotel sales are **additional to** the counter figures in Section G. Their
-  weight comes out of the same meat pool, so closing meat allows for them.
+* Three types: **hotel**, **hostel** and **function** — a marriage party or
+  bulk order, priced the same way, with a per-line override for a discount
+  negotiated on the day.
+* Sales are **additional to** the counter figures in Section G. Meat comes out
+  of the meat pool; **live birds come off the bird count and weight instead**,
+  so a function taking 30 live birds reduces closing birds by 30, not the meat.
 * Each line is marked **paid** or **on account**. Paid settles on the day; on
   account adds to that customer's balance.
 * Every hotel has its **own ledger** — dated sales, receipts and a running
@@ -227,6 +288,42 @@ so the discount handed out over a period can always be added up.
   it is listed as pending and excluded from every balance.
 * Both admins and supervisors can register a customer and record a receipt.
   Only an admin can delete one, or change an opening balance.
+
+---
+
+## Overheads
+
+Two shapes, because a shop has two kinds of cost:
+
+* **Dated** — spent on one day (a repair, a delivery charge). Charged to that
+  day in full.
+* **Monthly** — a standing cost (rent, power, salary). Spread evenly across the
+  days of the month, so no single day carries the whole rent.
+
+The **overhead ledger** shows either one branch or every branch at once, day by
+day over a date range, with the per-branch split on each row and a CSV export.
+
+---
+
+## End of day — cash handover
+
+At close the supervisor records what was handed to management, split between
+cash and PhonePe. It is set against what the day's trading says should be in
+hand — which is deliberately **not** revenue:
+
+```
+  counter meat + live sales + cutting charges
++ hotel / function sales paid on the day
++ receipts collected against old bills
+− wages, advances, tea, tiffin and shop costs paid out
+= what should be handed over
+```
+
+A sale on account puts nothing in the till, and an advance handed to a cutter
+takes money out of it. Comparing against revenue would show a false shortfall
+on any day with either. The difference reads as **balanced**, **short** or
+**over**; the tab carries a badge for days that do not tally or were never
+declared; and an admin can verify a handover to lock it.
 
 ---
 
@@ -243,7 +340,20 @@ throughout: 200 kg opening at ₹120 plus 205 kg bought at ₹130 gives a
 weighted average of **₹125.06/kg**; revenue **₹17,180.00**; closing meat
 **9.000 kg** with liver correctly drawn from the meat pool.
 
-The hotel module adds 41 API cases and 38 browser-level checks driven through
-the real UI in jsdom: a hotel on ₹50 under a ₹250 market is billed ₹200/kg,
-20 kg comes to ₹4,000 with ₹1,000 recorded as concession, that 20 kg leaves the
-closing meat, and the balance only appears on the ledger after approval.
+**367 API cases and 83 browser-level checks** now run against the real UI in
+jsdom. Worked examples the suite pins down:
+
+* A hotel on ₹50 under a ₹250 market is billed ₹200/kg; 20 kg comes to ₹4,000
+  with ₹1,000 recorded as concession, and that 20 kg leaves the closing meat.
+* A function on ₹20 under a ₹180 live rate taking 30 birds over 60 kg is billed
+  ₹9,600; closing birds drops by 30 and closing **meat is untouched**.
+* A ₹3,000 monthly rent divides exactly by the days in the month; a ₹500 dated
+  repair lands on its own day in full.
+* A day selling ₹17,180 over the counter with a ₹500 advance paid out expects
+  ₹16,680 in hand; declaring ₹15,000 + ₹1,180 reads as ₹1,000 short.
+* Three rapid clicks on "Save worker" create one worker, and the same advance
+  posted twice within seconds is refused with a 409.
+* A database built by an older release is detected, upgraded in place, and signs
+  in normally with existing rows untouched. The suite builds a genuine old
+  schema, asserts the 503 explains itself, upgrades, and re-runs every module
+  against it.

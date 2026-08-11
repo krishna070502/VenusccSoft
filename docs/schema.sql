@@ -65,22 +65,24 @@ CREATE TABLE customers (
 	less_skin NUMERIC(12, 2) NOT NULL, 
 	less_skinless NUMERIC(12, 2) NOT NULL, 
 	less_liver NUMERIC(12, 2) NOT NULL, 
+	less_live NUMERIC(12, 2) NOT NULL, 
 	rate_skin NUMERIC(12, 2) NOT NULL, 
 	rate_skinless NUMERIC(12, 2) NOT NULL, 
 	rate_liver NUMERIC(12, 2) NOT NULL, 
+	rate_live NUMERIC(12, 2) NOT NULL, 
 	opening_balance NUMERIC(14, 2) NOT NULL, 
 	is_active BOOLEAN NOT NULL, 
 	created_by_id INTEGER, 
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
 	PRIMARY KEY (id), 
 	CONSTRAINT uq_customer_branch_code UNIQUE (branch_id, code), 
-	CONSTRAINT ck_customer_kind CHECK (kind IN ('hotel','hostel')), 
+	CONSTRAINT ck_customer_kind CHECK (kind IN ('hotel','hostel','function')), 
 	CONSTRAINT ck_customer_price_mode CHECK (price_mode IN ('less','fixed')), 
 	FOREIGN KEY(branch_id) REFERENCES branches (id) ON DELETE CASCADE, 
 	FOREIGN KEY(created_by_id) REFERENCES users (id)
 );
-CREATE INDEX ix_customers_branch_id ON customers (branch_id);
 CREATE INDEX ix_customer_branch_active ON customers (branch_id, is_active);
+CREATE INDEX ix_customers_branch_id ON customers (branch_id);
 
 CREATE TABLE daily_entries (
 	id VARCHAR(32) NOT NULL, 
@@ -133,10 +135,33 @@ CREATE TABLE daily_entries (
 CREATE INDEX ix_entry_branch_date ON daily_entries (branch_id, business_date);
 CREATE INDEX ix_entry_status ON daily_entries (status);
 
+CREATE TABLE day_close (
+	id VARCHAR(32) NOT NULL, 
+	branch_id INTEGER NOT NULL, 
+	business_date DATE NOT NULL, 
+	cash_amount NUMERIC(14, 2) NOT NULL, 
+	upi_amount NUMERIC(14, 2) NOT NULL, 
+	expected_amount NUMERIC(14, 2) NOT NULL, 
+	note TEXT, 
+	declared_by_id INTEGER, 
+	declared_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	verified_by_id INTEGER, 
+	verified_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_dayclose_branch_date UNIQUE (branch_id, business_date), 
+	FOREIGN KEY(branch_id) REFERENCES branches (id) ON DELETE CASCADE, 
+	FOREIGN KEY(declared_by_id) REFERENCES users (id), 
+	FOREIGN KEY(verified_by_id) REFERENCES users (id)
+);
+CREATE INDEX ix_day_close_branch_id ON day_close (branch_id);
+CREATE INDEX ix_day_close_business_date ON day_close (business_date);
+CREATE INDEX ix_dayclose_branch_date ON day_close (branch_id, business_date);
+
 CREATE TABLE overheads (
 	id VARCHAR(32) NOT NULL, 
 	branch_id INTEGER NOT NULL, 
 	period_month VARCHAR(7) NOT NULL, 
+	spend_date DATE, 
 	category VARCHAR(40) NOT NULL, 
 	amount NUMERIC(14, 2) NOT NULL, 
 	note TEXT, 
@@ -152,9 +177,10 @@ CREATE TABLE overheads (
 	FOREIGN KEY(created_by_id) REFERENCES users (id), 
 	FOREIGN KEY(reviewed_by_id) REFERENCES users (id)
 );
-CREATE INDEX ix_overhead_branch_month ON overheads (branch_id, period_month);
 CREATE INDEX ix_overheads_branch_id ON overheads (branch_id);
 CREATE INDEX ix_overheads_period_month ON overheads (period_month);
+CREATE INDEX ix_overhead_branch_month ON overheads (branch_id, period_month);
+CREATE INDEX ix_overheads_spend_date ON overheads (spend_date);
 
 CREATE TABLE user_branches (
 	user_id INTEGER NOT NULL, 
@@ -194,9 +220,9 @@ CREATE TABLE customer_payments (
 	FOREIGN KEY(branch_id) REFERENCES branches (id) ON DELETE CASCADE, 
 	FOREIGN KEY(created_by_id) REFERENCES users (id)
 );
-CREATE INDEX ix_customer_payments_pay_date ON customer_payments (pay_date);
 CREATE INDEX ix_customer_payments_customer_id ON customer_payments (customer_id);
 CREATE INDEX ix_payment_customer_date ON customer_payments (customer_id, pay_date);
+CREATE INDEX ix_customer_payments_pay_date ON customer_payments (pay_date);
 
 CREATE TABLE customer_sales (
 	id VARCHAR(32) NOT NULL, 
@@ -206,6 +232,7 @@ CREATE TABLE customer_sales (
 	line_no INTEGER NOT NULL, 
 	product VARCHAR(16) NOT NULL, 
 	weight_g INTEGER NOT NULL, 
+	birds INTEGER NOT NULL, 
 	market_rate NUMERIC(12, 2) NOT NULL, 
 	rate NUMERIC(12, 2) NOT NULL, 
 	rate_override NUMERIC(12, 2), 
@@ -213,15 +240,15 @@ CREATE TABLE customer_sales (
 	settled BOOLEAN NOT NULL, 
 	note TEXT, 
 	PRIMARY KEY (id), 
-	CONSTRAINT ck_sale_product CHECK (product IN ('skin','skinless','liver')), 
+	CONSTRAINT ck_sale_product CHECK (product IN ('skin','skinless','liver','live')), 
 	FOREIGN KEY(entry_id) REFERENCES daily_entries (id) ON DELETE CASCADE, 
 	FOREIGN KEY(customer_id) REFERENCES customers (id) ON DELETE CASCADE, 
 	FOREIGN KEY(branch_id) REFERENCES branches (id) ON DELETE CASCADE
 );
-CREATE INDEX ix_customer_sales_customer_id ON customer_sales (customer_id);
-CREATE INDEX ix_sale_customer ON customer_sales (customer_id);
 CREATE INDEX ix_sale_branch ON customer_sales (branch_id);
 CREATE INDEX ix_customer_sales_entry_id ON customer_sales (entry_id);
+CREATE INDEX ix_customer_sales_customer_id ON customer_sales (customer_id);
+CREATE INDEX ix_sale_customer ON customer_sales (customer_id);
 
 CREATE TABLE labour_ledger (
 	id VARCHAR(32) NOT NULL, 

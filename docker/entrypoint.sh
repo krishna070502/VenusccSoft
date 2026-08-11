@@ -34,6 +34,7 @@ fi
 if [ "${AUTO_INIT_DB:-1}" = "1" ]; then
   log "ensuring tables exist"
   python manage.py init-db
+  python manage.py upgrade-db
 fi
 
 if [ -n "${ADMIN_USERNAME}" ] && [ -n "${ADMIN_PASSWORD}" ]; then

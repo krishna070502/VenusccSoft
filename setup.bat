@@ -34,6 +34,7 @@ if errorlevel 1 ( echo   Install failed. & pause & exit /b 1 )
 echo.
 echo [4/5] Creating database tables...
 python manage.py init-db
+python manage.py upgrade-db
 if errorlevel 1 (
     echo   Could not reach the database. Check DATABASE_URL in .env
     pause & exit /b 1

@@ -6,16 +6,17 @@ from decimal import Decimal
 
 from .extensions import db
 from .models import (Branch, Customer, CustomerPayment, CustomerSale, DailyEntry,
-                     LabourLedger, Overhead, Purchase, User, Worker, utcnow)
+                     DayClose, LabourLedger, Overhead, Purchase, User, Worker, utcnow)
 
 SUPPLIERS = ["Sunrise Poultry", "Green Valley", "Deccan Agro"]
 WORKER_NAMES = [("Suresh", "dresser"), ("Mahesh", "dresser"),
                 ("Anil", "cutter"), ("Vikram", "cutter")]
-# name, hotel/hostel, concession off market for skin / skinless / liver
+# name, kind, concession off market for skin / skinless / liver / live bird
 CUSTOMERS = [
-    ("Grand Palace Hotel", "hotel", 40, 50, 20),
-    ("Sunrise Residency", "hotel", 25, 30, 10),
-    ("Vidya Boys Hostel", "hostel", 55, 65, 30),
+    ("Grand Palace Hotel", "hotel", 40, 50, 20, 8),
+    ("Sunrise Residency", "hotel", 25, 30, 10, 5),
+    ("Vidya Boys Hostel", "hostel", 55, 65, 30, 12),
+    ("Sri Venkateswara Kalyana Mandapam", "function", 60, 70, 35, 15),
 ]
 
 
@@ -23,6 +24,7 @@ def load_demo(admin: User) -> dict:
     """Wipes operational data and rebuilds a plausible fortnight."""
     supervisor = User.query.filter_by(role="supervisor").first() or admin
 
+    DayClose.query.delete()
     Overhead.query.delete()
     LabourLedger.query.delete()
     Worker.query.delete()
@@ -41,11 +43,11 @@ def load_demo(admin: User) -> dict:
     by_branch = {}
     for br in branches:
         by_branch[br.id] = []
-        for n, (name, kind, ls, lsl, ll) in enumerate(CUSTOMERS, start=1):
+        for n, (name, kind, ls, lsl, ll, lv) in enumerate(CUSTOMERS, start=1):
             c = Customer(branch_id=br.id, code=f"H{n:02d}", name=f"{name} ({br.code})",
                          kind=kind, price_mode="less",
                          less_skin=Decimal(ls), less_skinless=Decimal(lsl),
-                         less_liver=Decimal(ll),
+                         less_liver=Decimal(ll), less_live=Decimal(lv),
                          phone=f"98{random.randint(10000000, 99999999)}",
                          created_by_id=supervisor.id)
             db.session.add(c)
@@ -133,23 +135,41 @@ def load_demo(admin: User) -> dict:
                 # a couple of hotels take stock most days, at their agreed price
                 r_skinless = r_skin + 35
                 hotel_rows, hotel_g = [], 0
+                r_live = round(avg_rate * 1.16)
+                hotel_live_g, hotel_live_birds = 0, 0
                 for cust in random.sample(by_branch[br.id],
                                           k=random.randint(0, len(by_branch[br.id]))):
-                    product = random.choice(["skin", "skinless"])
-                    grams = random.randint(4, 22) * 1000
-                    market = r_skin if product == "skin" else r_skinless
+                    # a function usually wants live birds; hotels want meat
+                    product = (random.choice(["live", "skin", "skinless"])
+                               if cust.kind == "function"
+                               else random.choice(["skin", "skinless", "skinless"]))
+                    market = {"skin": r_skin, "skinless": r_skinless,
+                              "live": r_live}[product]
                     rate = max(market - float(cust.less_for(product)), 0)
+                    if product == "live":
+                        head = random.randint(5, 30)
+                        grams = head * avg
+                    else:
+                        head, grams = 0, random.randint(4, 22) * 1000
                     hotel_rows.append(CustomerSale(
                         customer_id=cust.id, branch_id=br.id,
                         line_no=len(hotel_rows), product=product,
-                        weight_g=grams, market_rate=Decimal(str(market)),
+                        weight_g=grams, birds=head,
+                        market_rate=Decimal(str(market)),
                         rate=Decimal(str(round(rate, 2))),
                         amount=Decimal(str(round(grams / 1000 * rate, 2))),
                         settled=random.random() < 0.35))
-                    hotel_g += grams
+                    if product == "live":
+                        hotel_live_g += grams
+                        hotel_live_birds += head
+                    else:
+                        hotel_g += grams
                     made["hotelSales"] += 1
 
                 close_m = max(open_m + meat - skin - skinless - liver - hotel_g - dmg, 0)
+                # live birds sold to a function leave the shed, so they come
+                # off the closing bird count as well as the weight
+                close_b = max(close_b - hotel_live_birds, 0)
                 status = "approved" if i > 1 else ("pending" if i == 1 else "draft")
 
                 e = DailyEntry(
@@ -177,6 +197,28 @@ def load_demo(admin: User) -> dict:
                 made["entries"] += 1
 
                 open_b, open_w, open_m, open_rate = close_b, close_b * avg, close_m, avg_rate
+
+    # ---- end-of-day cash handovers ---------------------------------------
+    # Left deliberately imperfect: most days balance, a few are short or over,
+    # which is what the tally screen exists to surface.
+    from .api import expected_cash                      # local: avoids a cycle
+    db.session.flush()
+    for br in branches:
+        for i in range(13, 1, -1):
+            d = today - timedelta(days=i)
+            exp = expected_cash(br.id, d)["expected"]
+            if exp <= 0:
+                continue
+            drift = random.choice([0, 0, 0, 0, -520, -140, 260, -1_000])
+            declared = max(exp + drift, 0)
+            upi = round(declared * random.uniform(0.2, 0.5), 2)
+            db.session.add(DayClose(
+                branch_id=br.id, business_date=d,
+                cash_amount=Decimal(str(round(declared - upi, 2))),
+                upi_amount=Decimal(str(upi)),
+                expected_amount=Decimal(str(round(exp, 2))),
+                note="Demo handover", declared_by_id=supervisor.id))
+            made["closes"] = made.get("closes", 0) + 1
 
     # ---- a few receipts against the hotel ledgers ------------------------
     for br in branches:

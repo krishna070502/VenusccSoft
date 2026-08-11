@@ -33,9 +33,15 @@ def waste_pct_for(category: str, settings: dict) -> Decimal:
 # --------------------------------------------------------------------------
 # Hotel & hostel pricing
 # --------------------------------------------------------------------------
-PRODUCTS = ("skin", "skinless", "liver")
-MARKET_KEY = {"skin": "rateSkin", "skinless": "rateSkinless", "liver": "rateLiver"}
-PRODUCT_LABEL = {"skin": "skin", "skinless": "skinless", "liver": "liver"}
+PRODUCTS = ("skin", "skinless", "liver", "live")
+# The three meat products draw from the meat pool. 'live' is a whole bird
+# leaving the shed, so it draws from the BIRD stock instead — different
+# balance, different market rate.
+MEAT_PRODUCTS = ("skin", "skinless", "liver")
+MARKET_KEY = {"skin": "rateSkin", "skinless": "rateSkinless",
+              "liver": "rateLiver", "live": "rateLive"}
+PRODUCT_LABEL = {"skin": "skin", "skinless": "skinless",
+                 "liver": "liver", "live": "live bird"}
 
 
 def price_hotel_line(line: dict, entry: dict) -> dict:
@@ -69,6 +75,7 @@ def price_hotel_line(line: dict, entry: dict) -> dict:
 
     return {"product": product, "grams": grams, "market": market, "rate": rate,
             "amount": amount, "concession": concession,
+            "birds": int(line.get("birds") or 0) if product == "live" else 0,
             "settled": bool(line.get("settled")),
             "customerId": line.get("customerId") or "",
             "customerName": line.get("customerName") or ""}
@@ -134,32 +141,39 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     # same revenue line — just at a contracted price rather than the
     # over-the-counter one.
     hotel_lines = [price_hotel_line(l, entry) for l in (entry.get("hotelSales") or [])]
-    hotel_g = {"skin": 0, "skinless": 0, "liver": 0}
+    hotel_g = {"skin": 0, "skinless": 0, "liver": 0, "live": 0}
     hotel_amt = D0
     hotel_conc = D0
     hotel_cash = D0
     hotel_credit = D0
+    hotel_birds = 0
     for h in hotel_lines:
         hotel_g[h["product"]] += h["grams"]
+        hotel_birds += h["birds"]
         hotel_amt += h["amount"]
         hotel_conc += h["concession"]
         if h["settled"]:
             hotel_cash += h["amount"]
         else:
             hotel_credit += h["amount"]
-    hotel_total_g = hotel_g["skin"] + hotel_g["skinless"] + hotel_g["liver"]
+    # meat that left the pool vs live birds that left the shed
+    hotel_meat_g = hotel_g["skin"] + hotel_g["skinless"] + hotel_g["liver"]
+    hotel_live_g = hotel_g["live"]
+    hotel_total_g = hotel_meat_g + hotel_live_g
 
     meat_sale_amt = counter_sale_amt + hotel_amt
     revenue = meat_sale_amt + live_amt + cut_amt
 
     # ---- bird & meat balance --------------------------------------------
     handled = int(entry.get("openBirds") or 0) + buy_birds
-    exp_birds = (handled - int(entry.get("liveSoldCount") or 0)
+    # a live bird sold to a hotel or a function leaves the shed exactly like a
+    # counter live sale, so it comes off the bird count and the bird weight
+    exp_birds = (handled - int(entry.get("liveSoldCount") or 0) - hotel_birds
                  - int(entry.get("mortCount") or 0) - int(entry.get("dressedCount") or 0))
     bird_var = exp_birds - int(entry.get("closeBirds") or 0)
     mort_rate = (_d(entry.get("mortCount") or 0) / _d(handled) * 100) if handled > 0 else D0
 
-    exp_close_wt_g = (avail_wt_g - int(entry.get("liveSoldWtG") or 0)
+    exp_close_wt_g = (avail_wt_g - int(entry.get("liveSoldWtG") or 0) - hotel_live_g
                       - int(entry.get("mortWtG") or 0) - dressed_wt_g)
 
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
@@ -168,7 +182,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     exp_close_meat_g = (meat_avail_g - int(entry.get("skinSoldG") or 0)
                         - int(entry.get("skinlessSoldG") or 0)
                         - int(entry.get("liverSoldG") or 0)
-                        - hotel_total_g
+                        - hotel_meat_g
                         - int(entry.get("damageG") or 0))
     meat_var_g = exp_close_meat_g - int(entry.get("closeMeatG") or 0)
 
@@ -215,13 +229,19 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "hotelAmt": money(hotel_amt), "hotelConcession": money(hotel_conc),
         "hotelCash": money(hotel_cash), "hotelCredit": money(hotel_credit),
         "hotelSkinG": hotel_g["skin"], "hotelSkinlessG": hotel_g["skinless"],
-        "hotelLiverG": hotel_g["liver"], "hotelTotalG": hotel_total_g,
+        "hotelLiverG": hotel_g["liver"], "hotelLiveG": hotel_g["live"],
+        "hotelMeatG": hotel_meat_g, "hotelTotalG": hotel_total_g,
+        "hotelBirds": hotel_birds,
         "hotelCount": len([h for h in hotel_lines if h["grams"] > 0]),
         "hotelLines": [{"customerId": h["customerId"], "customerName": h["customerName"],
                         "product": h["product"], "weightG": h["grams"],
+                        "birds": h["birds"],
                         "marketRate": money(h["market"]), "rate": money(h["rate"]),
                         "amount": money(h["amount"]), "concession": money(h["concession"]),
                         "settled": h["settled"]} for h in hotel_lines],
+        # what should have come into the till today: everything sold for cash
+        # here, with credit sales left out because no money changed hands
+        "cashSales": money(counter_sale_amt + live_amt + cut_amt + hotel_cash),
         "handled": handled, "expBirds": exp_birds, "birdVar": bird_var,
         "mortRate": float(round(mort_rate, 2)),
         "expCloseWtG": exp_close_wt_g, "meatAvailG": meat_avail_g,
@@ -294,6 +314,10 @@ def validate_for_submission(entry: dict, is_admin: bool, is_first_entry: bool) -
                     f"Hotel/hostel line {i} — the price works out to ₹0. "
                     f"Set the {PRODUCT_LABEL[priced['product']]} rate in Section C, "
                     f"or give this customer a fixed rate.")
+            # a live sale has to say how many birds went, or the bird count
+            # will not balance at closing
+            if priced["product"] == "live" and priced["birds"] <= 0:
+                missing.append(f"Hotel/hostel line {i} — how many live birds were sold?")
 
     if int(entry.get("mortCount") or 0) > 0 and not (entry.get("photos") or []):
         missing.append("Mortality photo (mortality is above zero)")

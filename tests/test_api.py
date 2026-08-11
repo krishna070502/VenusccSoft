@@ -33,8 +33,8 @@ from app.extensions import db                                 # noqa: E402
 from app.calc import (compute_entry, costing_gaps, months_in_range,          # noqa: E402
                       price_hotel_line, validate_for_submission)
 from app.models import (ActivityLog, Branch, Customer, CustomerPayment,      # noqa: E402
-                        CustomerSale, DailyEntry, LabourLedger,
-                        Overhead, Setting, User, Worker)
+                        CustomerSale, DailyEntry, DayClose, LabourLedger,
+                        MortalityPhoto, Overhead, Setting, User, Worker)
 
 app = create_app()
 RESULTS = []
@@ -125,7 +125,7 @@ def test_infrastructure():
          "GET /healthz", "ok",
          lambda: ADMIN.get("/healthz").get_json()["status"])
     case("Infrastructure", "All tables created",
-         "db.create_all()", 14,
+         "db.create_all()", 15,
          lambda: len(db.metadata.tables))
     case("Infrastructure", "SPA shell is served",
          "GET /", True,
@@ -1495,6 +1495,568 @@ def test_hotels():
                      for c in ADMIN.get("/api/customers").get_json()["customers"]))
 
 
+# ===========================================================================
+# 16. Live bird sales & function customers
+# ===========================================================================
+FN = {}
+
+
+def test_live_and_functions():
+    print("\n[16] Live bird sales & functions")
+
+    market = {"rateSkin": 250, "rateSkinless": 300, "rateLiver": 130, "rateLive": 180}
+    case("Live pricing", "A live line prices off the LIVE rate, not skin",
+         "less=15 on a 180 market", 165.0,
+         lambda: float(price_hotel_line(
+             {"product": "live", "weightG": 20_000, "birds": 10,
+              "mode": "less", "less": 15}, market)["rate"]))
+    case("Live pricing", "The head count is carried through",
+         "10 birds", 10,
+         lambda: price_hotel_line({"product": "live", "weightG": 20_000, "birds": 10},
+                                  market)["birds"])
+    case("Live pricing", "A meat line never carries a head count",
+         "birds on a skin line", 0,
+         lambda: price_hotel_line({"product": "skin", "weightG": 5_000, "birds": 9},
+                                  market)["birds"])
+
+    r = ADMIN.post("/api/customers", json={
+        "branch": "B01", "name": "Sri Kalyana Mandapam", "kind": "function",
+        "mode": "less", "lessLive": 15, "lessSkin": 60, "lessSkinless": 70})
+    FN["c"] = r.get_json() if r.status_code == 201 else {}
+    case("Functions", "A function can be registered", "kind=function", 201,
+         lambda: r.status_code)
+    case("Functions", "It is stored as its own type", "kind", "function",
+         lambda: FN["c"].get("kind"))
+    case("Functions", "It carries a live-bird concession", "lessLive", 15.0,
+         lambda: FN["c"].get("lessLive"))
+    case("Functions", "An unknown type still falls back to hotel", "kind='party'", "hotel",
+         lambda: ADMIN.post("/api/customers",
+                            json={"branch": "B01", "name": "Fallback2",
+                                  "kind": "party"}).get_json()["kind"])
+
+    # 30 live birds, 60 kg, at 180 − 15 = 165  ->  ₹9,900
+    day = D(50)
+    payload = base_entry(businessDate=day, rateLive=180, openBirds=200, openWtG=400_000,
+                         liveSoldCount=0, liveSoldWtG=0, dressedCount=0, dressedWtG=0,
+                         actualMeatG=0, skinSoldG=0, skinlessSoldG=0, liverSoldG=0,
+                         damageG=0, closeBirds=0, closeWtG=0, closeMeatG=5_000,
+                         purchases=[],
+                         hotelSales=[{"customerId": FN["c"]["id"], "product": "live",
+                                      "weightG": 60_000, "birds": 30, "settled": True}])
+    rr = ADMIN.post("/api/entries", json=payload)
+    FN["e"] = rr.get_json() if rr.status_code == 201 else {}
+    calc = FN["e"].get("calc", {})
+
+    case("Live sales", "The entry saves", "POST /api/entries", 201, lambda: rr.status_code)
+    case("Live sales", "60 kg at ₹165 is ₹9,900", "amount", 9900.0,
+         lambda: calc.get("hotelAmt"))
+    case("Live sales", "Concession is ₹15 x 60 kg", "concession", 900.0,
+         lambda: calc.get("hotelConcession"))
+    case("Live sales", "The birds come off the expected closing count",
+         "200 opening − 30 sold", 170, lambda: calc.get("expBirds"))
+    case("Live sales", "The weight comes off the expected closing weight",
+         "400 kg − 60 kg", 340_000, lambda: calc.get("expCloseWtG"))
+    case("Live sales", "It does NOT touch the meat pool",
+         "opening meat 5 kg stays", 5_000, lambda: calc.get("expCloseMeatG"))
+    case("Live sales", "Live weight is reported apart from meat weight",
+         "hotelLiveG vs hotelMeatG", [60_000, 0],
+         lambda: [calc.get("hotelLiveG"), calc.get("hotelMeatG")])
+    case("Live sales", "The head count is totalled", "hotelBirds", 30,
+         lambda: calc.get("hotelBirds"))
+    case("Live sales", "A live line with no head count blocks submission",
+         "weight but no birds", True,
+         lambda: any("how many live birds" in m.lower() for m in validate_for_submission(
+             base_entry(hotelSales=[{"customerId": "x", "product": "live",
+                                     "weightG": 40_000, "birds": 0}]), False, False)))
+    case("Live sales", "Meat and live on one day are kept apart",
+         "one of each", [20_000, 40_000],
+         lambda: (lambda c: [c["hotelMeatG"], c["hotelLiveG"]])(
+             compute_entry(base_entry(rateLive=180, hotelSales=[
+                 {"customerId": "a", "product": "skin", "weightG": 20_000},
+                 {"customerId": "b", "product": "live", "weightG": 40_000, "birds": 20},
+             ]), SETTINGS)))
+
+
+# ===========================================================================
+# 17. Overhead ledger — dated vs spread, branch-wise and all branches
+# ===========================================================================
+def test_overhead_ledger():
+    print("\n[17] Overhead ledger")
+    month = TODAY.strftime("%Y-%m")
+    first = TODAY.replace(day=1).isoformat()
+    dim = __import__("calendar").monthrange(TODAY.year, TODAY.month)[1]
+
+    ADMIN.post("/api/overheads", json={"branch": "B01", "month": month,
+                                       "category": "rent", "amount": 3000})
+    dated = ADMIN.post("/api/overheads", json={"branch": "B01", "date": TODAY.isoformat(),
+                                               "category": "other", "amount": 500})
+    case("Overheads", "A dated overhead is accepted", "date supplied", 201,
+         lambda: dated.status_code)
+    case("Overheads", "It reports itself as dated", "dated flag", True,
+         lambda: dated.get_json()["dated"])
+    case("Overheads", "Its month is derived from the date", "period_month", month,
+         lambda: dated.get_json()["month"])
+    case("Overheads", "An undated one is not dated", "month only", False,
+         lambda: ADMIN.post("/api/overheads",
+                            json={"branch": "B01", "month": month, "category": "rent",
+                                  "amount": 10}).get_json()["dated"])
+
+    led = ADMIN.get(f"/api/overheads?branch=B01&from={first}&to={TODAY.isoformat()}").get_json()
+    case("Overhead ledger", "Branch-scoped ledger returns day rows",
+         "GET /api/overheads?branch=B01", True,
+         lambda: len(led["byDay"]) > 0)
+    case("Overhead ledger", "The dated ₹500 lands on its own day in full",
+         "today's row", True,
+         lambda: any(r["date"] == TODAY.isoformat() and r["total"] >= 500
+                     for r in led["byDay"]))
+    ADMIN.post("/api/branches", json={"code": "BOV", "name": "Overhead Only"})
+    ADMIN.post("/api/overheads", json={"branch": "BOV", "month": month,
+                                       "category": "rent", "amount": 3000})
+    solo = ADMIN.get(f"/api/overheads?branch=BOV&from={first}&to={TODAY.isoformat()}").get_json()
+    case("Overhead ledger", "A ₹3,000 monthly rent is divided across the month",
+         f"3000/{dim} on each day", True,
+         lambda: abs([r for r in solo["byDay"]
+                      if r["date"] == first][0]["total"] - 3000 / dim) < 0.01)
+    case("Overhead ledger", "Every day of the month in range carries a share",
+         "one row per day so far", TODAY.day,
+         lambda: len(solo["byDay"]))
+    case("Overhead ledger", "It totals by branch", "byBranch", True,
+         lambda: led["byBranch"][0]["branch"] == "B01")
+    case("Overhead ledger", "Dated and spread are reported separately",
+         "byBranch split", True,
+         lambda: led["byBranch"][0]["dated"] >= 500)
+
+    ADMIN.post("/api/overheads", json={"branch": "B02", "date": TODAY.isoformat(),
+                                       "category": "repairs", "amount": 700})
+    everything = ADMIN.get(f"/api/overheads?from={first}&to={TODAY.isoformat()}").get_json()
+    case("Overhead ledger", "All branches at once", "no branch filter", True,
+         lambda: len({b["branch"] for b in everything["byBranch"]}) >= 2)
+    case("Overhead ledger", "A day row splits the amount per branch",
+         "today's branches", True,
+         lambda: len([r for r in everything["byDay"]
+                      if r["date"] == TODAY.isoformat()][0]["branches"]) >= 2)
+    case("Overhead ledger", "A supervisor sees only their own branch",
+         "ravi", True,
+         lambda: all(b["branch"] == "B01"
+                     for b in SUP.get(f"/api/overheads?from={first}&to={TODAY.isoformat()}")
+                     .get_json()["byBranch"]))
+    case("Overhead ledger", "A supervisor cannot ask for another branch",
+         "ravi -> B02", 403,
+         lambda: SUP.get("/api/overheads?branch=B02").status_code)
+    case("Overheads", "A dated cost hits that day's profit in full",
+         "day share includes it", True,
+         lambda: overhead_day_share_check())
+
+
+def overhead_day_share_check():
+    from app.api import overhead_day_share
+    with app.app_context():
+        b = Branch.query.filter_by(code="B01").first()
+        return overhead_day_share(b.id, TODAY) > 500
+
+
+# ===========================================================================
+# 18. End-of-day cash handover
+# ===========================================================================
+def test_dayclose():
+    print("\n[18] Cash handover")
+    day = D(60)
+    # counter 30 kg @200 = 6,000 · skinless 20 @230 = 4,600 · liver 1 @130 = 130
+    # live 41 kg @150 = 6,150 · cutting 300  -> counter+live+cutting = 17,180
+    e = ADMIN.post("/api/entries", json=base_entry(businessDate=day)).get_json()
+    ADMIN.post(f"/api/entries/{e['id']}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+
+    d = ADMIN.get(f"/api/dayclose?date={day}&branch=B01").get_json()
+    x = d["branches"][0]["expectedBreakdown"]
+    case("Cash tally", "Counter, live and cutting make the base",
+         "17,180 on a clean day", 17180.0,
+         lambda: round(x["counterSales"] + x["liveSales"] + x["cuttingCharges"], 2))
+    case("Cash tally", "With nothing else, expected equals what was sold",
+         "no credit, no payouts", 17180.0, lambda: x["expected"])
+    case("Cash tally", "Nothing declared yet", "close is null", None,
+         lambda: d["branches"][0]["close"])
+
+    r = SUP2.post("/api/dayclose", json={"branch": "B02", "date": day, "cash": 1, "upi": 1})
+    case("Cash tally", "A supervisor can only close their own branch",
+         "priya -> B02 is fine", 201, lambda: r.status_code)
+    case("Cash tally", "and not someone else's", "priya -> B01", 403,
+         lambda: SUP2.post("/api/dayclose",
+                           json={"branch": "B01", "date": day, "cash": 1}).status_code)
+
+    ok = ADMIN.post("/api/dayclose", json={"branch": "B01", "date": day,
+                                           "cash": 15000, "upi": 2180}).get_json()
+    case("Cash tally", "A matching handover reads as balanced", "15,000 + 2,180", 0.0,
+         lambda: ok["difference"])
+    short = ADMIN.post("/api/dayclose", json={"branch": "B01", "date": day,
+                                              "cash": 15000, "upi": 1180}).get_json()
+    case("Cash tally", "A thousand missing shows as short", "−1,000", -1000.0,
+         lambda: short["difference"])
+    over = ADMIN.post("/api/dayclose", json={"branch": "B01", "date": day,
+                                             "cash": 16000, "upi": 2180}).get_json()
+    case("Cash tally", "An excess shows as over", "+1,000", 1000.0,
+         lambda: over["difference"])
+    case("Cash tally", "Re-declaring updates rather than duplicating",
+         "one row per branch-day", 1,
+         lambda: _count(DayClose, business_date=parse_iso(day), _branch="B01"))
+    case("Cash tally", "Negative amounts are refused", "cash=-5", 422,
+         lambda: ADMIN.post("/api/dayclose",
+                            json={"branch": "B01", "date": day, "cash": -5}).status_code)
+    case("Cash tally", "Text where money belongs is a 422", "cash='lots'", 422,
+         lambda: ADMIN.post("/api/dayclose",
+                            json={"branch": "B01", "date": day, "cash": "lots"}).status_code)
+
+    # a credit sale must NOT be expected in the till
+    day2 = D(61)
+    e2 = ADMIN.post("/api/entries", json=base_entry(
+        businessDate=day2,
+        hotelSales=[{"customerId": HOTEL["a"]["id"], "product": "skin",
+                     "weightG": 10_000, "settled": False}])).get_json()
+    ADMIN.post(f"/api/entries/{e2['id']}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    x2 = ADMIN.get(f"/api/dayclose?date={day2}&branch=B01").get_json()["branches"][0]["expectedBreakdown"]
+    case("Cash tally", "A sale on account is excluded from the expected cash",
+         "revenue > expected", True,
+         lambda: x2["revenue"] > x2["expected"] and x2["hotelCredit"] > 0)
+    case("Cash tally", "The gap is exactly the credit sale",
+         "revenue − expected", round(x2["hotelCredit"], 2),
+         lambda: round(x2["revenue"] - x2["expected"], 2))
+
+    # cash paid out of the till reduces what should be handed over
+    day3 = D(62)
+    e3 = ADMIN.post("/api/entries", json=base_entry(businessDate=day3)).get_json()
+    ADMIN.post(f"/api/entries/{e3['id']}/decision",
+               json={"verdict": "approved", "openRate": 120, "rates": [130]})
+    wk = ADMIN.post("/api/workers", json={"branch": "B01", "name": "Till Payout Test",
+                                          "role": "cutter", "dayWage": 700}).get_json()
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wk["id"], "date": day3,
+                                    "type": "advance", "amount": 500})
+    x3 = ADMIN.get(f"/api/dayclose?date={day3}&branch=B01").get_json()["branches"][0]["expectedBreakdown"]
+    case("Cash tally", "An advance from the till lowers the expected handover",
+         "17,180 − 500", 16680.0, lambda: x3["expected"])
+    case("Cash tally", "and is reported on its own line", "wagesPaid", 500.0,
+         lambda: x3["wagesPaid"])
+
+    hist = ADMIN.get(f"/api/dayclose/history?from={D(63)}&to={day}").get_json()
+    case("Cash history", "History spans the days that traded", "rows", True,
+         lambda: len(hist["rows"]) > 0)
+    case("Cash history", "Undeclared days are flagged rather than hidden",
+         "missing flag present", True,
+         lambda: any(r["missing"] for r in hist["rows"]) or
+                 all(not r["missing"] for r in hist["rows"]))
+
+    cid = ADMIN.get(f"/api/dayclose?date={day}&branch=B01").get_json()["branches"][0]["close"]["id"]
+    case("Cash tally", "A supervisor cannot verify", "POST verify", 403,
+         lambda: SUP.post(f"/api/dayclose/{cid}/verify", json={}).status_code)
+    case("Cash tally", "An admin can verify", "POST verify", True,
+         lambda: ADMIN.post(f"/api/dayclose/{cid}/verify", json={})
+                      .get_json()["close"]["verifiedAt"] is not None)
+    case("Cash tally", "Once verified a supervisor cannot overwrite it",
+         "ravi re-declares", 403,
+         lambda: SUP.post("/api/dayclose",
+                          json={"branch": "B01", "date": day, "cash": 99}).status_code)
+    case("Cash tally", "An admin can reopen it", "reopen", None,
+         lambda: ADMIN.post(f"/api/dayclose/{cid}/verify", json={"reopen": True})
+                      .get_json()["close"]["verifiedAt"])
+
+
+def parse_iso(txt):
+    return date.fromisoformat(txt)
+
+
+# ===========================================================================
+# 19. Double-click protection
+# ===========================================================================
+def test_dupes():
+    print("\n[19] Double-click protection")
+    body = {"branch": "B01", "name": "Double Tap", "role": "dresser", "dayWage": 700}
+    first = ADMIN.post("/api/workers", json=body)
+    second = ADMIN.post("/api/workers", json=body)
+    case("Duplicates", "The first worker save succeeds", "POST /api/workers", 201,
+         lambda: first.status_code)
+    case("Duplicates", "The same name posted twice is refused", "second click", 409,
+         lambda: second.status_code)
+    case("Duplicates", "It points at the record that already exists", "existingId", True,
+         lambda: second.get_json().get("existingId") == first.get_json()["id"])
+    case("Duplicates", "Case does not let a twin through", "DOUBLE TAP", 409,
+         lambda: ADMIN.post("/api/workers",
+                            json=dict(body, name="DOUBLE TAP")).status_code)
+    case("Duplicates", "The same name in another branch is fine", "B02", 201,
+         lambda: ADMIN.post("/api/workers",
+                            json=dict(body, branch="B02")).status_code)
+    case("Duplicates", "Only one worker was created", "count", 1,
+         lambda: _count(Worker, name="Double Tap", _branch="B01"))
+
+    wid = first.get_json()["id"]
+    day = D(70)
+    adv = {"branch": "B01", "workerId": wid, "date": day, "type": "advance", "amount": 500}
+    a1 = ADMIN.post("/api/ledger", json=adv)
+    a2 = ADMIN.post("/api/ledger", json=adv)
+    case("Duplicates", "The first advance is recorded", "₹500", 201, lambda: a1.status_code)
+    case("Duplicates", "The identical one moments later is refused", "double click", 409,
+         lambda: a2.status_code)
+    case("Duplicates", "Only one ₹500 landed on the ledger", "count", 1,
+         lambda: _count(LabourLedger, worker_id=wid, entry_date=parse_iso(day),
+                        kind="advance"))
+    case("Duplicates", "A genuine second payment can be forced through",
+         "confirmDuplicate", 201,
+         lambda: ADMIN.post("/api/ledger",
+                            json=dict(adv, confirmDuplicate=True)).status_code)
+    case("Duplicates", "A different amount is never treated as a double click",
+         "₹600", 201,
+         lambda: ADMIN.post("/api/ledger", json=dict(adv, amount=600)).status_code)
+    case("Duplicates", "Attendance stays one row however many times it is tapped",
+         "3 clicks", 1,
+         lambda: _tap_attendance(wid, day))
+
+
+def _tap_attendance(wid, day):
+    for _ in range(3):
+        ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
+                                        "type": "work", "days": 1})
+    return _count(LabourLedger, worker_id=wid, entry_date=parse_iso(day), kind="work")
+
+
+def _count(model, _branch=None, **filters):
+    """Count rows straight from the database, inside an app context."""
+    with app.app_context():
+        q = model.query.filter_by(**filters)
+        if _branch:
+            q = q.filter(model.branch.has(code=_branch))
+        return q.count()
+
+
+# ===========================================================================
+# 20. Scale — query count, paging, photo payloads
+# ===========================================================================
+def test_scale():
+    print("\n[20] Scale & payload size")
+    from sqlalchemy import event
+
+    counter = {"n": 0}
+
+    def bump(*a, **k):
+        counter["n"] += 1
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", bump)
+    try:
+        counter["n"] = 0
+        ADMIN.get("/api/bootstrap")
+        small = counter["n"]
+
+        # add a month of entries in a fresh branch, then measure again
+        ADMIN.post("/api/branches", json={"code": "BSC", "name": "Scale Test"})
+        for i in range(40):
+            ADMIN.post("/api/entries", json=base_entry(
+                branch="BSC", businessDate=(TODAY - timedelta(days=100 + i)).isoformat()))
+        counter["n"] = 0
+        ADMIN.get("/api/bootstrap")
+        big = counter["n"]
+    finally:
+        event.remove(engine, "before_cursor_execute", bump)
+
+    case("Scale", "Bootstrap query count does not grow with the number of entries",
+         f"{small} queries -> {big} after +40 entries", True,
+         lambda: big <= small + 6,
+         )
+    case("Scale", "and stays a small constant", "under 40 queries", True,
+         lambda: big < 40)
+
+    body = ADMIN.get("/api/entries?page=1&pageSize=10").get_json()
+    case("Paging", "A page returns rows plus metadata", "page=1&pageSize=10", 10,
+         lambda: len(body["rows"]))
+    case("Paging", "It reports the true total", "total > pageSize", True,
+         lambda: body["total"] > 10)
+    case("Paging", "and the number of pages", "pages", True,
+         lambda: body["pages"] == -(-body["total"] // 10))
+    case("Paging", "Page two is a different slice", "page=2", True,
+         lambda: ADMIN.get("/api/entries?page=2&pageSize=10").get_json()["rows"][0]["id"]
+                 != body["rows"][0]["id"])
+    case("Paging", "An absurd page size is capped, not obeyed", "pageSize=99999", True,
+         lambda: ADMIN.get("/api/entries?page=1&pageSize=99999").get_json()["pageSize"] <= 1000)
+    case("Paging", "A junk page number is a 422, not a crash", "page=abc", 422,
+         lambda: ADMIN.get("/api/entries?page=abc").status_code)
+    case("Paging", "Without paging params the old bare-list shape is kept",
+         "no page arg", True,
+         lambda: isinstance(ADMIN.get("/api/entries").get_json(), list))
+
+    # photos
+    eid = ADMIN.get("/api/entries?page=1&pageSize=1").get_json()["rows"][0]["id"]
+    blob = "data:image/jpeg;base64," + ("A" * 40_000)
+    ADMIN.put(f"/api/entries/{eid}", json={"photos": [blob], "photosLoaded": True})
+    listed = [e for e in ADMIN.get("/api/entries?page=1&pageSize=50").get_json()["rows"]
+              if e["id"] == eid][0]
+    case("Photos", "A list carries the count, not the image", "photoCount", 1,
+         lambda: listed["photoCount"])
+    case("Photos", "and no image data at all", "photos empty in list", 0,
+         lambda: len(listed["photos"]))
+    case("Photos", "The list says the images are not loaded", "photosLoaded", False,
+         lambda: listed["photosLoaded"])
+    case("Photos", "They are fetched on demand", "GET .../photos", 1,
+         lambda: len(ADMIN.get(f"/api/entries/{eid}/photos").get_json()["photos"]))
+    case("Photos", "and come back intact", "same bytes", True,
+         lambda: ADMIN.get(f"/api/entries/{eid}/photos").get_json()["photos"][0] == blob)
+    case("Photos", "Saving without them does NOT wipe them",
+         "payload with photos:[] and no flag", 1,
+         lambda: (ADMIN.put(f"/api/entries/{eid}", json={"photos": [], "notes": "x"}),
+                  len(ADMIN.get(f"/api/entries/{eid}/photos").get_json()["photos"]))[1])
+    case("Photos", "Clearing them deliberately still works",
+         "photosLoaded: true with an empty list", 0,
+         lambda: (ADMIN.put(f"/api/entries/{eid}",
+                            json={"photos": [], "photosLoaded": True}),
+                  len(ADMIN.get(f"/api/entries/{eid}/photos").get_json()["photos"]))[1])
+    case("Photos", "A supervisor cannot read another branch's photos",
+         "priya -> B01 entry", 403,
+         lambda: SUP2.get(f"/api/entries/{eid}/photos").status_code)
+
+    boot = ADMIN.get("/api/bootstrap").get_json()
+    case("Window", "Bootstrap reports the window it loaded", "window", True,
+         lambda: "from" in boot["window"] and "to" in boot["window"])
+    case("Window", "and the true total behind it", "total >= loaded", True,
+         lambda: boot["window"]["total"] >= boot["window"]["loaded"])
+    case("Window", "Entries older than the window are excluded but counted",
+         "40 backdated entries", True,
+         lambda: boot["window"]["total"] > boot["window"]["loaded"])
+    case("Window", "and remain reachable by asking for the range",
+         "explicit from/to", True,
+         lambda: len(ADMIN.get(
+             f"/api/entries?from={(TODAY - timedelta(days=140)).isoformat()}"
+             f"&to={TODAY.isoformat()}&page=1&pageSize=1000").get_json()["rows"])
+                 >= boot["window"]["total"] - 5)
+
+
+# ===========================================================================
+# 21. Schema upgrades — an old database must not 500 on sign-in
+# ===========================================================================
+def test_schema_upgrade():
+    print("\n[21] Schema upgrade")
+    import sqlite3
+    import tempfile as tf
+    from app.schema import schema_gaps, upgrade_schema
+
+    with app.app_context():
+        case("Schema", "A current database reports no gaps",
+             "schema_gaps()", 0, lambda: len(schema_gaps()))
+        case("Schema", "Upgrading a current database changes nothing",
+             "upgrade_schema()", 0,
+             lambda: sum(len(upgrade_schema(verbose=False)[k])
+                         for k in ("tablesCreated", "columnsAdded", "indexesCreated")))
+
+    # Build a database that looks like an older release: drop the tables added
+    # later and strip a column added later, then point the app at it.
+    old_db = os.path.join(tf.gettempdir(), "vcc_oldschema.db")
+    if os.path.exists(old_db):
+        os.remove(old_db)
+
+    from app import create_app as _create
+    import app.config as _cfg
+
+    def app_on(path):
+        os.environ["DATABASE_URL"] = f"sqlite:///{path}"
+        os.environ["AUTO_UPGRADE_DB"] = "0"
+        import importlib
+        importlib.reload(_cfg)
+        return _create(_cfg.Config)
+
+    legacy = app_on(old_db)
+    with legacy.app_context():
+        db.create_all()
+        db.session.add(Branch(code="B01", name="Legacy Branch"))
+        db.session.commit()
+        u = User(name="Legacy Admin", username="legacy", role="admin")
+        u.set_password("legacy123")
+        u.branches = Branch.query.all()
+        db.session.add(u)
+        db.session.commit()
+        db.session.add(Overhead(branch_id=1, period_month=TODAY.strftime("%Y-%m"),
+                                category="rent", amount=Decimal("25000"),
+                                status="approved", created_by_id=1))
+        db.session.commit()
+
+    # now make it look old: remove the newer tables and the newer column
+    raw = sqlite3.connect(old_db)
+    for t in ("day_close", "customer_payments", "customer_sales", "customers"):
+        raw.execute(f"DROP TABLE IF EXISTS {t}")
+    cols = [r[1] for r in raw.execute("PRAGMA table_info(overheads)")]
+    keep = [c for c in cols if c != "spend_date"]
+    raw.execute("CREATE TABLE overheads_old AS SELECT " + ", ".join(keep) + " FROM overheads")
+    raw.execute("DROP TABLE overheads")
+    raw.execute("ALTER TABLE overheads_old RENAME TO overheads")
+    raw.commit()
+    raw.close()
+
+    aged = app_on(old_db)
+    with aged.app_context():
+        gaps = schema_gaps()
+    case("Schema", "An older database is detected as behind",
+         "4 tables + 1 column missing", True,
+         lambda: any("customers" in g for g in gaps)
+                 and any("overheads.spend_date" in g for g in gaps))
+
+    cl = aged.test_client()
+    cl.post("/api/login", json={"username": "legacy", "password": "legacy123"})
+    resp = cl.get("/api/bootstrap")
+    case("Schema", "Without the upgrade it reports 503, not a bare 500",
+         "GET /api/bootstrap", 503, lambda: resp.status_code)
+    case("Schema", "and names the problem", "error", "schema_outdated",
+         lambda: resp.get_json()["error"])
+    case("Schema", "and says exactly what to run", "message", True,
+         lambda: "upgrade-db" in resp.get_json()["message"])
+
+    with aged.app_context():
+        report = upgrade_schema(verbose=False)
+    case("Schema", "The upgrade adds the missing tables", "4 tables", True,
+         lambda: len(report["tablesCreated"]) == 4)
+    case("Schema", "and the missing column", "overheads.spend_date", True,
+         lambda: "overheads.spend_date" in report["columnsAdded"])
+    case("Schema", "with nothing going wrong", "problems", 0,
+         lambda: len(report["problems"]))
+
+    with aged.app_context():
+        case("Schema", "No gaps are left afterwards", "schema_gaps()", 0,
+             lambda: len(schema_gaps()))
+
+    fixed = aged.test_client()
+    fixed.post("/api/login", json={"username": "legacy", "password": "legacy123"})
+    after = fixed.get("/api/bootstrap")
+    case("Schema", "Sign-in works once the database is upgraded",
+         "GET /api/bootstrap", 200, lambda: after.status_code)
+    case("Schema", "The existing overhead survived untouched",
+         "₹25,000 rent still there", 25000.0,
+         lambda: after.get_json()["overheads"][0]["amount"])
+    case("Schema", "and gained the new field as undated",
+         "dated flag", False,
+         lambda: after.get_json()["overheads"][0]["dated"])
+    case("Schema", "Every module answers on the upgraded database",
+         "5 endpoints", [200, 200, 200, 200, 200],
+         lambda: [fixed.get(p).status_code for p in
+                  ("/api/dayclose", "/api/dayclose/history", "/api/overheads",
+                   "/api/customers", "/api/entries?page=1&pageSize=5")])
+    case("Schema", "Re-running the upgrade is a no-op",
+         "second run", 0,
+         lambda: _reupgrade(aged))
+
+    with aged.app_context():
+        db.session.remove()
+        db.engine.dispose()
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        if os.path.exists(old_db + suffix):
+            os.remove(old_db + suffix)
+
+    # put the environment back for anything that follows
+    os.environ["DATABASE_URL"] = f"sqlite:///{TMP_DB}"
+    os.environ.pop("AUTO_UPGRADE_DB", None)
+
+
+def _reupgrade(target_app):
+    from app.schema import upgrade_schema
+    with target_app.app_context():
+        r = upgrade_schema(verbose=False)
+    return sum(len(r[k]) for k in ("tablesCreated", "columnsAdded", "indexesCreated"))
+
+
 if __name__ == "__main__":
     print("=" * 78)
     print("VENUS CHICKEN CENTERS — FULL MODULE TEST SUITE")
@@ -1516,6 +2078,12 @@ if __name__ == "__main__":
     test_advances()
     test_overheads()
     test_hotels()
+    test_live_and_functions()
+    test_overhead_ledger()
+    test_dayclose()
+    test_dupes()
+    test_scale()
+    test_schema_upgrade()
     test_admin_modules()
     test_activity()
     test_robustness()

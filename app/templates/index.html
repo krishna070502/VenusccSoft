@@ -182,8 +182,9 @@
       <button data-view="dashboard" data-admin="1" class="tab-btn active flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-chart-line text-xs"></i> Dashboard</button>
       <button data-view="entry" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-pen-to-square text-xs"></i> Daily Entry</button>
       <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
-      <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Hostels <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Functions <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Labour</button>
+      <button data-view="dayclose" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-cash-register text-xs"></i> Day Close <span id="closeBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
     </nav>
@@ -280,7 +281,7 @@
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
         <i class="fa-solid fa-utensils text-indigo-600"></i>
-        <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Hotel &amp; hostel sales</h3>
+        <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Hotel, hostel &amp; function sales</h3>
         <span class="text-xs text-slate-400" id="dhNote"></span>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-3">
@@ -512,7 +513,7 @@
 
         <!-- G: Meat sales -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">counter &amp; walk-in — hotels go in Section H</span></div>
+          <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">counter &amp; walk-in — contract customers go in Section H</span></div>
           <div class="grid-f">
             <div><label class="lbl">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
             <div><label class="lbl">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
@@ -522,7 +523,7 @@
 
         <!-- H: Hotel & hostel sales -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-indigo-700"><span class="sec-badge !text-indigo-900">H</span>Hotel &amp; Hostel Sales
+          <div class="sec-head bg-indigo-700"><span class="sec-badge !text-indigo-900">H</span>Hotel, Hostel &amp; Function Sales
             <button type="button" id="btnAddHotelSale" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal"><i class="fa-solid fa-plus mr-1"></i>Add sale</button>
           </div>
           <div class="p-5">
@@ -533,7 +534,7 @@
               <div class="calcbox bg-amber-50 border border-amber-200"><span class="text-amber-800">Concession given</span><span class="ml-auto font-bold num text-amber-800" id="o_hotelConc">₹0.00</span></div>
               <div class="calcbox bg-rose-50 border border-rose-200"><span class="text-rose-800">On account</span><span class="ml-auto font-bold num text-rose-700" id="o_hotelCredit">₹0.00</span></div>
             </div>
-            <p class="mt-3 text-[11px] text-slate-500">Priced at the day&rsquo;s Section&nbsp;C market rate less each customer&rsquo;s agreed concession. This weight also comes out of the meat pool, so the closing meat below allows for it.</p>
+            <p class="mt-3 text-[11px] text-slate-500">Priced at the day&rsquo;s Section&nbsp;C market rate less each customer&rsquo;s agreed concession. Meat sold here comes out of the meat pool; live birds come off the bird count and weight instead. The closing balance below allows for both.</p>
           </div>
         </fieldset>
 
@@ -570,7 +571,7 @@
             <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Live birds sold (retail)</dt><dd class="font-bold num text-emerald-700" id="o_liveRetail">0</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Dressed birds</dt><dd class="font-bold num" id="o_dressedCt">0</dd></div>
             <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Counter meat sales</dt><dd class="font-bold num" id="o_counterAmt">₹0.00</dd></div>
-            <div class="flex justify-between"><dt class="text-slate-500">Hotel &amp; hostel sales</dt><dd class="font-bold num text-indigo-700" id="o_hotelAmt2">₹0.00</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Hotel / hostel / function</dt><dd class="font-bold num text-indigo-700" id="o_hotelAmt2">₹0.00</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Concession given <span class="text-[10px] uppercase tracking-wide text-slate-400">memo</span></dt><dd class="font-bold num text-amber-700" id="o_hotelConc2">₹0.00</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Total revenue</dt><dd class="font-bold num text-emerald-700" id="o_revenue">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Cost of stock sold</dt><dd class="font-bold num text-rose-600" id="o_cogs">₹0.00</dd></div>
@@ -622,11 +623,11 @@
   <!-- ================= HOTELS & HOSTELS ================= -->
   <section id="view-customers" class="view hidden">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
-      <div><h2 class="text-xl font-bold text-slate-900">Hotels &amp; Hostels</h2>
-        <p class="text-sm text-slate-500"><span id="custBranchLabel" class="font-semibold text-emerald-700">—</span> · contract buyers priced under the counter rate · each keeps its own ledger</p></div>
+      <div><h2 class="text-xl font-bold text-slate-900">Hotels, Hostels &amp; Functions</h2>
+        <p class="text-sm text-slate-500"><span id="custBranchLabel" class="font-semibold text-emerald-700">—</span> · contract buyers priced under the counter rate · marriage functions and bulk orders too · each keeps its own ledger</p></div>
       <div class="flex items-end gap-3 flex-wrap">
-        <div><label class="lbl" for="custFilter">Show</label><select id="custFilter" class="inp"><option value="">All</option><option value="hotel">Hotels only</option><option value="hostel">Hostels only</option><option value="due">With a balance due</option></select></div>
-        <button id="btnAddCustomer" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add hotel / hostel</button>
+        <div><label class="lbl" for="custFilter">Show</label><select id="custFilter" class="inp"><option value="">All</option><option value="hotel">Hotels only</option><option value="hostel">Hostels only</option><option value="function">Functions only</option><option value="due">With a balance due</option></select></div>
+        <button id="btnAddCustomer" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add hotel / hostel / function</button>
       </div>
     </div>
 
@@ -652,6 +653,7 @@
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Skin</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Skinless</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Liver</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Live birds</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Billed</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Received</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Balance due</th>
@@ -781,12 +783,56 @@
     </div>
   </section>
 
+  <!-- ================= DAY CLOSE ================= -->
+  <section id="view-dayclose" class="view hidden">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div><h2 class="text-xl font-bold text-slate-900">End of Day — cash handover</h2>
+        <p class="text-sm text-slate-500">What the supervisor hands over, set against what the day&rsquo;s trading says should be in hand</p></div>
+      <div class="flex items-end gap-3 flex-wrap">
+        <div><label class="lbl" for="dcDate">Date</label><input type="date" id="dcDate" class="inp" /></div>
+        <button id="dcToday" class="text-sm font-bold border border-slate-300 bg-white rounded-lg px-3 py-2.5 hover:bg-slate-50">Today</button>
+      </div>
+    </div>
+
+    <div id="dcCards" class="space-y-5"></div>
+
+    <div class="card overflow-hidden mt-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-scale-unbalanced text-rose-600"></i>
+          <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Handover history</h3>
+          <span class="text-xs text-slate-400" id="dcHistNote"></span>
+        </div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="dcFrom">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="dcTo">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="dcExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Revenue</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Should be in hand</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Cash</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">PhonePe / UPI</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Handed over</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Difference</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Status</th>
+        </tr></thead>
+        <tbody id="dcHistBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="dcHistFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+      </table></div>
+    </div>
+  </section>
+
   <!-- ================= OVERHEADS ================= -->
   <section id="view-overheads" class="view hidden">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
       <div>
-        <h2 class="text-xl font-bold text-slate-900">Fixed Overheads</h2>
-        <p class="text-sm text-slate-500"><span id="ovhBranchLabel" class="font-semibold text-emerald-700">&mdash;</span> · rent, electricity, supervisor salary and other monthly costs</p>
+        <h2 class="text-xl font-bold text-slate-900">Overheads</h2>
+        <p class="text-sm text-slate-500"><span id="ovhBranchLabel" class="font-semibold text-emerald-700">&mdash;</span> · rent, electricity, salaries and one-off shop costs</p>
       </div>
       <div class="flex items-end gap-3 flex-wrap">
         <div><label class="lbl" for="ovhMonth">Month</label><input type="month" id="ovhMonth" class="inp" /></div>
@@ -795,7 +841,45 @@
     </div>
 
     <div class="rounded-xl bg-amber-50 border-l-4 border-amber-500 px-4 py-3 text-xs text-amber-800 mb-5">
-      <i class="fa-solid fa-circle-info mr-1"></i>These costs do <strong>not</strong> affect any single day&rsquo;s profit and loss. They are charged once at the end of the month and appear on the dashboard under &ldquo;Monthly overheads&rdquo;. Every entry needs admin approval before it counts.
+      <i class="fa-solid fa-circle-info mr-1"></i>A <strong>dated</strong> overhead is charged in full to the day it was spent. An <strong>undated</strong> one is a standing monthly cost, spread evenly across the days of the month so no single day carries the whole rent. Either way it needs admin approval before it counts.
+    </div>
+
+    <!-- BRANCH-WISE / ALL-BRANCHES DAY-WISE LEDGER (admin) -->
+    <div data-admin="1" class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-calendar-day text-amber-600"></i>
+          <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Overhead ledger</h3>
+        </div>
+        <div class="seg" id="ovhScopeSeg">
+          <button type="button" data-oscope="branch" class="active">This branch</button>
+          <button type="button" data-oscope="all">All branches</button>
+        </div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="ovhFrom">From</label><input type="date" id="ovhFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="ovhTo">To</label><input type="date" id="ovhTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="ovhThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Month</button>
+          <button id="ovhExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3">
+        <div class="lg:col-span-2 overflow-x-auto max-h-96 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-100">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-slate-600 sticky top-0"><tr class="text-left">
+              <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch split</th>
+              <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Charged that day</th>
+            </tr></thead>
+            <tbody id="ovhDayBody" class="divide-y divide-slate-100"></tbody>
+            <tfoot id="ovhDayFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+          </table>
+        </div>
+        <div class="p-4 bg-slate-50">
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">By branch</p>
+          <div id="ovhByBranch" class="space-y-2 text-sm"></div>
+          <p class="mt-3 text-[11px] text-slate-500 leading-snug" id="ovhLedgerNote"></p>
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
@@ -809,7 +893,7 @@
       <div class="px-5 py-3 bg-slate-100 font-bold text-sm uppercase tracking-wide text-slate-700">Overhead entries</div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
-          <th class="px-4 py-2.5 font-bold text-xs uppercase">Month</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">When</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Category</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Note</th>

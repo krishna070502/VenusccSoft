@@ -10,6 +10,7 @@ python -m pip install --upgrade pip --quiet
 pip install -r requirements.txt
 echo "[4/5] Tables"
 python manage.py init-db
+python manage.py upgrade-db
 echo "[5/5] Administrator account"
 python manage.py create-admin
 cat <<'MSG'

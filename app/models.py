@@ -19,7 +19,7 @@ from sqlalchemy import (
     CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer,
     Numeric, String, Text, UniqueConstraint, Boolean, func, text
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import deferred, relationship
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from .extensions import db
@@ -190,7 +190,12 @@ class DailyEntry(db.Model):
         Index("ix_entry_status", "status"),
     )
 
-    def to_dict(self, include_costs: bool = True):
+    def to_dict(self, include_costs: bool = True, include_photos: bool = True):
+        """
+        `include_photos=False` leaves the base64 JPEGs out and sends only a
+        count. A list of 2,000 entries each carrying a 50 KB photo is a 100 MB
+        response; the browser fetches the images only when an entry is opened.
+        """
         d = {
             "id": self.id,
             "branch": self.branch.code,
@@ -228,10 +233,12 @@ class DailyEntry(db.Model):
             "reviewedByName": self.reviewed_by.name if self.reviewed_by else "",
             "reviewedAt": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "rejectReason": self.reject_reason or "",
-            "photos": [p.data_url for p in self.photos],
+            "photoCount": len(self.photos),
+            "photosLoaded": include_photos,
             "purchases": [p.to_dict(include_costs) for p in self.purchases],
             "hotelSales": [s.to_dict() for s in self.hotel_sales],
         }
+        d["photos"] = [p.data_url for p in self.photos] if include_photos else []
         # Buying prices are admin-only; strip them for supervisors.
         d["openRate"] = float(self.open_rate) if include_costs else 0
         return d
@@ -264,7 +271,10 @@ class MortalityPhoto(db.Model):
     id = Column(Integer, primary_key=True)
     entry_id = Column(String(32), ForeignKey("daily_entries.id", ondelete="CASCADE"),
                       nullable=False, index=True)
-    data_url = Column(Text, nullable=False)          # base64 JPEG, ~50 KB each
+    # DEFERRED on purpose. Counting the photos on an entry must not drag ~50 KB
+    # of base64 per row off the disk; the column is loaded only when something
+    # actually reads data_url.
+    data_url = deferred(Column(Text, nullable=False))
     uploaded_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     entry = relationship("DailyEntry", back_populates="photos")
@@ -281,7 +291,8 @@ class MortalityPhoto(db.Model):
 #
 # Each customer belongs to ONE branch and carries its own ledger.
 # --------------------------------------------------------------------------
-PRODUCT_KINDS = ("skin", "skinless", "liver")
+PRODUCT_KINDS = ("skin", "skinless", "liver", "live")
+CUSTOMER_KINDS = ("hotel", "hostel", "function")
 
 
 class Customer(db.Model):
@@ -292,7 +303,8 @@ class Customer(db.Model):
                        nullable=False, index=True)
     code = Column(String(16), nullable=False)
     name = Column(String(160), nullable=False)
-    kind = Column(String(16), nullable=False, default="hotel")   # 'hotel' | 'hostel'
+    # 'hotel' | 'hostel' | 'function'  (function = marriage party, bulk order)
+    kind = Column(String(16), nullable=False, default="hotel")
     contact_person = Column(String(160))
     phone = Column(String(32))
     address = Column(Text)
@@ -304,9 +316,11 @@ class Customer(db.Model):
     less_skin = Column(Numeric(12, 2), nullable=False, default=0)
     less_skinless = Column(Numeric(12, 2), nullable=False, default=0)
     less_liver = Column(Numeric(12, 2), nullable=False, default=0)
+    less_live = Column(Numeric(12, 2), nullable=False, default=0)
     rate_skin = Column(Numeric(12, 2), nullable=False, default=0)
     rate_skinless = Column(Numeric(12, 2), nullable=False, default=0)
     rate_liver = Column(Numeric(12, 2), nullable=False, default=0)
+    rate_live = Column(Numeric(12, 2), nullable=False, default=0)
 
     # What they already owed on the day they were added to the system.
     opening_balance = Column(Numeric(14, 2), nullable=False, default=0)
@@ -323,18 +337,18 @@ class Customer(db.Model):
 
     __table_args__ = (
         UniqueConstraint("branch_id", "code", name="uq_customer_branch_code"),
-        CheckConstraint("kind IN ('hotel','hostel')", name="ck_customer_kind"),
+        CheckConstraint("kind IN ('hotel','hostel','function')", name="ck_customer_kind"),
         CheckConstraint("price_mode IN ('less','fixed')", name="ck_customer_price_mode"),
         Index("ix_customer_branch_active", "branch_id", "is_active"),
     )
 
     def less_for(self, product: str) -> float:
         return float({"skin": self.less_skin, "skinless": self.less_skinless,
-                      "liver": self.less_liver}.get(product, 0) or 0)
+                      "liver": self.less_liver, "live": self.less_live}.get(product, 0) or 0)
 
     def fixed_for(self, product: str) -> float:
         return float({"skin": self.rate_skin, "skinless": self.rate_skinless,
-                      "liver": self.rate_liver}.get(product, 0) or 0)
+                      "liver": self.rate_liver, "live": self.rate_live}.get(product, 0) or 0)
 
     def to_dict(self):
         return {
@@ -344,9 +358,9 @@ class Customer(db.Model):
             "address": self.address or "",
             "mode": self.price_mode,
             "lessSkin": float(self.less_skin), "lessSkinless": float(self.less_skinless),
-            "lessLiver": float(self.less_liver),
+            "lessLiver": float(self.less_liver), "lessLive": float(self.less_live),
             "rateSkin": float(self.rate_skin), "rateSkinless": float(self.rate_skinless),
-            "rateLiver": float(self.rate_liver),
+            "rateLiver": float(self.rate_liver), "rateLive": float(self.rate_live),
             "openingBalance": float(self.opening_balance),
             "active": self.is_active,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
@@ -372,8 +386,12 @@ class CustomerSale(db.Model):
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False)
 
     line_no = Column(Integer, nullable=False, default=0)  # position on the form
-    product = Column(String(16), nullable=False)          # skin | skinless | liver
+    product = Column(String(16), nullable=False)   # skin | skinless | liver | live
     weight_g = Column(Integer, nullable=False, default=0)
+    # live birds only: how many head went out. A live sale comes off the bird
+    # stock, not the meat pool, so the balance needs the count as well as the
+    # weight. Zero for the three meat products.
+    birds = Column(Integer, nullable=False, default=0)
     market_rate = Column(Numeric(12, 2), nullable=False, default=0)
     rate = Column(Numeric(12, 2), nullable=False, default=0)
     rate_override = Column(Numeric(12, 2))                # NULL = derived from the deal
@@ -387,7 +405,8 @@ class CustomerSale(db.Model):
     customer = relationship("Customer", back_populates="sales")
 
     __table_args__ = (
-        CheckConstraint("product IN ('skin','skinless','liver')", name="ck_sale_product"),
+        CheckConstraint("product IN ('skin','skinless','liver','live')",
+                        name="ck_sale_product"),
         Index("ix_sale_customer", "customer_id"),
         Index("ix_sale_branch", "branch_id"),
     )
@@ -402,6 +421,7 @@ class CustomerSale(db.Model):
             "kind": c.kind if c else "hotel",
             "product": self.product,
             "weightG": self.weight_g,
+            "birds": self.birds,
             "marketRate": float(self.market_rate),
             "rate": float(self.rate),
             "rateOverride": float(self.rate_override) if self.rate_override is not None else None,
@@ -518,7 +538,14 @@ class LabourLedger(db.Model):
 
 
 # --------------------------------------------------------------------------
-# Monthly overheads — deliberately kept out of the daily P&L
+# Overheads
+#
+# Two shapes, because shops have two kinds of cost:
+#   * spend_date SET   — a one-off spent on a day (a repair, a delivery
+#                        charge). Charged in full to that day.
+#   * spend_date NULL  — a standing monthly cost (rent, power, salary).
+#                        Spread evenly across the days of the month, so no
+#                        single day carries the whole rent.
 # --------------------------------------------------------------------------
 class Overhead(db.Model):
     __tablename__ = "overheads"
@@ -527,6 +554,7 @@ class Overhead(db.Model):
     branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"),
                        nullable=False, index=True)
     period_month = Column(String(7), nullable=False, index=True)     # 'YYYY-MM'
+    spend_date = Column(Date, index=True)          # NULL = spread over the month
     category = Column(String(40), nullable=False)
     amount = Column(Numeric(14, 2), nullable=False, default=0)
     note = Column(Text)
@@ -550,12 +578,66 @@ class Overhead(db.Model):
 
     def to_dict(self):
         return {"id": self.id, "branch": self.branch.code, "month": self.period_month,
+                "date": self.spend_date.isoformat() if self.spend_date else None,
+                "dated": self.spend_date is not None,
                 "category": self.category, "amount": float(self.amount),
                 "note": self.note or "", "status": self.status,
                 "createdBy": self.created_by_id,
                 "createdByName": self.created_by.name if self.created_by else "",
                 "reviewedBy": self.reviewed_by_id,
                 "rejectReason": self.reject_reason or ""}
+
+
+# --------------------------------------------------------------------------
+# End-of-day cash handover
+#
+# At close the supervisor hands the day's takings to management — part cash,
+# part PhonePe. This records what was declared and lets it be set against what
+# the day's trading says should have been collected, so a shortfall surfaces
+# the same evening rather than at month end.
+# --------------------------------------------------------------------------
+class DayClose(db.Model):
+    __tablename__ = "day_close"
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    business_date = Column(Date, nullable=False, index=True)
+
+    cash_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    upi_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    # what the server worked out was collectable, frozen at declaration time so
+    # the handover can still be read back even if a later edit moves the figures
+    expected_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    note = Column(Text)
+
+    declared_by_id = Column(Integer, ForeignKey("users.id"))
+    declared_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    verified_by_id = Column(Integer, ForeignKey("users.id"))
+    verified_at = Column(DateTime(timezone=True))
+
+    branch = relationship("Branch")
+    declared_by = relationship("User", foreign_keys=[declared_by_id])
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+
+    __table_args__ = (
+        UniqueConstraint("branch_id", "business_date", name="uq_dayclose_branch_date"),
+        Index("ix_dayclose_branch_date", "branch_id", "business_date"),
+    )
+
+    def to_dict(self):
+        cash, upi = float(self.cash_amount), float(self.upi_amount)
+        return {"id": self.id, "branch": self.branch.code,
+                "date": self.business_date.isoformat(),
+                "cash": cash, "upi": upi, "declared": cash + upi,
+                "expectedAtDeclaration": float(self.expected_amount),
+                "note": self.note or "",
+                "declaredBy": self.declared_by_id,
+                "declaredByName": self.declared_by.name if self.declared_by else "",
+                "declaredAt": self.declared_at.isoformat() if self.declared_at else None,
+                "verifiedBy": self.verified_by_id,
+                "verifiedByName": self.verified_by.name if self.verified_by else "",
+                "verifiedAt": self.verified_at.isoformat() if self.verified_at else None}
 
 
 # --------------------------------------------------------------------------

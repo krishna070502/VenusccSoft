@@ -7,19 +7,20 @@ payloads sent to supervisors rather than merely hidden by CSS.
 """
 
 import calendar
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, request, session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload, selectinload, undefer
 
 from .calc import (PRODUCTS, compute_entry, costing_gaps, months_in_range,
                    price_hotel_line, validate_for_submission)
 from .extensions import db
 from .models import (ActivityLog, Branch, Customer, CustomerPayment, CustomerSale,
-                     DailyEntry, LabourLedger, MortalityPhoto, Overhead, Purchase,
-                     Setting, User, Worker, utcnow)
+                     DailyEntry, DayClose, LabourLedger, MortalityPhoto, Overhead,
+                     Purchase, Setting, User, Worker, utcnow)
 from .security import (admin_required, branch_by_code, log_activity,
                        login_required, require_branch, idle_limit_minutes,
                        start_session, end_session)
@@ -28,6 +29,12 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 
 DEFAULT_SETTINGS = {"waste_broiler": "31", "waste_parents": "21",
                     "tolerance": "2", "day_wage": "700"}
+
+# How much history the first load pulls, and the ceiling on any one page.
+# The browser widens the window on demand rather than being handed everything.
+BOOTSTRAP_DAYS = 120
+MAX_PAGE = 1000
+DEFAULT_PAGE_SIZE = 200
 
 
 # --------------------------------------------------------------------------
@@ -123,14 +130,24 @@ def labour_for(branch_id: int, day: date) -> dict:
 
 def overhead_day_share(branch_id: int, day: date) -> float:
     """
-    A month's approved overheads spread evenly over the days of that month,
-    so every trading day carries its share of rent, power and salary.
+    What this one day carries of the branch's overheads:
+
+      * a DATED overhead (a repair, a delivery charge) lands on its own day in
+        full;
+      * an undated monthly one (rent, power, salary) is spread evenly across
+        the days of that month, so no single day carries the whole rent.
     """
     month = day.strftime("%Y-%m")
-    total = sum(float(o.amount) for o in Overhead.query.filter_by(
-        branch_id=branch_id, period_month=month, status="approved").all())
-    days_in_month = calendar.monthrange(day.year, day.month)[1]
-    return (total / days_in_month) if days_in_month else 0.0
+    rows = Overhead.query.filter_by(branch_id=branch_id, period_month=month,
+                                    status="approved").all()
+    days_in_month = calendar.monthrange(day.year, day.month)[1] or 1
+    total = 0.0
+    for o in rows:
+        if o.spend_date is None:
+            total += float(o.amount) / days_in_month
+        elif o.spend_date == day:
+            total += float(o.amount)
+    return total
 
 
 def day_costs_for(branch_id: int, day: date) -> dict:
@@ -138,6 +155,9 @@ def day_costs_for(branch_id: int, day: date) -> dict:
     Labour and overheads for one branch-day, divided between the entries that
     share that day. Without the split, broiler and parents on the same day
     would each be charged the whole day's wages.
+
+    Single-day use only — for a list of entries use DayCostIndex, which does
+    the same arithmetic in three queries instead of three per entry.
     """
     share = DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).count() or 1
     lab = labour_for(branch_id, day)
@@ -151,21 +171,147 @@ def day_costs_for(branch_id: int, day: date) -> dict:
     }
 
 
-def entry_payload(entry: DailyEntry, settings: dict) -> dict:
-    """Entry plus its server-computed figures, filtered by role."""
+SHOP_KINDS = ("tea", "tiffin", "other")
+
+
+class DayCostIndex:
+    """
+    Labour and overhead costs for MANY branch-days, resolved up front.
+
+    The naive version calls day_costs_for() once per entry, which is three
+    queries each — 6,000 round trips for 2,000 entries. This does three
+    grouped queries for the whole set and then answers from memory.
+    """
+
+    EMPTY = {"wages": 0.0, "advances": 0.0, "other": 0.0, "manDays": 0.0,
+             "overheads": 0.0, "shared": 1}
+
+    def __init__(self, entries):
+        self.labour = {}
+        self.counts = {}
+        self.overheads = {}
+        pairs = {(e.branch_id, e.business_date) for e in entries}
+        if not pairs:
+            return
+
+        branch_ids = {b for b, _ in pairs}
+        days = [d for _, d in pairs]
+        lo, hi = min(days), max(days)
+
+        # 1) labour, grouped by branch + day + kind
+        rows = (db.session.query(LabourLedger.branch_id, LabourLedger.entry_date,
+                                 LabourLedger.kind,
+                                 func.sum(LabourLedger.amount), func.sum(LabourLedger.days))
+                .filter(LabourLedger.branch_id.in_(branch_ids),
+                        LabourLedger.entry_date >= lo, LabourLedger.entry_date <= hi)
+                .group_by(LabourLedger.branch_id, LabourLedger.entry_date,
+                          LabourLedger.kind).all())
+        for bid, day, kind, amount, ndays in rows:
+            slot = self.labour.setdefault(
+                (bid, day), {"wages": 0.0, "advances": 0.0, "other": 0.0, "manDays": 0.0})
+            amount = float(amount or 0)
+            if kind == "work":
+                slot["wages"] += amount
+                slot["manDays"] += float(ndays or 0)
+            elif kind == "advance":
+                slot["advances"] += amount
+            elif kind in SHOP_KINDS:
+                slot["other"] += amount
+
+        # 2) how many entries share each branch-day
+        for bid, day, n in (db.session.query(
+                DailyEntry.branch_id, DailyEntry.business_date, func.count(DailyEntry.id))
+                .filter(DailyEntry.branch_id.in_(branch_ids),
+                        DailyEntry.business_date >= lo, DailyEntry.business_date <= hi)
+                .group_by(DailyEntry.branch_id, DailyEntry.business_date).all()):
+            self.counts[(bid, day)] = int(n or 1)
+
+        # 3) overheads for every month the range touches
+        months = sorted({d.strftime("%Y-%m") for d in days})
+        ov = (Overhead.query
+              .filter(Overhead.branch_id.in_(branch_ids),
+                      Overhead.period_month.in_(months),
+                      Overhead.status == "approved").all())
+        monthly, dated = {}, {}
+        for o in ov:
+            if o.spend_date is None:
+                monthly.setdefault((o.branch_id, o.period_month), 0.0)
+                monthly[(o.branch_id, o.period_month)] += float(o.amount)
+            else:
+                dated.setdefault((o.branch_id, o.spend_date), 0.0)
+                dated[(o.branch_id, o.spend_date)] += float(o.amount)
+        for bid, day in pairs:
+            per_month = monthly.get((bid, day.strftime("%Y-%m")), 0.0)
+            dim = calendar.monthrange(day.year, day.month)[1] or 1
+            self.overheads[(bid, day)] = per_month / dim + dated.get((bid, day), 0.0)
+
+    def for_entry(self, entry) -> dict:
+        key = (entry.branch_id, entry.business_date)
+        lab = self.labour.get(key)
+        share = self.counts.get(key, 1) or 1
+        overheads = self.overheads.get(key, 0.0)
+        if not lab:
+            return {**self.EMPTY, "overheads": overheads / share, "shared": share}
+        return {"wages": lab["wages"] / share, "advances": lab["advances"] / share,
+                "other": lab["other"] / share, "manDays": lab["manDays"] / share,
+                "overheads": overheads / share, "shared": share}
+
+
+SUPERVISOR_HIDDEN = ("buyAmt", "openValue", "availValue", "avgRate", "meatCostKg",
+                     "cogs", "grossProfit", "labour", "advances", "otherExp",
+                     "overheads", "netProfit",
+                     "closeValue", "openMeatValue", "mortValue", "damageValue",
+                     "shortValue", "bonusValue")
+
+
+def entry_payload(entry: DailyEntry, settings: dict, costs=None,
+                  include_photos: bool = True) -> dict:
+    """
+    Entry plus its server-computed figures, filtered by role.
+
+    `costs` is a pre-resolved dict from DayCostIndex. Passing it avoids three
+    queries per entry; leaving it None falls back to a single-entry lookup.
+    """
     show_costs = g.user.is_admin
-    data = entry.to_dict(include_costs=show_costs)
-    calc = compute_entry(entry.to_dict(include_costs=True), settings,
-                         day_costs_for(entry.branch_id, entry.business_date))
+    # serialise once, then strip — the maths always runs on the true figures,
+    # only what leaves the server is trimmed
+    data = entry.to_dict(include_costs=True, include_photos=include_photos)
+    if costs is None:
+        costs = day_costs_for(entry.branch_id, entry.business_date)
+    calc = compute_entry(data, settings, costs)
     if not show_costs:
-        for key in ("buyAmt", "openValue", "availValue", "avgRate", "meatCostKg",
-                    "cogs", "grossProfit", "labour", "advances", "otherExp",
-                    "overheads", "netProfit",
-                    "closeValue", "openMeatValue", "mortValue", "damageValue",
-                    "shortValue", "bonusValue"):
+        data["openRate"] = 0
+        for p in data.get("purchases") or []:
+            p["rate"] = 0
+        for key in SUPERVISOR_HIDDEN:
             calc.pop(key, None)
     data["calc"] = calc
     return data
+
+
+def entry_list_payload(entries: list, settings: dict) -> list:
+    """A whole list of entries, costed in three queries and without photos."""
+    index = DayCostIndex(entries)
+    return [entry_payload(e, settings, index.for_entry(e), include_photos=False)
+            for e in entries]
+
+
+def entries_query(base=None):
+    """
+    A DailyEntry query with every relationship to_dict() touches pulled in one
+    round trip each, instead of one per row. Without this, serialising 56
+    entries fired ~200 follow-up SELECTs for purchases, photos, hotel lines and
+    user names.
+    """
+    q = base if base is not None else DailyEntry.query
+    return q.options(
+        joinedload(DailyEntry.branch),
+        joinedload(DailyEntry.created_by),
+        joinedload(DailyEntry.reviewed_by),
+        selectinload(DailyEntry.purchases),
+        selectinload(DailyEntry.photos),          # data_url stays deferred
+        selectinload(DailyEntry.hotel_sales).joinedload(CustomerSale.customer),
+    )
 
 
 def visible_branch_ids() -> list[int]:
@@ -241,7 +387,7 @@ def _snapshot_sale(sale: CustomerSale, entry: DailyEntry, customer: Customer) ->
         "rateOverride": (float(sale.rate_override)
                          if sale.rate_override is not None else None),
     }, {"rateSkin": entry.rate_skin, "rateSkinless": entry.rate_skinless,
-        "rateLiver": entry.rate_liver})
+        "rateLiver": entry.rate_liver, "rateLive": entry.rate_live})
     sale.market_rate = priced["market"]
     sale.rate = priced["rate"]
     sale.amount = priced["amount"]
@@ -269,6 +415,9 @@ def _replace_hotel_sales(entry: DailyEntry, rows: list) -> None:
         sale = CustomerSale(
             customer=customer, branch_id=entry.branch_id, line_no=kept,
             product=product, weight_g=grams,
+            # only a live line carries a head count
+            birds=(to_int(r.get("birds"), f"hotelSales[{i}].birds")
+                   if product == "live" else 0),
             rate_override=(to_dec(override, f"hotelSales[{i}].rateOverride")
                            if override not in (None, "") else None),
             settled=bool(r.get("settled")),
@@ -452,16 +601,31 @@ def bootstrap():
     branches = Branch.query.filter(Branch.code.in_(codes)).order_by(Branch.code).all() if codes else []
     bids = [b.id for b in branches]
 
+    # A bounded window instead of "the newest 2,000, and quietly lose the rest".
+    # The browser asks for more when a date range reaches past it — see
+    # /api/entries — so nothing is ever silently missing from a report.
+    window_days = max(7, min(int(request.args.get("days", BOOTSTRAP_DAYS)), 730))
+    win_from = date.today() - timedelta(days=window_days)
+
     q = DailyEntry.query.filter(DailyEntry.branch_id.in_(bids)) if bids else DailyEntry.query.filter(False)
     if not g.user.is_admin:
         q = q.filter(DailyEntry.created_by_id == g.user.id)
-    entries = q.order_by(DailyEntry.business_date.desc()).limit(2000).all()
+    total_entries = q.count()
+    q = entries_query(q)
+    q = q.filter(DailyEntry.business_date >= win_from)
+    entries = q.order_by(DailyEntry.business_date.desc()).limit(MAX_PAGE).all()
 
     workers = Worker.query.filter(Worker.branch_id.in_(bids)).all() if bids else []
-    ledger = LabourLedger.query.filter(LabourLedger.branch_id.in_(bids)).all() if bids else []
+    ledger = (LabourLedger.query
+              .filter(LabourLedger.branch_id.in_(bids),
+                      LabourLedger.entry_date >= win_from)
+              .order_by(LabourLedger.entry_date.desc()).limit(MAX_PAGE).all()) if bids else []
     customers, cust_totals = customers_payload(bids)
     receipts = (CustomerPayment.query.filter(CustomerPayment.branch_id.in_(bids))
-                .order_by(CustomerPayment.pay_date.desc()).limit(3000).all()) if bids else []
+                .order_by(CustomerPayment.pay_date.desc()).limit(2000).all()) if bids else []
+    closes = (DayClose.query.filter(DayClose.branch_id.in_(bids),
+                                    DayClose.business_date >= win_from)
+              .order_by(DayClose.business_date.desc()).all()) if bids else []
 
     oq = Overhead.query.filter(Overhead.branch_id.in_(bids)) if bids else Overhead.query.filter(False)
     if not g.user.is_admin:
@@ -476,13 +640,17 @@ def bootstrap():
                      "wasteParents": settings["waste_parents"],
                      "tolerance": settings["tolerance"],
                      "dayWage": settings["day_wage"]},
-        "entries": [entry_payload(e, settings) for e in entries],
+        "entries": entry_list_payload(entries, settings),
+        "window": {"from": win_from.isoformat(), "to": date.today().isoformat(),
+                   "days": window_days, "loaded": len(entries),
+                   "total": total_entries},
         "workers": [w.to_dict() for w in workers],
         "ledger": [l.to_dict() for l in ledger],
         "overheads": [o.to_dict() for o in overheads],
         "customers": customers,
         "customerTotals": cust_totals,
         "receipts": [p.to_dict() for p in receipts],
+        "closes": [c.to_dict() for c in closes],
         "users": [u.to_dict() for u in User.query.order_by(User.id).all()] if g.user.is_admin else [],
     }
     return jsonify(payload)
@@ -562,7 +730,10 @@ def update_entry(entry_id):
     _apply_entry_fields(entry, d)
     if "purchases" in d:
         _replace_purchases(entry, d.get("purchases"))
-    if "photos" in d:
+    # Photos are only replaced when the client says it actually had them
+    # loaded. Lists no longer carry the images, so a save from a screen that
+    # never fetched them must not be read as "delete all photos".
+    if "photos" in d and d.get("photosLoaded") is True:
         _replace_photos(entry, d.get("photos"))
     if "hotelSales" in d:
         _replace_hotel_sales(entry, d.get("hotelSales"))
@@ -684,19 +855,80 @@ def delete_entry(entry_id):
 @bp.get("/entries")
 @login_required
 def list_entries():
+    """
+    Paged, filtered entries.
+
+    Returns a bare list when no paging is asked for, so older callers keep
+    working, and an object with page metadata when `page` or `pageSize` is
+    supplied. Either way the result is capped, and `total` tells the caller
+    whether it is seeing everything.
+    """
     settings = get_settings()
     bids = visible_branch_ids()
     q = DailyEntry.query.filter(DailyEntry.branch_id.in_(bids)) if bids else DailyEntry.query.filter(False)
     if not g.user.is_admin:
         q = q.filter(DailyEntry.created_by_id == g.user.id)
     if request.args.get("from"):
-        q = q.filter(DailyEntry.business_date >= parse_date(request.args["from"]))
+        q = q.filter(DailyEntry.business_date >= parse_date(request.args["from"], field="from"))
     if request.args.get("to"):
-        q = q.filter(DailyEntry.business_date <= parse_date(request.args["to"]))
+        q = q.filter(DailyEntry.business_date <= parse_date(request.args["to"], field="to"))
     if request.args.get("status"):
         q = q.filter(DailyEntry.status == request.args["status"])
-    rows = q.order_by(DailyEntry.business_date.desc()).limit(2000).all()
-    return jsonify([entry_payload(e, settings) for e in rows])
+    if request.args.get("branch"):
+        b = branch_by_code(request.args["branch"])
+        q = q.filter(DailyEntry.branch_id == (b.id if b else -1))
+    if request.args.get("category") in ("broiler", "parents"):
+        q = q.filter(DailyEntry.category == request.args["category"])
+
+    paged = "page" in request.args or "pageSize" in request.args
+    size = max(1, min(to_int(request.args.get("pageSize"), "pageSize") or DEFAULT_PAGE_SIZE,
+                      MAX_PAGE))
+    page = max(1, to_int(request.args.get("page"), "page") or 1)
+
+    total = q.count()
+    rows = (entries_query(q).order_by(DailyEntry.business_date.desc(), DailyEntry.id)
+            .offset((page - 1) * size).limit(size if paged else MAX_PAGE).all())
+    payload = entry_list_payload(rows, settings)
+    if not paged:
+        return jsonify(payload)
+    return jsonify({"rows": payload, "total": total, "page": page,
+                    "pageSize": size, "pages": max(1, -(-total // size))})
+
+
+@bp.get("/entries/<entry_id>")
+@login_required
+def get_entry(entry_id):
+    """One entry in full, photos included — what the edit screen loads."""
+    entry = db.session.get(DailyEntry, entry_id)
+    if not entry:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(entry.branch.code)
+    if err:
+        return err
+    if not g.user.is_admin and entry.created_by_id != g.user.id:
+        return jsonify({"error": "forbidden"}), 403
+    return jsonify(entry_payload(entry, get_settings()))
+
+
+@bp.get("/entries/<entry_id>/photos")
+@login_required
+def entry_photos(entry_id):
+    """
+    The mortality images, fetched only when someone actually looks at the
+    entry. They are base64 JPEGs and have no business travelling with a list.
+    """
+    entry = db.session.get(DailyEntry, entry_id)
+    if not entry:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(entry.branch.code)
+    if err:
+        return err
+    if not g.user.is_admin and entry.created_by_id != g.user.id:
+        return jsonify({"error": "forbidden"}), 403
+    photos = (MortalityPhoto.query.filter_by(entry_id=entry.id)
+              .options(undefer(MortalityPhoto.data_url))
+              .order_by(MortalityPhoto.id).all())
+    return jsonify({"photos": [p.data_url for p in photos]})
 
 
 # ==========================================================================
@@ -858,13 +1090,14 @@ def save_settings():
 def _customer_fields(c: Customer, d: dict) -> None:
     if (d.get("name") or "").strip():
         c.name = d["name"].strip()[:160]
-    if d.get("kind") in ("hotel", "hostel"):
+    if d.get("kind") in ("hotel", "hostel", "function"):
         c.kind = d["kind"]
     if d.get("mode") in ("less", "fixed"):
         c.price_mode = d["mode"]
     for key, col in (("lessSkin", "less_skin"), ("lessSkinless", "less_skinless"),
-                     ("lessLiver", "less_liver"), ("rateSkin", "rate_skin"),
-                     ("rateSkinless", "rate_skinless"), ("rateLiver", "rate_liver")):
+                     ("lessLiver", "less_liver"), ("lessLive", "less_live"),
+                     ("rateSkin", "rate_skin"), ("rateSkinless", "rate_skinless"),
+                     ("rateLiver", "rate_liver"), ("rateLive", "rate_live")):
         if key in d:
             value = to_dec(d.get(key), key)
             if value < 0:
@@ -883,9 +1116,9 @@ def _customer_fields(c: Customer, d: dict) -> None:
 def _price_summary(c: Customer) -> str:
     if c.price_mode == "fixed":
         return (f"fixed ₹{c.rate_skin} skin / ₹{c.rate_skinless} skinless "
-                f"/ ₹{c.rate_liver} liver")
+                f"/ ₹{c.rate_liver} liver / ₹{c.rate_live} live")
     return (f"market less ₹{c.less_skin} skin / ₹{c.less_skinless} skinless "
-            f"/ ₹{c.less_liver} liver")
+            f"/ ₹{c.less_liver} liver / ₹{c.less_live} live")
 
 
 @bp.get("/customers")
@@ -1010,6 +1243,7 @@ def customer_ledger(cid):
             "date": entry.business_date.isoformat(),
             "status": entry.status, "entryId": entry.id,
             "product": sale.product, "weightG": sale.weight_g,
+            "birds": sale.birds,
             "marketRate": float(sale.market_rate), "rate": float(sale.rate),
             "concession": round((float(sale.market_rate) - float(sale.rate))
                                 * sale.weight_g / 1000.0, 2),
@@ -1094,11 +1328,21 @@ def create_worker():
         return err
     if not (d.get("name") or "").strip():
         return jsonify({"error": "validation", "message": "Name is required."}), 422
-    if float(d.get("dayWage") or 0) <= 0:
+    if to_dec(d.get("dayWage"), "dayWage") <= 0:
         return jsonify({"error": "validation", "message": "Enter the daily wage."}), 422
 
-    w = Worker(branch_id=branch_by_code(d["branch"]).id, name=d["name"].strip(),
-               role=d.get("role", "dresser"), day_wage=Decimal(str(d.get("dayWage") or 0)),
+    branch = branch_by_code(d["branch"])
+    name = d["name"].strip()[:160]
+    # A double-tap on "Save worker" would otherwise create the same dresser
+    # twice, and every attendance mark afterwards would be ambiguous.
+    twin = (Worker.query.filter(Worker.branch_id == branch.id,
+                                func.lower(Worker.name) == name.lower()).first())
+    if twin:
+        return jsonify({"error": "duplicate", "existingId": twin.id,
+                        "message": f'"{name}" is already on this branch\'s list.'}), 409
+
+    w = Worker(branch_id=branch.id, name=name,
+               role=d.get("role", "dresser"), day_wage=to_dec(d.get("dayWage"), "dayWage"),
                phone=d.get("phone"))
     db.session.add(w)
     log_activity("Added worker", f"{w.name} · {w.role} · ₹{w.day_wage}/day", branch_code=d["branch"])
@@ -1195,11 +1439,36 @@ def add_ledger():
             db.session.commit()
         return jsonify(row.to_dict()), 201
 
-    row = LabourLedger(branch_id=branch.id, worker_id=worker.id, entry_date=day,
-                       kind=kind, days=0, amount=to_dec(d.get("amount"), "amount"),
-                       note=d.get("note"), created_by_id=g.user.id)
-    if float(row.amount) <= 0:
+    amount = to_dec(d.get("amount"), "amount")
+    if amount <= 0:
         return jsonify({"error": "validation", "message": "Enter an amount."}), 422
+
+    # A second click on "Save" would post the same advance again. An identical
+    # worker + day + kind + amount recorded moments ago is a double submission,
+    # not a genuine second payment.
+    recent = (LabourLedger.query
+              .filter(LabourLedger.worker_id == worker.id,
+                      LabourLedger.entry_date == day,
+                      LabourLedger.kind == kind,
+                      LabourLedger.amount == amount)
+              .order_by(LabourLedger.created_at.desc()).first())
+    if recent and recent.created_at:
+        # SQLite hands back a naive datetime, Postgres an aware one. Assume UTC
+        # for the naive case rather than letting the subtraction explode.
+        created = recent.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age = (utcnow() - created).total_seconds()
+        if age < 20 and not d.get("confirmDuplicate"):
+            return jsonify({
+                "error": "duplicate", "existingId": recent.id,
+                "message": (f"₹{amount} was just recorded for {worker.name} "
+                            f"{int(age)}s ago. Sending it twice looks like a "
+                            f"double click — recorded once.")}), 409
+
+    row = LabourLedger(branch_id=branch.id, worker_id=worker.id, entry_date=day,
+                       kind=kind, days=0, amount=amount,
+                       note=d.get("note"), created_by_id=g.user.id)
     db.session.add(row)
     log_activity(f"Ledger {kind}", f"₹{row.amount} · {worker.name}", branch_code=branch.code)
     db.session.commit()
@@ -1234,8 +1503,14 @@ def add_overhead():
     if float(d.get("amount") or 0) <= 0:
         return jsonify({"error": "validation", "message": "Enter an amount."}), 422
 
+    # A dated overhead is spent on one day and charged there in full; an
+    # undated one is a standing monthly cost spread across the month.
+    spend = parse_date(d.get("date"), None, field="date") if d.get("date") else None
+    month = (spend.strftime("%Y-%m") if spend
+             else (d.get("month") or date.today().strftime("%Y-%m"))[:7])
+
     o = Overhead(branch_id=branch_by_code(d["branch"]).id,
-                 period_month=(d.get("month") or date.today().strftime("%Y-%m"))[:7],
+                 period_month=month, spend_date=spend,
                  category=d.get("category", "other"),
                  amount=to_dec(d.get("amount"), "amount"),
                  note=d.get("note"),
@@ -1245,11 +1520,110 @@ def add_overhead():
                  reviewed_at=utcnow() if g.user.is_admin else None)
     db.session.add(o)
     log_activity("Added overhead",
-                 f"{o.category} · {o.period_month} · ₹{o.amount}"
+                 f"{o.category} · {spend or o.period_month} · ₹{o.amount}"
+                 + (" (charged to the day)" if spend else " (spread over the month)")
                  + (" (auto-approved)" if g.user.is_admin else " (pending)"),
                  branch_code=d["branch"])
     db.session.commit()
     return jsonify(o.to_dict()), 201
+
+
+@bp.put("/overheads/<ov_id>")
+@admin_required
+def update_overhead(ov_id):
+    o = db.session.get(Overhead, ov_id)
+    if not o:
+        return jsonify({"error": "not_found"}), 404
+    d = request.get_json(silent=True) or {}
+    if "amount" in d:
+        o.amount = to_dec(d.get("amount"), "amount")
+    if "category" in d:
+        o.category = d.get("category") or "other"
+    if "note" in d:
+        o.note = (d.get("note") or "")[:2000]
+    if "date" in d:
+        o.spend_date = parse_date(d.get("date"), None, field="date") if d.get("date") else None
+        if o.spend_date:
+            o.period_month = o.spend_date.strftime("%Y-%m")
+    if "month" in d and not o.spend_date:
+        o.period_month = (d.get("month") or o.period_month)[:7]
+    log_activity("Edited overhead", f"{o.category} · ₹{o.amount}", branch_code=o.branch.code)
+    db.session.commit()
+    return jsonify(o.to_dict())
+
+
+@bp.get("/overheads")
+@login_required
+def list_overheads():
+    """
+    Overheads for reporting: one branch or every branch at once, over a date
+    range, with each row resolved to the day it actually lands on.
+    """
+    bids = visible_branch_ids()
+    if not bids:
+        return jsonify({"rows": [], "byDay": [], "byBranch": [], "total": 0})
+    if request.args.get("branch"):
+        b = branch_by_code(request.args["branch"])
+        err = require_branch(request.args["branch"])
+        if err:
+            return err
+        bids = [b.id] if b else []
+
+    to_day = parse_date(request.args.get("to"), date.today(), field="to")
+    from_day = parse_date(request.args.get("from"),
+                          to_day.replace(day=1), field="from")
+    months = months_in_range(from_day, to_day)
+
+    rows = (Overhead.query.filter(Overhead.branch_id.in_(bids),
+                                  Overhead.period_month.in_(months))
+            .order_by(Overhead.period_month.desc()).all()) if bids else []
+    if request.args.get("status"):
+        rows = [o for o in rows if o.status == request.args["status"]]
+
+    by_day, by_branch, total = {}, {}, 0.0
+    span = (to_day - from_day).days + 1
+    for o in rows:
+        if o.status != "approved":
+            continue
+        code = o.branch.code
+        if o.spend_date is not None:
+            if not (from_day <= o.spend_date <= to_day):
+                continue
+            share = [(o.spend_date, float(o.amount))]
+        else:
+            y, m = int(o.period_month[:4]), int(o.period_month[5:7])
+            dim = calendar.monthrange(y, m)[1]
+            per = float(o.amount) / dim
+            share = []
+            for n in range(dim):
+                day = date(y, m, 1) + timedelta(days=n)
+                if from_day <= day <= to_day:
+                    share.append((day, per))
+        for day, amount in share:
+            key = day.isoformat()
+            slot = by_day.setdefault(key, {"date": key, "total": 0.0, "branches": {}})
+            slot["total"] += amount
+            slot["branches"][code] = slot["branches"].get(code, 0.0) + amount
+            by_branch.setdefault(code, {"branch": code, "name": o.branch.name,
+                                        "total": 0.0, "dated": 0.0, "monthly": 0.0})
+            by_branch[code]["total"] += amount
+            by_branch[code]["dated" if o.spend_date else "monthly"] += amount
+            total += amount
+
+    for slot in by_day.values():
+        slot["total"] = round(slot["total"], 2)
+        slot["branches"] = {k: round(v, 2) for k, v in slot["branches"].items()}
+    for slot in by_branch.values():
+        for k in ("total", "dated", "monthly"):
+            slot[k] = round(slot[k], 2)
+
+    return jsonify({
+        "rows": [o.to_dict() for o in rows],
+        "byDay": sorted(by_day.values(), key=lambda r: r["date"], reverse=True),
+        "byBranch": sorted(by_branch.values(), key=lambda r: -r["total"]),
+        "total": round(total, 2),
+        "from": from_day.isoformat(), "to": to_day.isoformat(), "days": span,
+    })
 
 
 @bp.post("/overheads/<ov_id>/decision")
@@ -1286,6 +1660,209 @@ def delete_overhead(ov_id):
     db.session.delete(o)
     db.session.commit()
     return jsonify({"ok": True})
+
+
+# ==========================================================================
+# end-of-day cash handover
+# ==========================================================================
+def expected_cash(branch_id: int, day: date) -> dict:
+    """
+    What should be in the supervisor's hands at close.
+
+    Revenue is the wrong yardstick: a hotel buying on account puts nothing in
+    the till, and an advance handed to a cutter takes money out of it. So:
+
+        counter meat + live sales + cutting charges     sold over the counter
+      + hotel/function sales marked PAID on the day
+      + receipts collected against old hotel bills
+      − wages, advances, tea, tiffin and shop costs paid out
+      = what should be handed over
+
+    Credit sales are excluded entirely — they land on the customer's ledger
+    instead, and turn into cash on the day a receipt is recorded.
+    """
+    settings = get_settings()
+    entries = DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).all()
+
+    counter = live = cutting = hotel_cash = 0.0
+    hotel_credit = revenue = 0.0
+    for e in entries:
+        c = compute_entry(e.to_dict(include_costs=True, include_photos=False),
+                          settings, DayCostIndex.EMPTY)
+        counter += c["counterSaleAmt"]
+        live += c["liveAmt"]
+        cutting += c["cutAmt"]
+        hotel_cash += c["hotelCash"]
+        hotel_credit += c["hotelCredit"]
+        revenue += c["revenue"]
+
+    receipts = sum(float(p.amount) for p in CustomerPayment.query.filter_by(
+        branch_id=branch_id, pay_date=day).all())
+
+    lab = LabourLedger.query.filter_by(branch_id=branch_id, entry_date=day).all()
+    wages_paid = sum(float(r.amount) for r in lab if r.kind in ("paid", "advance"))
+    shop_costs = sum(float(r.amount) for r in lab if r.kind in SHOP_KINDS)
+    paid_out = wages_paid + shop_costs
+
+    expected = counter + live + cutting + hotel_cash + receipts - paid_out
+    return {
+        "date": day.isoformat(),
+        "counterSales": round(counter, 2), "liveSales": round(live, 2),
+        "cuttingCharges": round(cutting, 2), "hotelCash": round(hotel_cash, 2),
+        "hotelCredit": round(hotel_credit, 2), "receipts": round(receipts, 2),
+        "wagesPaid": round(wages_paid, 2), "shopCosts": round(shop_costs, 2),
+        "paidOut": round(paid_out, 2),
+        "revenue": round(revenue, 2),
+        "expected": round(expected, 2),
+        "entries": len(entries),
+        "approved": len([e for e in entries if e.status == "approved"]),
+    }
+
+
+def close_payload(branch, day: date) -> dict:
+    exp = expected_cash(branch.id, day)
+    row = DayClose.query.filter_by(branch_id=branch.id, business_date=day).first()
+    declared = float(row.cash_amount) + float(row.upi_amount) if row else 0.0
+    return {
+        "branch": branch.code, "branchName": branch.name,
+        "expectedBreakdown": exp,
+        "expected": exp["expected"],
+        "close": row.to_dict() if row else None,
+        "declared": declared if row else None,
+        "difference": round(declared - exp["expected"], 2) if row else None,
+    }
+
+
+@bp.get("/dayclose")
+@login_required
+def get_dayclose():
+    """One branch-day, or every visible branch for that day."""
+    day = parse_date(request.args.get("date"), date.today(), field="date")
+    if request.args.get("branch"):
+        err = require_branch(request.args["branch"])
+        if err:
+            return err
+        branches = [branch_by_code(request.args["branch"])]
+    else:
+        codes = g.user.branch_codes()
+        branches = (Branch.query.filter(Branch.code.in_(codes))
+                    .order_by(Branch.code).all()) if codes else []
+    return jsonify({"date": day.isoformat(),
+                    "branches": [close_payload(b, day) for b in branches if b]})
+
+
+@bp.post("/dayclose")
+@login_required
+def save_dayclose():
+    d = request.get_json(silent=True) or {}
+    err = require_branch(d.get("branch"))
+    if err:
+        return err
+    branch = branch_by_code(d["branch"])
+    day = parse_date(d.get("date"), date.today(), field="date")
+
+    cash = to_dec(d.get("cash"), "cash")
+    upi = to_dec(d.get("upi"), "upi")
+    if cash < 0 or upi < 0:
+        return jsonify({"error": "validation",
+                        "message": "Amounts cannot be negative."}), 422
+
+    row = DayClose.query.filter_by(branch_id=branch.id, business_date=day).first()
+    if row and not g.user.is_admin and row.verified_by_id is not None:
+        return jsonify({"error": "locked",
+                        "message": "This handover was already verified by an "
+                                   "admin. Ask them to reopen it."}), 403
+
+    exp = expected_cash(branch.id, day)
+    if not row:
+        row = DayClose(branch_id=branch.id, business_date=day)
+        db.session.add(row)
+    row.cash_amount = cash
+    row.upi_amount = upi
+    row.expected_amount = Decimal(str(exp["expected"]))
+    row.note = (d.get("note") or "")[:1000]
+    row.declared_by_id = g.user.id
+    row.declared_at = utcnow()
+
+    diff = float(cash + upi) - exp["expected"]
+    log_activity("Cash handover",
+                 f"{day} · cash ₹{cash} + UPI ₹{upi} vs expected "
+                 f"₹{exp['expected']:.2f} · "
+                 + ("balanced" if abs(diff) < 0.5
+                    else f"{'over' if diff > 0 else 'short'} ₹{abs(diff):.2f}"),
+                 branch_code=branch.code)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # two devices closed the same day at once — take whichever landed
+        db.session.rollback()
+        row = DayClose.query.filter_by(branch_id=branch.id, business_date=day).first()
+        if not row:
+            raise
+        row.cash_amount, row.upi_amount = cash, upi
+        row.expected_amount = Decimal(str(exp["expected"]))
+        db.session.commit()
+    return jsonify(close_payload(branch, day)), 201
+
+
+@bp.post("/dayclose/<close_id>/verify")
+@admin_required
+def verify_dayclose(close_id):
+    row = db.session.get(DayClose, close_id)
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    reopen = bool((request.get_json(silent=True) or {}).get("reopen"))
+    row.verified_by_id = None if reopen else g.user.id
+    row.verified_at = None if reopen else utcnow()
+    log_activity("Reopened handover" if reopen else "Verified handover",
+                 f"{row.business_date} · declared ₹{float(row.cash_amount) + float(row.upi_amount):.2f}",
+                 branch_code=row.branch.code)
+    db.session.commit()
+    return jsonify(close_payload(row.branch, row.business_date))
+
+
+@bp.get("/dayclose/history")
+@login_required
+def dayclose_history():
+    """A run of days with what was declared against what was expected."""
+    to_day = parse_date(request.args.get("to"), date.today(), field="to")
+    from_day = parse_date(request.args.get("from"), to_day - timedelta(days=29),
+                          field="from")
+    if (to_day - from_day).days > 180:
+        from_day = to_day - timedelta(days=180)
+
+    codes = g.user.branch_codes()
+    if request.args.get("branch"):
+        err = require_branch(request.args["branch"])
+        if err:
+            return err
+        codes = [request.args["branch"]]
+    branches = (Branch.query.filter(Branch.code.in_(codes))
+                .order_by(Branch.code).all()) if codes else []
+
+    out = []
+    day = to_day
+    while day >= from_day:
+        for b in branches:
+            exp = expected_cash(b.id, day)
+            row = DayClose.query.filter_by(branch_id=b.id, business_date=day).first()
+            if not row and exp["entries"] == 0 and abs(exp["expected"]) < 0.005:
+                continue                      # nothing traded, nothing to close
+            declared = (float(row.cash_amount) + float(row.upi_amount)) if row else None
+            out.append({
+                "date": day.isoformat(), "branch": b.code, "branchName": b.name,
+                "expected": exp["expected"], "revenue": exp["revenue"],
+                "cash": float(row.cash_amount) if row else None,
+                "upi": float(row.upi_amount) if row else None,
+                "declared": declared,
+                "difference": round(declared - exp["expected"], 2) if row else None,
+                "verified": bool(row and row.verified_by_id),
+                "declaredByName": row.declared_by.name if row and row.declared_by else "",
+                "missing": row is None,
+            })
+        day -= timedelta(days=1)
+    return jsonify({"from": from_day.isoformat(), "to": to_day.isoformat(),
+                    "rows": out})
 
 
 # ==========================================================================
@@ -1333,6 +1910,7 @@ def admin_wipe():
     Overhead.query.delete()
     LabourLedger.query.delete()
     Worker.query.delete()
+    DayClose.query.delete()
     CustomerPayment.query.delete()
     CustomerSale.query.delete()
     Customer.query.delete()
