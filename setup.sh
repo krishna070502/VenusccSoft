@@ -19,6 +19,6 @@ cat <<'MSG'
  Done. Start it with:
      source venv/bin/activate
      python run.py
- Then open http://127.0.0.1:5000
+ Then open http://127.0.0.1:${PORT:-5000}   (PORT is set in .env)
 ===========================================================
 MSG

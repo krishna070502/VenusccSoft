@@ -20,7 +20,7 @@ walks you through creating an administrator. Then:
 start.bat
 ```
 
-and open <http://127.0.0.1:5000>.
+and open <http://127.0.0.1:5000> — or whatever `PORT` you set in `.env`.
 
 ### macOS / Linux
 
@@ -34,6 +34,49 @@ python run.py
 > contains compiled binaries for one operating system. I build on Linux, you
 > run Windows, so a venv I shipped would not execute on your machine.
 > `setup.bat` creates a correct one locally in a few seconds.
+
+---
+
+## Ports and process sizing
+
+Nothing is pinned to a port number. Everything comes from `.env`:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PORT` | 5000 | The port the app listens on |
+| `HOST` | 127.0.0.1 | Interface for the dev server; use `0.0.0.0` to reach it from another machine |
+| `APP_PORT` | 8000 | Port on your machine that Docker maps to the container's `PORT` |
+| `WEB_CONCURRENCY` | 2 | gunicorn workers |
+| `WEB_THREADS` | 4 | Threads per worker |
+| `DB_PORT` / `ADMINER_PORT` | 5432 / 8080 | Only with the `localdb` and `tools` Compose profiles |
+
+Hosting platforms inject their own `PORT`, and that takes precedence, so the
+same image runs locally and on a host without editing anything.
+
+---
+
+## Deploying free, to try it out
+
+The app fits a free tier as-is. The one thing to get right: use your **Neon**
+database rather than the host's free Postgres, because Render's free database
+is deleted after 30 days while Neon's free plan does not expire.
+
+**Render** — easiest, no card needed. `render.yaml` in this repo is a
+blueprint: in Render choose **New → Blueprint**, point it at the repo, and the
+only thing to fill in is `DATABASE_URL` (your Neon string). `SECRET_KEY` is
+generated for you. Tables are created on first boot, then:
+
+```
+python manage.py create-admin      # from the Render shell
+```
+
+Free instances sleep after 15 minutes idle and take roughly a minute to wake,
+which is fine for testing and not for a live shop.
+
+Alternatives worth knowing: **Koyeb** (no sleep on the free service, container
+or Git deploys) and **PythonAnywhere** (very stable, but 100 CPU-seconds a day
+and no custom domain). **Fly.io** dropped its free tier, and **Railway** gives
+$5 of credit a month once you add a card.
 
 ---
 
@@ -83,7 +126,7 @@ docker compose --profile tools up -d            # + Adminer on :8080
 docker compose --profile backup run --rm db-backup   # dump into ./backups
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://localhost:8000>, or the `APP_PORT` you set in `.env`.
 
 | | |
 |---|---|
@@ -115,8 +158,8 @@ is the bundled container or your own, and on every Compose v2 rather than only
 | `python manage.py seed` | Load the 14-day demo dataset |
 | `python manage.py reset-db` | Drop and recreate everything |
 | `python run.py` | Development server |
-| `waitress-serve --port=8000 wsgi:app` | Production server on Windows |
-| `gunicorn -w 4 -b 0.0.0.0:8000 wsgi:app` | Production server on Linux |
+| `waitress-serve --port=%PORT% wsgi:app` | Production server on Windows |
+| `gunicorn wsgi:app -b 0.0.0.0:$PORT -w $WEB_CONCURRENCY` | Production server on Linux |
 
 `GET /healthz` reports whether the database is reachable — point your uptime
 monitor at it.

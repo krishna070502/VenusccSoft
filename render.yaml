@@ -1,0 +1,28 @@
+# One-click deploy on Render:  New  ->  Blueprint  ->  point at this repo.
+#
+# Uses your existing Neon database rather than Render's free Postgres, which
+# is deleted after 30 days. Put the Neon connection string into DATABASE_URL
+# in the Render dashboard — never in this file.
+services:
+  - type: web
+    name: venus-chicken-centers
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    healthCheckPath: /healthz
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true          # Render invents one; never commit a real key
+      - key: DATABASE_URL
+        sync: false                  # paste your Neon URL in the dashboard
+      - key: COOKIE_SECURE
+        value: "1"                   # Render serves HTTPS
+      - key: WEB_CONCURRENCY
+        value: "2"                   # 4 workers will not fit in 512 MB
+      - key: DB_POOL_SIZE
+        value: "3"                   # keep well inside Neon's free connection budget
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      - key: PYTHON_VERSION
+        value: "3.12.6"

@@ -47,12 +47,18 @@ RUN chmod +x /app/docker/entrypoint.sh
 
 USER venus
 
-EXPOSE 8000
+# The port is configurable; this is only documentation for `docker run -P`.
+ARG APP_PORT=8000
+ENV PORT=${APP_PORT}
+EXPOSE ${APP_PORT}
 
 # Compose also defines a healthcheck; this one covers `docker run` on its own.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/healthz || exit 1
+    CMD curl -fsS http://localhost:${PORT:-8000}/healthz || exit 1
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2", \
-     "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]
+# Shell form on purpose: free hosts (Render, Koyeb, Railway) hand you a PORT
+# to bind to, and 4 workers will not fit in a 512 MB free instance.
+CMD gunicorn --bind 0.0.0.0:${PORT:-8000} \
+    --workers ${WEB_CONCURRENCY:-2} --threads ${WEB_THREADS:-4} \
+    --timeout 120 --access-logfile - --error-logfile - wsgi:app

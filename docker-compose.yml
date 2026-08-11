@@ -10,13 +10,13 @@
 #         docker compose --profile localdb up -d --build
 #     Starts PostgreSQL 16 in a container with a persistent volume.
 #
-#  C) Add a database browser on http://localhost:8080
+#  C) Add a database browser on http://localhost:${ADMINER_PORT:-8080}
 #         docker compose --profile tools up -d
 #
 #  D) Take a backup into ./backups
 #         docker compose --profile backup run --rm db-backup
 #
-#  Then open  http://localhost:8000
+#  Then open  http://localhost:${APP_PORT:-8000}   (set APP_PORT in .env)
 #
 #  Useful:
 #     docker compose logs -f web
@@ -45,6 +45,11 @@ x-app-env: &app-env
   IDLE_SUPERVISOR_MIN: ${IDLE_SUPERVISOR_MIN:-10}
 
   # Connection pool — Neon closes idle connections, so recycle before it does
+  # What the app listens on inside the container
+  PORT: ${PORT:-8000}
+  WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+  WEB_THREADS: ${WEB_THREADS:-4}
+
   DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
   DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
 
@@ -79,12 +84,13 @@ services:
     init: true                      # reap zombie processes, forward signals
     stop_grace_period: 30s
     ports:
-      - "${APP_PORT:-8000}:8000"
+      # host:container — both follow .env, so nothing is pinned to 8000
+      - "${APP_PORT:-8000}:${PORT:-8000}"
     environment: *app-env
     # No depends_on: the entrypoint waits for the database itself, which keeps
     # this file working on every Compose v2 and in both profiles.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:${PORT:-8000}/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

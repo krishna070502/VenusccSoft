@@ -51,6 +51,6 @@ echo.
 echo      venv\Scripts\activate
 echo      python run.py
 echo.
-echo  Then open  http://127.0.0.1:5000
+echo  Then open  http://127.0.0.1:%%PORT%%   ^(PORT is set in .env^)
 echo ===========================================================
 pause
