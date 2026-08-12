@@ -132,8 +132,8 @@
       <p class="text-emerald-300 text-xs uppercase tracking-[0.2em] mt-1">Operations Console</p>
     </div>
     <form id="loginForm" class="bg-white rounded-2xl shadow-2xl p-6 space-y-4">
-      <div><label class="lbl" for="loginUser">Username</label><input id="loginUser" class="inp" autocomplete="username" placeholder="Your username" required /></div>
-      <div><label class="lbl" for="loginPass">Password</label><input id="loginPass" type="password" class="inp" autocomplete="current-password" placeholder="••••••••" required /></div>
+      <div><label class="lbl" for="loginUser" title="Your account username, given to you by the admin.">Username</label><input id="loginUser" class="inp" autocomplete="username" placeholder="Your username" required /></div>
+      <div><label class="lbl" for="loginPass" title="Your account password.">Password</label><input id="loginPass" type="password" class="inp" autocomplete="current-password" placeholder="••••••••" required /></div>
       <p id="loginError" class="hidden text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></p>
       <p id="loginNotice" class="hidden text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
       <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-lg shadow transition"><i class="fa-solid fa-right-to-bracket mr-2"></i>Sign in</button>
@@ -179,7 +179,7 @@
       <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Functions <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Workers</button>
-      <button data-view="dayclose" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-cash-register text-xs"></i> Day Close <span id="closeBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="dayclose" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-cash-register text-xs"></i> Day Close <span id="closeBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
     </nav>
@@ -205,8 +205,8 @@
           <button data-cat="broiler">Broiler</button>
           <button data-cat="parents">Parents</button>
         </div>
-        <div><label class="lbl" for="dashFrom">From</label><input type="date" id="dashFrom" class="inp" /></div>
-        <div><label class="lbl" for="dashTo">To</label><input type="date" id="dashTo" class="inp" /></div>
+        <div><label class="lbl" for="dashFrom" title="Start of the date range shown on the dashboard.">From</label><input type="date" id="dashFrom" class="inp" /></div>
+        <div><label class="lbl" for="dashTo" title="End of the date range shown on the dashboard.">To</label><input type="date" id="dashTo" class="inp" /></div>
         <div class="flex gap-1.5">
           <button data-range="today" class="qr text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Today</button>
           <button data-range="7" class="qr text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">7d</button>
@@ -409,7 +409,7 @@
             <div id="entryLockNotice" class="hidden text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 rounded-lg px-3 py-2"></div>
           </div>
           <div class="grid-f !px-0 !pb-0 !pt-4">
-            <div><label class="lbl" for="f_datetime">Date &amp; time <span class="req">*</span></label><input type="datetime-local" id="f_datetime" class="inp" required /></div>
+            <div><label class="lbl" for="f_datetime" title="The trading day this entry belongs to. A supervisor can only ever record today; an admin can move it.">Date &amp; time <span class="req">*</span></label><input type="datetime-local" id="f_datetime" class="inp" required /></div>
             <div><span class="lbl">Branch</span><p id="f_branchLabel" class="inp !bg-slate-100 font-semibold text-emerald-800">—</p></div>
             <div><span class="lbl">Status</span><p id="f_statusLabel" class="inp !bg-slate-100 font-semibold text-slate-600">New entry</p></div>
             <div><span class="lbl">Entered by</span><p id="f_byLabel" class="inp !bg-slate-100 font-semibold text-slate-600">—</p></div>
@@ -419,7 +419,7 @@
         <div id="rejectNotice" class="hidden card border-rose-300 bg-rose-50 p-5">
           <p class="font-bold text-rose-800 flex items-center gap-2 mb-1"><i class="fa-solid fa-circle-xmark"></i>Returned by admin</p>
           <p class="text-sm text-rose-700 mb-3" id="rejectReasonText"></p>
-          <label class="lbl" for="f_explanation">Your explanation <span class="req">*</span></label>
+          <label class="lbl" for="f_explanation" title="Required when resubmitting a returned entry — say what was corrected.">Your explanation <span class="req">*</span></label>
           <textarea id="f_explanation" rows="2" class="inp" placeholder="Explain the variance to the admin…"></textarea>
         </div>
 
@@ -427,17 +427,17 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-emerald-700"><span class="sec-badge">A</span>Opening Stock <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80" id="carryNote"></span></div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_openBirds">Opening birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_openBirds" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl" for="f_openBirds" title="Birds on hand at the start of the day, carried forward from yesterday's closing count.">Opening birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_openBirds" class="inp num" placeholder="0" /></div>
             <div><label class="lbl">Opening bird weight <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_openWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_openWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
-            <div data-admin="1"><label class="lbl" for="f_openRate">Opening cost rate (₹/kg)</label><input type="number" min="0" step="0.01" id="f_openRate" class="inp num" placeholder="0.00" /><p class="text-[11px] text-slate-400 mt-1">Carried forward · admin only</p></div>
-            <div><label class="lbl">Open meat (previous day)</label><div class="kgg"><input type="number" min="0" step="1" id="f_openMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_openMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div data-admin="1"><label class="lbl" for="f_openRate" title="Weighted average cost per kg carried into today's opening stock — admin only.">Opening cost rate (₹/kg)</label><input type="number" min="0" step="0.01" id="f_openRate" class="inp num" placeholder="0.00" /><p class="text-[11px] text-slate-400 mt-1">Carried forward · admin only</p></div>
+            <div><label class="lbl" title="Dressed meat left over from yesterday, carried into today's stock.">Open meat (previous day)</label><div class="kgg"><input type="number" min="0" step="1" id="f_openMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_openMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
           </div>
         </fieldset>
 
         <!-- B: Purchases -->
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-emerald-600"><span class="sec-badge">B</span>Purchases (birds bought in)
-            <button type="button" id="btnAddPurchase" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal"><i class="fa-solid fa-plus mr-1"></i>Add purchase</button>
+            <button type="button" id="btnAddPurchase" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal" title="Record a batch of birds bought in today, with supplier, count, weight and rate."><i class="fa-solid fa-plus mr-1"></i>Add purchase</button>
           </div>
           <div class="p-5">
             <div id="purchaseRows" class="space-y-3"></div>
@@ -454,10 +454,10 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-amber-500 !text-emerald-900"><span class="sec-badge !bg-emerald-800 !text-amber-400">C</span>Selling Rates (₹ per kg)</div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_rateSkin">Skin <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkin" class="inp num" placeholder="0.00" /></div>
-            <div><label class="lbl" for="f_rateSkinless">Skinless <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkinless" class="inp num" placeholder="0.00" /></div>
-            <div><label class="lbl" for="f_rateLiver">Liver</label><input type="number" min="0" step="0.01" id="f_rateLiver" class="inp num" placeholder="0.00" /></div>
-            <div><label class="lbl" for="f_rateLive">Live bird price <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateLive" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateSkin" title="Selling price per kg for skin-on (regular) dressed meat today.">Skin <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkin" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateSkinless" title="Selling price per kg for skinless dressed meat today.">Skinless <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateSkinless" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateLiver" title="Selling price per kg for liver today.">Liver</label><input type="number" min="0" step="0.01" id="f_rateLiver" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_rateLive" title="Selling price per kg for birds sold live (not dressed) today.">Live bird price <span class="req">*</span></label><input type="number" min="0" step="0.01" id="f_rateLive" class="inp num" placeholder="0.00" /></div>
           </div>
         </fieldset>
 
@@ -465,9 +465,9 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-emerald-800"><span class="sec-badge">D</span>Live Bird Sales &amp; Cutting</div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_liveSoldCount">Live birds sold (nos)</label><input type="number" min="0" step="1" id="f_liveSoldCount" class="inp num" placeholder="0" /></div>
-            <div><label class="lbl">Live sold weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_liveSoldWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liveSoldWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
-            <div><label class="lbl" for="f_cutCharges">Cutting charges (₹)</label><input type="number" min="0" step="0.01" id="f_cutCharges" class="inp num" placeholder="0.00" /></div>
+            <div><label class="lbl" for="f_liveSoldCount" title="Number of birds sold live today, straight off the bird count.">Live birds sold (nos)</label><input type="number" min="0" step="1" id="f_liveSoldCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl" title="Total live weight of the birds sold live today.">Live sold weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_liveSoldWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liveSoldWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl" for="f_cutCharges" title="Cutting/dressing charges collected today, added to revenue.">Cutting charges (₹)</label><input type="number" min="0" step="0.01" id="f_cutCharges" class="inp num" placeholder="0.00" /></div>
             <div><span class="lbl">Live sale amount</span><div class="calcbox bg-emerald-50 border border-emerald-200"><i class="fa-solid fa-indian-rupee-sign text-emerald-700"></i><span class="ml-auto font-bold num text-emerald-800" id="o_liveAmt">₹0.00</span></div></div>
           </div>
         </fieldset>
@@ -476,9 +476,9 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-rose-700"><span class="sec-badge !text-rose-900">E</span>Mortality &amp; Damage</div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_mortCount">Mortality (nos)</label><input type="number" min="0" step="1" id="f_mortCount" class="inp num" placeholder="0" /></div>
-            <div><label class="lbl">Mortality weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_mortWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_mortWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
-            <div><label class="lbl">Damage meat</label><div class="kgg"><input type="number" min="0" step="1" id="f_damage_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_damage_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl" for="f_mortCount" title="Birds that died today — requires a photo before the entry can be submitted.">Mortality (nos)</label><input type="number" min="0" step="1" id="f_mortCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl" title="Total live weight of the birds that died today.">Mortality weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_mortWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_mortWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl" title="Meat weight written off as damaged or spoiled today.">Damage meat</label><div class="kgg"><input type="number" min="0" step="1" id="f_damage_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_damage_g" class="inp num" placeholder="0" /><span>g</span></div></div>
           </div>
           <div class="px-5 pb-5">
             <label class="lbl">Mortality photos <span class="req">(required when mortality &gt; 0)</span></label>
@@ -494,7 +494,7 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-slate-700"><span class="sec-badge !text-slate-900">F</span>Dressing / Processing</div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_dressedCount">Dressed birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_dressedCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl" for="f_dressedCount" title="Number of birds actually dressed (slaughtered and cleaned) today.">Dressed birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_dressedCount" class="inp num" placeholder="0" /></div>
             <div><label class="lbl">Live weight dressed <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_dressedWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_dressedWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
             <div><label class="lbl">Actual meat obtained <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_actualMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_actualMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
           </div>
@@ -510,16 +510,16 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-emerald-800"><span class="sec-badge">G</span>Meat Sales <span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">counter &amp; walk-in — contract customers go in Section H</span></div>
           <div class="grid-f">
-            <div><label class="lbl">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
-            <div><label class="lbl">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
-            <div><label class="lbl">Liver sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_liverSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liverSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_liverAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl" title="Skin-on dressed meat sold today.">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl" title="Skinless dressed meat sold today.">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl" title="Liver sold today.">Liver sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_liverSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liverSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_liverAmt" class="num">0.00</span></p></div>
           </div>
         </fieldset>
 
         <!-- H: Hotel & hostel sales -->
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-indigo-700"><span class="sec-badge !text-indigo-900">H</span>Hotel, Hostel &amp; Function Sales
-            <button type="button" id="btnAddHotelSale" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal"><i class="fa-solid fa-plus mr-1"></i>Add sale</button>
+            <button type="button" id="btnAddHotelSale" class="ml-auto text-[11px] font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 normal-case tracking-normal" title="Add a sale line for a hotel, hostel or function customer."><i class="fa-solid fa-plus mr-1"></i>Add sale</button>
           </div>
           <div class="p-5">
             <div id="hotelRows" class="space-y-3"></div>
@@ -540,7 +540,7 @@
             <div><label class="lbl flex items-center gap-2" for="f_closeBirds">Closing birds<button type="button" data-auto="closeBirds" data-admin="1" class="autoBtn ml-auto">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" readonly tabindex="-1" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
             <div><label class="lbl flex items-center gap-2">Closing bird weight<button type="button" data-auto="closeWt" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
             <div><label class="lbl flex items-center gap-2">Closing meat<button type="button" data-auto="closeMeat" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeMeat"></p></div>
-            <div class="sm:col-span-2"><label class="lbl" for="f_notes">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
+            <div class="sm:col-span-2"><label class="lbl" for="f_notes" title="Optional remarks for anyone reviewing this entry later.">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
           </div>
         </fieldset>
 
@@ -588,11 +588,11 @@
       <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap items-end gap-3">
         <div><h2 class="text-lg font-bold text-slate-900" id="recordsTitle">Approvals</h2><p class="text-xs text-slate-500"><span id="recCount">0</span> record(s)</p></div>
         <div class="flex-1"></div>
-        <div><label class="lbl" for="recFrom">From</label><input type="date" id="recFrom" class="inp" /></div>
-        <div><label class="lbl" for="recTo">To</label><input type="date" id="recTo" class="inp" /></div>
-        <div><label class="lbl" for="recBranch">Branch</label><select id="recBranch" class="inp"></select></div>
-        <div><label class="lbl" for="recCat">Category</label><select id="recCat" class="inp"><option value="">All</option><option value="broiler">Broiler</option><option value="parents">Parents</option></select></div>
-        <div><label class="lbl" for="recStatus">Status</label><select id="recStatus" class="inp"><option value="">All</option><option value="draft">Draft</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Returned</option></select></div>
+        <div><label class="lbl" for="recFrom" title="Start of the date range to list. A supervisor is locked to today.">From</label><input type="date" id="recFrom" class="inp" /></div>
+        <div><label class="lbl" for="recTo" title="End of the date range to list. A supervisor is locked to today.">To</label><input type="date" id="recTo" class="inp" /></div>
+        <div><label class="lbl" for="recBranch" title="Filter the list to one branch.">Branch</label><select id="recBranch" class="inp"></select></div>
+        <div><label class="lbl" for="recCat" title="Filter the list to broiler or parents entries only.">Category</label><select id="recCat" class="inp"><option value="">All</option><option value="broiler">Broiler</option><option value="parents">Parents</option></select></div>
+        <div><label class="lbl" for="recStatus" title="Filter the list by approval status.">Status</label><select id="recStatus" class="inp"><option value="">All</option><option value="draft">Draft</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Returned</option></select></div>
         <button id="btnRecExport" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-file-csv"></i> CSV</button>
         <button id="btnRecPrint" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-print"></i> Print</button>
       </div>
@@ -621,8 +621,8 @@
       <div><h2 class="text-xl font-bold text-slate-900">Hotels, Hostels &amp; Functions</h2>
         <p class="text-sm text-slate-500"><span id="custBranchLabel" class="font-semibold text-emerald-700">—</span> · contract buyers priced under the counter rate · marriage functions and bulk orders too · each keeps its own ledger</p></div>
       <div class="flex items-end gap-3 flex-wrap">
-        <div><label class="lbl" for="custFilter">Show</label><select id="custFilter" class="inp"><option value="">All</option><option value="hotel">Hotels only</option><option value="hostel">Hostels only</option><option value="function">Functions only</option><option value="due">With a balance due</option></select></div>
-        <button id="btnAddCustomer" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add hotel / hostel / function</button>
+        <div><label class="lbl" for="custFilter" title="Filter the customer list by type.">Show</label><select id="custFilter" class="inp"><option value="">All</option><option value="hotel">Hotels only</option><option value="hostel">Hostels only</option><option value="function">Functions only</option><option value="due">With a balance due</option></select></div>
+        <button id="btnAddCustomer" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm" title="Add a hotel, hostel or function customer for this branch."><i class="fa-solid fa-plus"></i> Add hotel / hostel / function</button>
       </div>
     </div>
 
@@ -666,10 +666,10 @@
       <div><h2 class="text-xl font-bold text-slate-900">Workers — dressers &amp; cutters</h2>
         <p class="text-sm text-slate-500"><span id="wkBranchLabel" class="font-semibold text-emerald-700">—</span> · paid per working day · tea &amp; tiffin never deducted</p></div>
       <div class="flex items-end gap-3 flex-wrap">
-        <div><label class="lbl" for="wkDate">Work date</label><input type="date" id="wkDate" class="inp" /></div>
-        <button id="btnAddWorker" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-user-plus"></i> Add worker</button>
-        <button id="btnPayWorker" class="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-hand-holding-dollar"></i> Record payment</button>
-        <button id="btnAddExpense" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-receipt"></i> Log expense</button>
+        <div><label class="lbl" for="wkDate" title="The day attendance and wages apply to. A supervisor is locked to today.">Work date</label><input type="date" id="wkDate" class="inp" /></div>
+        <button id="btnAddWorker" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm" title="Add a new dresser, cutter or other daily worker to this branch."><i class="fa-solid fa-user-plus"></i> Add worker</button>
+        <button id="btnPayWorker" class="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm" title="Record a payment made to a worker, settling part of their balance due."><i class="fa-solid fa-hand-holding-dollar"></i> Record payment</button>
+        <button id="btnAddExpense" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm" title="Log a shop expense such as tea, tiffin or a one-off cost."><i class="fa-solid fa-receipt"></i> Log expense</button>
       </div>
     </div>
 
@@ -711,16 +711,16 @@
       </table></div>
     </div>
 
-    <div class="card overflow-hidden mb-5">
+    <div data-admin="1" class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
         <i class="fa-solid fa-calendar-week text-rose-600"></i>
         <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Day-wise workers &amp; deductions</h3>
         <span class="text-xs text-slate-400" id="dwNote"></span>
         <div class="ml-auto flex items-end gap-2">
-          <div><label class="lbl" for="dwFrom">From</label><input type="date" id="dwFrom" class="inp !py-1.5 !text-xs" /></div>
-          <div><label class="lbl" for="dwTo">To</label><input type="date" id="dwTo" class="inp !py-1.5 !text-xs" /></div>
-          <button id="dwMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50">This month</button>
-          <button id="dwExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <div><label class="lbl" for="dwFrom" title="Start of the date range for this history table — admin only.">From</label><input type="date" id="dwFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="dwTo" title="End of the date range for this history table — admin only.">To</label><input type="date" id="dwTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="dwMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Jump the date range to this calendar month.">This month</button>
+          <button id="dwExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as a CSV file."><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
         </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -784,7 +784,7 @@
       <div><h2 class="text-xl font-bold text-slate-900">End of Day — cash handover</h2>
         <p class="text-sm text-slate-500">What the supervisor hands over, set against what the day&rsquo;s trading says should be in hand</p></div>
       <div class="flex items-end gap-3 flex-wrap">
-        <div><label class="lbl" for="dcDate">Date</label><input type="date" id="dcDate" class="inp" /></div>
+        <div><label class="lbl" for="dcDate" title="The trading day this cash handover is for — admin only.">Date</label><input type="date" id="dcDate" class="inp" /></div>
         <button id="dcToday" class="text-sm font-bold border border-slate-300 bg-white rounded-lg px-3 py-2.5 hover:bg-slate-50">Today</button>
       </div>
     </div>
@@ -799,8 +799,8 @@
           <span class="text-xs text-slate-400" id="dcHistNote"></span>
         </div>
         <div class="ml-auto flex items-end gap-2 flex-wrap">
-          <div><label class="lbl" for="dcFrom">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
-          <div><label class="lbl" for="dcTo">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="dcFrom" title="Start of the handover history range — admin only.">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="dcTo" title="End of the handover history range — admin only.">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
           <button id="dcExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
         </div>
       </div>
@@ -829,7 +829,7 @@
           <span class="text-xs text-slate-400" id="dcGapNote"></span>
         </div>
         <div class="ml-auto flex items-end gap-2 flex-wrap">
-          <div><label class="lbl" for="dcGapBranch">Branch</label>
+          <div><label class="lbl" for="dcGapBranch" title="Show excess/shortage handovers for one branch, or all.">Branch</label>
             <select id="dcGapBranch" class="inp !py-1.5 !text-xs"><option value="">All branches</option></select>
           </div>
         </div>
@@ -875,8 +875,8 @@
         <p class="text-sm text-slate-500"><span id="ovhBranchLabel" class="font-semibold text-emerald-700">&mdash;</span> · rent, electricity, salaries and one-off shop costs</p>
       </div>
       <div class="flex items-end gap-3 flex-wrap">
-        <div><label class="lbl" for="ovhMonth">Month</label><input type="month" id="ovhMonth" class="inp" /></div>
-        <button id="btnAddOverhead" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm"><i class="fa-solid fa-plus"></i> Add overhead</button>
+        <div><label class="lbl" for="ovhMonth" title="The month this standing overhead applies to.">Month</label><input type="month" id="ovhMonth" class="inp" /></div>
+        <button id="btnAddOverhead" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm" title="Record a standing monthly cost or a one-off dated expense."><i class="fa-solid fa-plus"></i> Add overhead</button>
       </div>
     </div>
 
@@ -896,8 +896,8 @@
           <button type="button" data-oscope="all">All branches</button>
         </div>
         <div class="ml-auto flex items-end gap-2 flex-wrap">
-          <div><label class="lbl" for="ovhFrom">From</label><input type="date" id="ovhFrom" class="inp !py-1.5 !text-xs" /></div>
-          <div><label class="lbl" for="ovhTo">To</label><input type="date" id="ovhTo" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="ovhFrom" title="Start of the date range for dated overheads.">From</label><input type="date" id="ovhFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="ovhTo" title="End of the date range for dated overheads.">To</label><input type="date" id="ovhTo" class="inp !py-1.5 !text-xs" /></div>
           <button id="ovhThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Month</button>
           <button id="ovhExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
         </div>
@@ -953,11 +953,11 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <div class="card overflow-hidden">
         <div class="px-5 py-3 bg-emerald-800 text-white flex items-center gap-2"><i class="fa-solid fa-store text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">Branches</h3>
-          <button id="btnAddBranch" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
+          <button id="btnAddBranch" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400" title="Create a new branch location."><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
         <form id="branchAddForm" class="hidden px-5 py-4 bg-emerald-50 border-b border-emerald-100">
           <div class="flex flex-wrap gap-3 items-end">
-            <div class="w-24"><label class="lbl" for="newBranchCode">Code</label><input id="newBranchCode" class="inp uppercase" maxlength="10" placeholder="B05" /></div>
-            <div class="flex-1 min-w-[180px]"><label class="lbl" for="newBranchName">Branch name</label><input id="newBranchName" class="inp" placeholder="Branch 05 — Airport Road" /></div>
+            <div class="w-24"><label class="lbl" for="newBranchCode" title="A short unique code for the branch, e.g. B01. Left blank, one is assigned automatically.">Code</label><input id="newBranchCode" class="inp uppercase" maxlength="10" placeholder="B05" /></div>
+            <div class="flex-1 min-w-[180px]"><label class="lbl" for="newBranchName" title="The branch's full display name.">Branch name</label><input id="newBranchName" class="inp" placeholder="Branch 05 — Airport Road" /></div>
             <button class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Save</button>
           </div>
         </form>
@@ -969,15 +969,15 @@
 
       <div class="card overflow-hidden">
         <div class="px-5 py-3 bg-emerald-800 text-white flex items-center gap-2"><i class="fa-solid fa-users-gear text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">User accounts</h3>
-          <button id="btnAddUser" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
+          <button id="btnAddUser" class="ml-auto text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400" title="Create a new admin or supervisor account."><i class="fa-solid fa-plus mr-1"></i>Add</button></div>
         <form id="userAddForm" class="hidden px-5 py-4 bg-emerald-50 border-b border-emerald-100 space-y-3">
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="lbl" for="newUserName">Full name</label><input id="newUserName" class="inp" /></div>
-            <div><label class="lbl" for="newUserLogin">Username</label><input id="newUserLogin" class="inp" /></div>
-            <div><label class="lbl" for="newUserPass">Password</label><input id="newUserPass" class="inp" /></div>
-            <div><label class="lbl" for="newUserRole">Role</label><select id="newUserRole" class="inp"><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
+            <div><label class="lbl" for="newUserName" title="The person's full name, shown throughout the app.">Full name</label><input id="newUserName" class="inp" /></div>
+            <div><label class="lbl" for="newUserLogin" title="The username they will sign in with — must be unique.">Username</label><input id="newUserLogin" class="inp" /></div>
+            <div><label class="lbl" for="newUserPass" title="Their initial password. They can be given a new one later if needed.">Password</label><input id="newUserPass" class="inp" /></div>
+            <div><label class="lbl" for="newUserRole" title="Admin sees every branch and all figures; a supervisor is limited to their assigned branch(es) and today only.">Role</label><select id="newUserRole" class="inp"><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
           </div>
-          <div><label class="lbl">Assigned branches</label><div id="newUserBranches" class="flex flex-wrap gap-2"></div></div>
+          <div><label class="lbl" title="Which branch(es) this user can see and work in. A supervisor should normally have exactly one.">Assigned branches</label><div id="newUserBranches" class="flex flex-wrap gap-2"></div></div>
           <button class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Create account</button>
         </form>
         <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -1014,10 +1014,10 @@
       <div class="card overflow-hidden lg:col-span-2">
         <div class="px-5 py-3 bg-slate-700 text-white flex items-center gap-2"><i class="fa-solid fa-sliders text-amber-400"></i><h3 class="font-bold text-sm uppercase tracking-wide">Settings &amp; data</h3></div>
         <div class="grid-f">
-          <div><label class="lbl" for="setWasteBroiler">Broiler waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteBroiler" class="inp num" /></div>
-          <div><label class="lbl" for="setWasteParents">Parents waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteParents" class="inp num" /></div>
-          <div><label class="lbl" for="setTolerance">Yield tolerance ± %</label><input type="number" min="0" max="20" step="0.1" id="setTolerance" class="inp num" /></div>
-          <div><label class="lbl" for="setDayWage">Default day wage (₹)</label><input type="number" min="0" step="10" id="setDayWage" class="inp num" /></div>
+          <div><label class="lbl" for="setWasteBroiler" title="Expected weight loss %% between live birds and dressed meat for broilers, used to flag unusual yields.">Broiler waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteBroiler" class="inp num" /></div>
+          <div><label class="lbl" for="setWasteParents" title="Expected weight loss %% between live birds and dressed meat for parent birds, used to flag unusual yields.">Parents waste %</label><input type="number" min="0" max="90" step="0.1" id="setWasteParents" class="inp num" /></div>
+          <div><label class="lbl" for="setTolerance" title="How far the actual yield may drift from expected before it's flagged as high or low.">Yield tolerance ± %</label><input type="number" min="0" max="20" step="0.1" id="setTolerance" class="inp num" /></div>
+          <div><label class="lbl" for="setDayWage" title="The standard daily wage suggested for a new worker — can still be overridden per worker.">Default day wage (₹)</label><input type="number" min="0" step="10" id="setDayWage" class="inp num" /></div>
           <div class="flex items-end"><button id="btnSaveSettings" class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg w-full">Save settings</button></div>
         </div>
         <div class="px-5 pb-5 flex flex-wrap gap-3">

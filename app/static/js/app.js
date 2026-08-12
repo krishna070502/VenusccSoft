@@ -78,7 +78,7 @@ var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[]
           window:null, fetching:null, ovhScope:'branch', ovhLedger:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
-          editing:null, photos:[], purchases:[], hotelSales:[], charts:{} };
+          editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null };
 
 /* ---------------- helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -414,7 +414,13 @@ function existingEntry(branch,cat,date,exceptId){
     return x.branch===branch && x.category===cat && dOf(x.datetime)===date && x.id!==exceptId;
   })[0]||null;
 }
-function canEdit(e){ if(!e) return true; if(isAdmin()) return true; return (e.status==='draft'||e.status==='rejected')&&e.createdBy===S.user.id; }
+function canEdit(e){
+  if(!e) return true;
+  if(isAdmin()) return true;
+  // A supervisor only ever has today — matches can_edit() server-side.
+  return (e.status==='draft'||e.status==='rejected') && e.createdBy===S.user.id
+    && e.businessDate===todayISO();
+}
 function userName(id){ var u=S.users.filter(function(x){return x.id===id;})[0]; return u?u.name:'—'; }
 
 function applyRbac(){
@@ -426,6 +432,12 @@ function applyRbac(){
   $('userName').textContent=S.user.name;
   $('userRole').textContent=S.user.role;
   $('userInitials').textContent=S.user.name.split(/\s+/).map(function(x){return x[0];}).join('').slice(0,2).toUpperCase();
+  /* A supervisor only ever works today's attendance/wages — no browsing or
+     editing a past day's worker records (see markAttendance/adjustWage,
+     which both key off this field, and the ledgerModal/advanceModal date
+     boxes below, which default from it). */
+  var wkd=$('wkDate');
+  if(wkd){ wkd.disabled=!isAdmin(); wkd.title=isAdmin()?'':'Supervisors can only work today’s attendance and wages.'; }
 }
 
 function refreshBranchSelects(){
@@ -601,25 +613,41 @@ function fillForm(e){
   renderPhotos(); renderPurchases(); renderHotelRows();
 }
 
-/* previous approved day for this branch+category, used for carry-forward */
-function previousDay(){
-  return S.entries.filter(function(x){ return x.branch===S.branch && x.category===S.cat && x.status==='approved'; })
-    .sort(function(a,b){ return a.datetime<b.datetime?1:-1; })[0];
-}
+/* Previous approved day for this branch+category, used for carry-forward.
+   A supervisor can no longer see past entries at all (today-only — see
+   can_edit()/get_entry() server-side), so this can't be found by scanning
+   S.entries any more; it comes from a dedicated endpoint that hands over
+   just the closing stock and rates, not the whole record. Cached per
+   branch+category in S.carryForward so isFirstEntry()/validation below can
+   read it synchronously once the fetch settles. */
+function previousDay(){ return S.carryForward; }
 
 function blankForm(){
   fillForm({ datetime:nowLocal(), photos:[], purchases:[], hotelSales:[] });
-  var p=previousDay(), note='';
-  if(p){
-    var pc=calc(p);
-    setV('f_openBirds',p.closeBirds); setG('f_openWt',p.closeWtG); setG('f_openMeat',p.closeMeatG);
-    setV('f_openRate',pc.avgRate?pc.avgRate.toFixed(2):'');
-    setV('f_rateSkin',p.rateSkin); setV('f_rateSkinless',p.rateSkinless); setV('f_rateLiver',p.rateLiver); setV('f_rateLive',p.rateLive);
-    note='Carried forward from '+dOf(p.datetime)+' — '+num(p.closeBirds)+' birds'+(isAdmin()?' @ '+money(pc.avgRate)+'/kg':'');
-  } else {
-    note='First entry for this branch — opening figures are optional';
-  }
-  $('carryNote').textContent=note;
+  S.carryForward = null;
+  $('carryNote').textContent = 'Checking for a previous day to carry forward…';
+  var branch=S.branch, cat=S.cat;
+  api('GET', '/entries/carry-forward?branch='+encodeURIComponent(branch)+'&category='+encodeURIComponent(cat))
+    .then(function(cf){
+      /* the branch/category may have changed again while this was in flight */
+      if(S.branch!==branch || S.cat!==cat) return;
+      if(cf.found){
+        S.carryForward=cf;
+        setV('f_openBirds',cf.closeBirds); setG('f_openWt',cf.closeWtG); setG('f_openMeat',cf.closeMeatG);
+        setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
+        setV('f_rateSkin',cf.rateSkin); setV('f_rateSkinless',cf.rateSkinless); setV('f_rateLiver',cf.rateLiver); setV('f_rateLive',cf.rateLive);
+        $('carryNote').textContent='Carried forward from '+cf.date+' — '+num(cf.closeBirds)+' birds'+(isAdmin()?' @ '+money(cf.avgRate)+'/kg':'');
+      } else {
+        S.carryForward=null;
+        $('carryNote').textContent='First entry for this branch — opening figures are optional';
+      }
+      recalc();
+    })
+    .catch(function(){
+      if(S.branch!==branch || S.cat!==cat) return;
+      S.carryForward=null;
+      $('carryNote').textContent='Could not check the previous day — opening figures may need a manual check.';
+    });
 }
 
 /* ---------------- mandatory field validation ---------------- */
@@ -713,11 +741,13 @@ function loadEntry(id){
   $('f_byLabel').textContent=e?(userName(e.createdBy)+(e.reviewedBy?' · reviewed by '+userName(e.reviewedBy):'')):S.user.name;
   $('rejectNotice').classList.toggle('hidden',!(e&&e.status==='rejected'));
   if(e&&e.status==='rejected') $('rejectReasonText').textContent=e.rejectReason||'—';
-  /* the date of a SAVED entry may only be moved by an admin */
-  var dateLocked = !!e && !isAdmin();
+  /* A supervisor never picks the date — new or saved, they only ever work
+     today, so the field is locked either way. An admin can move it, saved
+     entries included. */
+  var dateLocked = !isAdmin();
   $('f_datetime').disabled = locked || dateLocked;
   $('f_datetime').title = dateLocked
-    ? 'Only an admin can change the date of a saved entry'
+    ? 'Supervisors can only work today’s entry'
     : '';
 
   $('entryLockNotice').classList.toggle('hidden',!locked);
@@ -1999,6 +2029,7 @@ function closeModal(id){ $(id).classList.add('hidden'); }
 
 function showView(name){
   if(name==='dashboard' && !isAdmin()) name='entry';   /* supervisors have no dashboard */
+  if(name==='dayclose' && !isAdmin()) name='entry';    /* nor any view onto Day Close */
   runChicken();
   qsa('.view').forEach(function(p){ p.classList.add('hidden'); p.classList.remove('view-enter'); });
   var el=$('view-'+name); el.classList.remove('hidden'); void el.offsetWidth; el.classList.add('view-enter');
@@ -2940,6 +2971,9 @@ function diffChip(diff) {
 
 function renderDayClose() {
   if (!$('dcCards')) return;
+  // Day Close is admin-only now — the nav tab is hidden from a supervisor,
+  // and the API itself 403s them, so there is nothing useful to fetch here.
+  if (!isAdmin()) return;
   var day = $('dcDate').value || todayISO();
   api('GET', '/dayclose?date=' + day + (isAdmin() ? '' : '&branch=' + S.branch))
     .then(function (d) {
@@ -3025,6 +3059,9 @@ function renderDayClose() {
 
 function renderDayCloseHistory() {
   if (!$('dcHistBody')) return;
+  // Admin only — see renderDayClose() above. A supervisor never sees the
+  // nav badge either, since there is no history to flag for them any more.
+  if (!isAdmin()) { var b = $('closeBadge'); if (b) b.classList.add('hidden'); return; }
   var from = $('dcFrom').value || addDays(todayISO(), -29);
   var to = $('dcTo').value || todayISO();
   api('GET', '/dayclose/history?from=' + from + '&to=' + to +
@@ -3229,12 +3266,15 @@ function adjustWage(workerId) {
 }
 
 /* Correct an already-recorded wage/deduction row instead of deleting and
-   re-adding it. An admin can edit any row; a supervisor may only correct a
-   'work' (wage) row, matching what the server allows. No separate history is
-   kept — this overwrites the row, like any other edit in the app. */
+   re-adding it. An admin can edit any row, any date; a supervisor may only
+   correct a 'work' (wage) row dated today, matching what the server allows
+   — this table itself is admin-only in the UI, so this is a backstop, not
+   the primary gate. No separate history is kept — this overwrites the row,
+   like any other edit in the app. */
 function editLedgerRow(id) {
   var row = S.ledger.filter(function (x) { return x.id === id; })[0]; if (!row) return;
   if (!isAdmin() && row.type !== 'work') { toast('Only an admin can edit this entry.', 'error'); return; }
+  if (!isAdmin() && row.date !== todayISO()) { toast('Only today’s entries can be edited.', 'error'); return; }
   var w = S.workers.filter(function (x) { return x.id === row.workerId; })[0];
   var val = prompt('Amount for ' + (w ? w.name : 'this entry') + ' — ' + row.type + ' · ' + row.date + ':', row.amount);
   if (val === null) return;
@@ -3312,7 +3352,7 @@ function advanceModal(workerId) {
       'Days worked ' + st.days + ' · earned ' + money0(st.earned) +
       ' · balance due <b>' + money0(st.balance) + '</b></div>' +
     '<div class="grid grid-cols-2 gap-3">' +
-      '<div><label class="lbl" for="advDate">Date taken</label><input type="date" id="advDate" class="inp" value="' + ($('wkDate').value || todayISO()) + '" /></div>' +
+      '<div><label class="lbl" for="advDate" title="Date the advance was actually handed over">Date taken</label><input type="date" id="advDate" class="inp" value="' + todayISO() + '"' + (isAdmin() ? '' : ' disabled title="Supervisors can only record today’s advances."') + ' /></div>' +
       '<div><label class="lbl" for="advAmt">Advance (₹)</label><input type="number" min="0" step="10" id="advAmt" class="inp num" /></div>' +
     '</div>' +
     '<div><label class="lbl" for="advNote">Note</label><input id="advNote" class="inp" placeholder="Optional" /></div>' +
@@ -3344,7 +3384,7 @@ function ledgerModal(kind, preWorker) {
     '<div class="space-y-3">' +
     '<div class="grid grid-cols-2 gap-3">' +
     '<div><label class="lbl" for="lgWorker">Worker</label><select id="lgWorker" class="inp">' + ws.map(function (x) { return '<option value="' + x.id + '"' + (preWorker === x.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select></div>' +
-    '<div><label class="lbl" for="lgDate">Date</label><input type="date" id="lgDate" class="inp" value="' + ($('wkDate').value || todayISO()) + '" /></div>' +
+    '<div><label class="lbl" for="lgDate" title="Date the payment/expense actually happened">Date</label><input type="date" id="lgDate" class="inp" value="' + todayISO() + '"' + (isAdmin() ? '' : ' disabled title="Supervisors can only record today’s entries."') + ' /></div>' +
     '</div>' +
     '<div class="grid grid-cols-2 gap-3">' +
     '<div><label class="lbl" for="lgType">Type</label><select id="lgType" class="inp">' + types.map(function (t) { return '<option value="' + t + '">' + LEDGER_TYPES[t].t + '</option>'; }).join('') + '</select></div>' +
@@ -3438,7 +3478,13 @@ function startApp(user, fresh) {
   $('appShell').classList.remove('hidden');
   applyRbac(); refreshBranchSelects();
   $('dashFrom').value = monthStart(); $('dashTo').value = todayISO();
-  $('recFrom').value = addDays(todayISO(), -30); $('recTo').value = todayISO();
+  // A supervisor only ever has today's entry to look at, so there is no
+  // range to pick — pin and lock the Records filters rather than let them
+  // select a range that will just come back empty.
+  $('recFrom').value = isAdmin() ? addDays(todayISO(), -30) : todayISO();
+  $('recTo').value = todayISO();
+  $('recFrom').disabled = !isAdmin(); $('recTo').disabled = !isAdmin();
+  $('recFrom').title = $('recTo').title = isAdmin() ? '' : 'Supervisors can only see today’s entry.';
   $('wkDate').value = todayISO(); $('wkMonth').value = todayISO().slice(0, 7);
   $('dwFrom').value = monthStart(); $('dwTo').value = todayISO();
   $('ovhMonth').value = todayISO().slice(0, 7);

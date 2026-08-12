@@ -605,7 +605,11 @@ def retime_entry(entry: DailyEntry, raw_stamp):
 def can_edit(entry: DailyEntry) -> bool:
     if g.user.is_admin:
         return True
-    return entry.status in ("draft", "rejected") and entry.created_by_id == g.user.id
+    # A supervisor only ever has today — a rejected entry from a past date
+    # (say, reviewed a day late) is not reachable for correction either;
+    # that now has to go through an admin.
+    return (entry.status in ("draft", "rejected") and entry.created_by_id == g.user.id
+            and entry.business_date == date.today())
 
 
 # ==========================================================================
@@ -673,7 +677,12 @@ def bootstrap():
 
     q = DailyEntry.query.filter(DailyEntry.branch_id.in_(bids)) if bids else DailyEntry.query.filter(False)
     if not g.user.is_admin:
-        q = q.filter(DailyEntry.created_by_id == g.user.id)
+        # A supervisor only ever works today — no browsing their own past
+        # submissions either, so the Records list and the window/total figures
+        # below only ever reflect today for them. See also list_entries()
+        # and get_entry(), which apply the same floor.
+        q = q.filter(DailyEntry.created_by_id == g.user.id,
+                     DailyEntry.business_date == date.today())
     total_entries = q.count()
     q = entries_query(q)
     q = q.filter(DailyEntry.business_date >= win_from)
@@ -735,6 +744,14 @@ def create_entry():
     bdate, bstamp = parse_stamp(d.get("datetime") or d.get("businessDate"))
     if bdate is None:
         bdate, bstamp = date.today(), utcnow()
+    # A supervisor can only ever create today's entry — the date field on
+    # their form is locked client-side, but a direct API call could still
+    # send anything, so pin the date here too. Keep whatever time-of-day
+    # they entered; only the date is forced.
+    if not g.user.is_admin and bdate != date.today():
+        today = date.today()
+        bstamp = bstamp.replace(year=today.year, month=today.month, day=today.day)
+        bdate = today
     category = d.get("category") if d.get("category") in ("broiler", "parents") else "broiler"
     status = "pending" if d.get("submit") else "draft"
 
@@ -928,6 +945,43 @@ def delete_entry(entry_id):
     return jsonify({"ok": True})
 
 
+@bp.get("/entries/carry-forward")
+@login_required
+def entries_carry_forward():
+    """
+    Just enough of the most recent APPROVED day for this branch+category to
+    start tomorrow's entry — closing stock and the going rates — without
+    handing over the whole record. This is what lets a supervisor's opening
+    figures still carry forward from yesterday even though they can no
+    longer see or open yesterday's entry itself (today-only, see can_edit()
+    and get_entry()); an admin uses the same endpoint so there is only one
+    code path to keep correct.
+    """
+    branch_code = request.args.get("branch")
+    err = require_branch(branch_code)
+    if err:
+        return err
+    branch = branch_by_code(branch_code)
+    category = request.args.get("category") if request.args.get("category") in ("broiler", "parents") else "broiler"
+
+    prev = (DailyEntry.query.filter_by(branch_id=branch.id, category=category, status="approved")
+            .order_by(DailyEntry.business_date.desc()).first())
+    if not prev:
+        return jsonify({"found": False})
+
+    calc = compute_entry(prev.to_dict(include_costs=True), get_settings())
+    return jsonify({
+        "found": True,
+        "date": prev.business_date.isoformat(),
+        "closeBirds": prev.close_birds,
+        "closeWtG": prev.close_weight_g,
+        "closeMeatG": prev.close_meat_g,
+        "avgRate": calc.get("avgRate", 0),
+        "rateSkin": float(prev.rate_skin), "rateSkinless": float(prev.rate_skinless),
+        "rateLiver": float(prev.rate_liver), "rateLive": float(prev.rate_live),
+    })
+
+
 @bp.get("/entries")
 @login_required
 def list_entries():
@@ -943,7 +997,9 @@ def list_entries():
     bids = visible_branch_ids()
     q = DailyEntry.query.filter(DailyEntry.branch_id.in_(bids)) if bids else DailyEntry.query.filter(False)
     if not g.user.is_admin:
-        q = q.filter(DailyEntry.created_by_id == g.user.id)
+        # Same floor as bootstrap(): today only, no browsing history.
+        q = q.filter(DailyEntry.created_by_id == g.user.id,
+                     DailyEntry.business_date == date.today())
     if request.args.get("from"):
         q = q.filter(DailyEntry.business_date >= parse_date(request.args["from"], field="from"))
     if request.args.get("to"):
@@ -983,6 +1039,11 @@ def get_entry(entry_id):
         return err
     if not g.user.is_admin and entry.created_by_id != g.user.id:
         return jsonify({"error": "forbidden"}), 403
+    # Today only for a supervisor — even one of their own past entries (a
+    # rejected one included) is out of reach now, not just uneditable.
+    if not g.user.is_admin and entry.business_date != date.today():
+        return jsonify({"error": "forbidden",
+                        "message": "Only today's entry is available to you."}), 403
     return jsonify(entry_payload(entry, get_settings()))
 
 
@@ -1491,6 +1552,12 @@ def add_ledger():
         return jsonify({"error": "not_found", "message": "Worker not found."}), 404
 
     day = parse_date(d.get("date"), date.today())
+    # A supervisor only ever works today's attendance/wages — the date picker
+    # driving this on the Workers screen is disabled for them client-side, so
+    # this is the matching server-side floor: whatever date sneaks in on a
+    # direct API call, an admin gets it, anyone else gets overridden to today.
+    if not g.user.is_admin:
+        day = date.today()
     branch = branch_by_code(d["branch"])
 
     if kind == "work":
@@ -1583,12 +1650,12 @@ def add_ledger():
 def update_ledger(row_id):
     """
     Correct an already-recorded wage/deduction row instead of deleting and
-    re-adding it. An admin can edit any row — this is the "change or undo a
-    transaction" ability. A supervisor may only touch a 'work' (wage) row for
-    their own branch, and only its amount/days/note — that covers adjusting a
-    worker's pay for the day (e.g. a Sunday surge rate) after it was marked.
-    No separate history is kept; this simply overwrites the row, same as any
-    other edit in the app.
+    re-adding it. An admin can edit any row, any date — this is the "change
+    or undo a transaction" ability. A supervisor may only touch a 'work'
+    (wage) row for their own branch, only its amount/days/note, and only if
+    it is dated TODAY — they have no reach into any other day's records at
+    all, matching the rest of the Workers screen. No separate history is
+    kept; this simply overwrites the row, same as any other edit in the app.
     """
     row = db.session.get(LabourLedger, row_id)
     if not row:
@@ -1599,6 +1666,9 @@ def update_ledger(row_id):
     if not g.user.is_admin and row.kind != "work":
         return jsonify({"error": "forbidden",
                         "message": "Only an admin can edit a paid/advance/deduction entry."}), 403
+    if not g.user.is_admin and row.entry_date != date.today():
+        return jsonify({"error": "forbidden",
+                        "message": "Only today's entries can be edited."}), 403
 
     d = request.get_json(silent=True) or {}
     before = f"{row.kind} · ₹{row.amount}"
@@ -1634,8 +1704,11 @@ def update_ledger(row_id):
 
 
 @bp.delete("/ledger/<row_id>")
-@login_required
+@admin_required
 def delete_ledger(row_id):
+    # Admin only — the one UI path to this (the ledger transaction log's
+    # trash icon) is itself an admin-only screen; attendance's "un-mark" goes
+    # through POST /ledger with days=0 instead, not here.
     row = db.session.get(LabourLedger, row_id)
     if not row:
         return jsonify({"error": "not_found"}), 404
@@ -1981,9 +2054,12 @@ def close_payload(branch, day: date, exp=None, wages_today=None, overheads_today
 
 
 @bp.get("/dayclose")
-@login_required
+@admin_required
 def get_dayclose():
-    """One branch-day, or every visible branch for that day."""
+    """One branch-day, or every visible branch for that day. Admin only — a
+    supervisor no longer has any view onto the cash handover at all, not even
+    read-only; the whole Day Close screen is hidden from them client-side and
+    this is the matching server-side lock."""
     day = parse_date(request.args.get("date"), date.today(), field="date")
     if request.args.get("branch"):
         err = require_branch(request.args["branch"])
@@ -2093,9 +2169,10 @@ def verify_dayclose(close_id):
 
 
 @bp.get("/dayclose/history")
-@login_required
+@admin_required
 def dayclose_history():
-    """A run of days with what was declared against what was expected."""
+    """A run of days with what was declared against what was expected. Admin
+    only, same as get_dayclose() above."""
     to_day = parse_date(request.args.get("to"), date.today(), field="to")
     from_day = parse_date(request.args.get("from"), to_day - timedelta(days=29),
                           field="from")

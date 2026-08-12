@@ -391,7 +391,10 @@ ENTRY_IDS = {}
 
 def test_entries():
     print("\n[6] Daily entry & approval workflow")
-    r = SUP.post("/api/entries", json=base_entry(businessDate=D(9), submit=True))
+    # A supervisor is now pinned to today's date no matter what businessDate
+    # they send, so the "main" workflow entry has to live at D(0) — the only
+    # date a supervisor can ever create/edit/view.
+    r = SUP.post("/api/entries", json=base_entry(businessDate=D(0), submit=True))
     ENTRY_IDS["main"] = r.get_json().get("id")
     case("Daily entry", "Supervisor submits a complete day", "POST /api/entries", 201,
          lambda: r.status_code)
@@ -407,23 +410,28 @@ def test_entries():
          "response.calc.yieldPct", True,
          lambda: "yieldPct" in r.get_json()["calc"])
 
+    # This one isn't about who created it (draft-without-validation is generic
+    # behaviour) — use ADMIN so it can keep its own D(9) slot instead of
+    # competing with SUP's single today-only branch+category budget.
     case("Daily entry", "Draft can be saved without full validation",
          "submit flag false, sparse data", 201,
-         lambda: SUP.post("/api/entries", json={"branch": "B01", "category": "parents",
-                                                "businessDate": D(9)}).status_code)
+         lambda: ADMIN.post("/api/entries", json={"branch": "B01", "category": "parents",
+                                                   "businessDate": D(9)}).status_code)
     case("Daily entry", "Duplicate branch+category+date is refused",
          "same day twice", 409,
          lambda: SUP.post("/api/entries", json=base_entry(businessDate=D(9))).status_code)
     case("Daily entry", "Same date but a different category is allowed",
          "broiler and parents on one day", True,
          lambda: _parents_same_day_ok())
+    # Field-validation behaviour, not a supervisor-specific rule — ADMIN keeps
+    # its own D(8)/D(7) slots free of the today-only collision with "main".
     case("Daily entry", "Incomplete submission is rejected with a field list",
          "submit with rateSkin 0", 422,
-         lambda: SUP.post("/api/entries",
-                          json=base_entry(businessDate=D(8), rateSkin=0, submit=True)).status_code)
+         lambda: ADMIN.post("/api/entries",
+                            json=base_entry(businessDate=D(8), rateSkin=0, submit=True)).status_code)
     case("Daily entry", "Rejection names the missing field",
          "submit with rateSkin 0", True,
-         lambda: "Skin rate" in str(SUP.post("/api/entries",
+         lambda: "Skin rate" in str(ADMIN.post("/api/entries",
                  json=base_entry(businessDate=D(7), rateSkin=0, submit=True)).get_json()))
     case("Daily entry", "Failed submission leaves nothing behind",
          "rolled back", True, lambda: _no_entry_on(D(8)))
@@ -459,8 +467,12 @@ def test_entries():
          lambda: ADMIN.post(f"/api/entries/{eid}/decision",
                             json={"verdict": "maybe"}).status_code)
 
-    # return / resubmit cycle
-    r2 = SUP.post("/api/entries", json=base_entry(businessDate=D(6), submit=True))
+    # return / resubmit cycle — a genuinely supervisor-owned workflow, so this
+    # stays SUP. "broiler" on B01/today is already spoken for by "main"
+    # (above), so this uses the other available category, "parents" — the
+    # only remaining isolated slot a pinned-to-today supervisor has here.
+    r2 = SUP.post("/api/entries", json=base_entry(businessDate=D(6), category="parents",
+                                                   submit=True))
     rid = r2.get_json()["id"]
     ADMIN.post(f"/api/entries/{rid}/decision",
                json={"verdict": "rejected", "reason": "Photo unclear"})
@@ -498,8 +510,12 @@ def test_entries():
 
 
 def _parents_same_day_ok():
-    r = SUP.post("/api/entries", json=base_entry(businessDate=D(5), category="parents",
-                                                 submit=True))
+    # This is really about the branch+category+date uniqueness constraint,
+    # not about who is posting — ADMIN keeps it on its own D(5) slot instead
+    # of competing with SUP's single today-only "parents" slot (used by the
+    # return/resubmit cycle above).
+    r = ADMIN.post("/api/entries", json=base_entry(businessDate=D(5), category="parents",
+                                                    submit=True))
     return r.status_code == 201
 
 
@@ -524,26 +540,43 @@ def _reason_of(rid):
 # ===========================================================================
 def test_date_permission():
     print("\n[6b] Business-date correction (admin only)")
-    draft = SUP.post("/api/entries", json=base_entry(businessDate=D(21))).get_json()
+    # This whole function is fundamentally about what an ADMIN can do to an
+    # entry's date, so the fixture entry is admin-created — that leaves it
+    # completely unrestricted by the supervisor's new today-only pin, exactly
+    # like before.
+    draft = ADMIN.post("/api/entries", json=base_entry(businessDate=D(21))).get_json()
     did = draft["id"]
+
+    # ...except "supervisor can still edit their own draft's fields", which
+    # is genuinely about supervisor capability — that needs its own
+    # supervisor-owned, today-dated entry, since the ADMIN fixture above
+    # isn't theirs to touch. "broiler" on B01/today belongs to test_entries'
+    # permanent "main" record, so this uses "parents", and is deleted again
+    # right after so it doesn't permanently consume that slot.
+    sup_draft = SUP.post("/api/entries",
+                         json=base_entry(businessDate=D(0), category="parents")).get_json()
+    sid = sup_draft["id"]
 
     case("Date permission", "Supervisor can still edit their draft's fields",
          "PUT notes on own draft", 200,
-         lambda: SUP.put(f"/api/entries/{did}", json={"notes": "fine"}).status_code)
+         lambda: SUP.put(f"/api/entries/{sid}", json={"notes": "fine"}).status_code)
     case("Date permission", "Supervisor cannot move a saved entry to another date",
          "PUT businessDate as supervisor", 403,
-         lambda: SUP.put(f"/api/entries/{did}", json={"businessDate": D(20)}).status_code)
+         lambda: SUP.put(f"/api/entries/{sid}", json={"businessDate": D(20)}).status_code)
     case("Date permission", "The date is left untouched after the refusal",
-         "re-read the record", D(21),
-         lambda: _entry_date(did))
+         "re-read the record", D(0),
+         lambda: _entry_date(sid))
     case("Date permission", "The attempt is written to the audit log",
          "action 'Blocked date change'", True,
          lambda: any(a["action"] == "Blocked date change"
                      for a in ADMIN.get("/api/activity").get_json()))
-    case("Date permission", "Supervisor still chooses the date when creating",
-         "POST with businessDate", D(22),
-         lambda: SUP.post("/api/entries",
-                          json=base_entry(businessDate=D(22))).get_json()["businessDate"])
+    ADMIN.delete(f"/api/entries/{sid}")  # free B01/parents/today for later tests
+
+    case("Date permission", "A supervisor's chosen date is silently overridden to today",
+         "POST with businessDate", D(0),
+         lambda: SUP2.post("/api/entries",
+                           json=base_entry(branch="B02", businessDate=D(22))
+                           ).get_json()["businessDate"])
 
     case("Date permission", "Admin moves an entry from the approval panel",
          "PUT /costing businessDate", D(20),
@@ -586,7 +619,9 @@ def _move_and_approve(eid, day):
 
 
 def _collide(day):
-    other = SUP.post("/api/entries", json=base_entry(businessDate=D(23))).get_json()
+    # Just a fixture for the clash check — ADMIN keeps it on its own D(23)
+    # slot instead of forcing today and clashing with "main".
+    other = ADMIN.post("/api/entries", json=base_entry(businessDate=D(23))).get_json()
     return ADMIN.put(f"/api/entries/{other['id']}/costing",
                      json={"businessDate": day}).status_code
 
@@ -596,21 +631,24 @@ def _collide(day):
 # ===========================================================================
 def test_photos():
     print("\n[7] Mortality photos")
+    # Mortality/photo validation is generic, not supervisor-specific — ADMIN
+    # keeps these on their own D(4)/D(3)/D(2) slots instead of colliding with
+    # a supervisor's single today-only entry.
     png = "data:image/jpeg;base64," + "A" * 200
-    r = SUP.post("/api/entries", json=base_entry(businessDate=D(4), mortCount=2,
-                                                 mortWtG=4000, photos=[png, png],
-                                                 submit=True))
+    r = ADMIN.post("/api/entries", json=base_entry(businessDate=D(4), mortCount=2,
+                                                    mortWtG=4000, photos=[png, png],
+                                                    submit=True))
     case("Photos", "Entry with mortality and photos is accepted", "2 photos", 201,
          lambda: r.status_code)
     case("Photos", "Both photos are stored", "photos array", 2,
          lambda: len(r.get_json()["photos"]))
     case("Photos", "Mortality without a photo is refused at the API",
          "mortCount 1, no photos", 422,
-         lambda: SUP.post("/api/entries", json=base_entry(businessDate=D(3), mortCount=1,
-                                                          mortWtG=2000, submit=True)).status_code)
+         lambda: ADMIN.post("/api/entries", json=base_entry(businessDate=D(3), mortCount=1,
+                                                             mortWtG=2000, submit=True)).status_code)
     case("Photos", "Non-image payloads are discarded",
          "photos=['javascript:alert(1)']", 0,
-         lambda: len(SUP.post("/api/entries",
+         lambda: len(ADMIN.post("/api/entries",
                      json=base_entry(businessDate=D(2),
                                      photos=["javascript:alert(1)"])).get_json()["photos"]))
 
@@ -641,7 +679,11 @@ def test_labour():
          lambda: SUP.delete(f"/api/workers/{WORKER_ID['w']}").status_code)
 
     wid = WORKER_ID["w"]
-    att = lambda day, days: SUP.post("/api/ledger", json={                    # noqa: E731
+    # POST /api/ledger now forces a non-admin's date to today, so these
+    # attendance/payroll fixtures (which deliberately span several distinct
+    # days) go through ADMIN — none of this is about supervisor permission,
+    # just wage/balance arithmetic.
+    att = lambda day, days: ADMIN.post("/api/ledger", json={                  # noqa: E731
         "branch": "B01", "workerId": wid, "date": day, "type": "work", "days": days})
     case("Attendance", "Mark a full day", "days=1", 201, lambda: att(D(5), 1).status_code)
     case("Attendance", "Wage equals the daily rate", "600/day", 600.0,
@@ -658,7 +700,7 @@ def test_labour():
     case("Attendance", "Separate days accumulate", "3 different days", 3,
          lambda: _three_days(wid))
 
-    pay = lambda kind, amt: SUP.post("/api/ledger", json={                    # noqa: E731
+    pay = lambda kind, amt: ADMIN.post("/api/ledger", json={                  # noqa: E731
         "branch": "B01", "workerId": wid, "date": D(4), "type": kind, "amount": amt})
     case("Payroll", "Record a payment", "paid ₹1000", 201, lambda: pay("paid", 1000).status_code)
     case("Payroll", "Two payments on one day are allowed", "second payment", 201,
@@ -668,13 +710,13 @@ def test_labour():
          lambda: pay("tea", 40).status_code)
     case("Payroll", "Zero amount is refused", "paid ₹0", 422, lambda: pay("paid", 0).status_code)
     case("Payroll", "Unknown ledger type is refused", "type='bribe'", 422,
-         lambda: SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid,
-                                               "date": D(4), "type": "bribe",
-                                               "amount": 10}).status_code)
+         lambda: ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid,
+                                                  "date": D(4), "type": "bribe",
+                                                  "amount": 10}).status_code)
     case("Payroll", "Unknown worker is refused", "workerId='ghost'", 404,
-         lambda: SUP.post("/api/ledger", json={"branch": "B01", "workerId": "ghost",
-                                               "date": D(4), "type": "paid",
-                                               "amount": 10}).status_code)
+         lambda: ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": "ghost",
+                                                  "date": D(4), "type": "paid",
+                                                  "amount": 10}).status_code)
     case("Payroll", "Balance = earned − paid − advances",
          "3 days ×600 − 1200 paid", True, lambda: _balance_check(wid))
     case("Payroll", "Tea and tiffin never reduce the worker balance",
@@ -690,16 +732,16 @@ def _work_rows(wid, day):
 
 
 def _rapid_attendance(wid, day):
-    codes = [SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
-                                           "type": "work", "days": 1}).status_code
+    codes = [ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
+                                              "type": "work", "days": 1}).status_code
              for _ in range(8)]
     return (set(codes) == {201}, _work_rows(wid, day))
 
 
 def _three_days(wid):
     for d in (D(20), D(21), D(22)):
-        SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": d,
-                                      "type": "work", "days": 1})
+        ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": d,
+                                        "type": "work", "days": 1})
     with app.app_context():
         return LabourLedger.query.filter(
             LabourLedger.worker_id == wid, LabourLedger.kind == "work",
@@ -722,8 +764,8 @@ def _tea_not_deducted(wid):
         rows = LabourLedger.query.filter_by(worker_id=wid).all()
         before = sum(float(r.amount) for r in rows if r.kind == "work") - \
                  sum(float(r.amount) for r in rows if r.kind in ("paid", "advance"))
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": D(4),
-                                  "type": "tiffin", "amount": 70})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": D(4),
+                                    "type": "tiffin", "amount": 70})
     with app.app_context():
         rows = LabourLedger.query.filter_by(worker_id=wid).all()
         after = sum(float(r.amount) for r in rows if r.kind == "work") - \
@@ -757,10 +799,10 @@ def test_advances():
                            json={"dayWage": 750}).get_json()["dayWage"])
     ADMIN.put(f"/api/workers/{w['id']}", json={"dayWage": 700})
 
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
-                                  "type": "work", "days": 1})
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
-                                  "type": "advance", "amount": 500})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                    "type": "work", "days": 1})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                    "type": "advance", "amount": 500})
 
     case("Advances", "Wages and advances are reported separately",
          "700 wage + 500 advance", (700.0, 500.0),
@@ -797,8 +839,8 @@ def _labour_split(day):
 
 
 def _second_advance(wid, day):
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
-                                  "type": "advance", "amount": 200})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid, "date": day,
+                                    "type": "advance", "amount": 200})
     from app.api import labour_for
     with app.app_context():
         b = Branch.query.filter_by(code="B01").first()
@@ -813,7 +855,7 @@ def _advances_on(day):
 
 
 def _net_excludes_advances(day):
-    r = SUP.post("/api/entries", json=base_entry(businessDate=day, submit=True))
+    r = ADMIN.post("/api/entries", json=base_entry(businessDate=day, submit=True))
     if r.status_code != 201:
         return f"submit failed {r.status_code}"
     eid = r.get_json()["id"]
@@ -829,13 +871,13 @@ def _net_excludes_advances(day):
 
 def _big_advance_ignored():
     day = D(17)
-    w = SUP.post("/api/workers", json={"branch": "B01", "name": "BigAdv",
-                                       "role": "cutter", "dayWage": 700}).get_json()
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
-                                  "type": "work", "days": 1})
-    SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
-                                  "type": "advance", "amount": 5000})
-    r = SUP.post("/api/entries", json=base_entry(businessDate=day, submit=True))
+    w = ADMIN.post("/api/workers", json={"branch": "B01", "name": "BigAdv",
+                                         "role": "cutter", "dayWage": 700}).get_json()
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                    "type": "work", "days": 1})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": day,
+                                    "type": "advance", "amount": 5000})
+    r = ADMIN.post("/api/entries", json=base_entry(businessDate=day, submit=True))
     if r.status_code != 201:
         return f"submit failed {r.status_code}"
     eid = r.get_json()["id"]
@@ -1314,7 +1356,9 @@ def test_hotels():
                               "weightG": 20_000, "settled": False},
                              {"customerId": HOTEL["b"]["id"], "product": "skinless",
                               "weightG": 5_000, "settled": True}])
-    r3 = SUP.post("/api/entries", json=payload)
+    # This is about hotel-sales pricing/calc, not supervisor permission —
+    # ADMIN keeps it on its own D(40) slot.
+    r3 = ADMIN.post("/api/entries", json=payload)
     HOTEL["entry"] = r3.get_json() if r3.status_code == 201 else {}
     calc = HOTEL["entry"].get("calc", {})
 
@@ -1345,20 +1389,20 @@ def test_hotels():
 
     case("Hotel sales", "A line for another branch's customer is refused",
          "B01 entry, B02 customer", 422,
-         lambda: SUP.post("/api/entries", json=base_entry(
+         lambda: ADMIN.post("/api/entries", json=base_entry(
              businessDate=D(41),
              hotelSales=[{"customerId": ADMIN.post("/api/customers", json={
                  "branch": "B02", "name": "Cross Branch"}).get_json()["id"],
                  "product": "skin", "weightG": 1_000}])).status_code)
     case("Hotel sales", "An unknown customer id is refused",
          "customerId='nope'", 422,
-         lambda: SUP.post("/api/entries", json=base_entry(
+         lambda: ADMIN.post("/api/entries", json=base_entry(
              businessDate=D(42),
              hotelSales=[{"customerId": "nope", "product": "skin",
                           "weightG": 1_000}])).status_code)
     case("Hotel sales", "Empty rows left behind are ignored",
          "blank line", 0,
-         lambda: len(SUP.post("/api/entries", json=base_entry(
+         lambda: len(ADMIN.post("/api/entries", json=base_entry(
              businessDate=D(43),
              hotelSales=[{"customerId": "", "product": "skin", "weightG": 0}]
          )).get_json()["hotelSales"]))
@@ -1438,7 +1482,10 @@ def test_hotels():
          lambda: [r for r in SUP.get(f"/api/customers/{HOTEL['a']['id']}/ledger")
                   .get_json()["rows"] if r["kind"] == "sale"][0]["rate"])
 
-    draft = SUP.post("/api/entries", json=base_entry(
+    # Repricing logic, not supervisor permission — ADMIN throughout so this
+    # keeps its own D(44) slot and the follow-up PUT isn't blocked by
+    # ownership.
+    draft = ADMIN.post("/api/entries", json=base_entry(
         businessDate=D(44), rateSkin=200,
         hotelSales=[{"customerId": HOTEL["a"]["id"], "product": "skin",
                      "weightG": 10_000}])).get_json()
@@ -1446,8 +1493,8 @@ def test_hotels():
          "200 − 80", 120.0, lambda: draft["hotelSales"][0]["rate"])
     case("Hotels", "Changing the market rate reprices the draft",
          "rateSkin 200 -> 260", 180.0,
-         lambda: SUP.put(f"/api/entries/{draft['id']}", json={"rateSkin": 260})
-                    .get_json()["hotelSales"][0]["rate"])
+         lambda: ADMIN.put(f"/api/entries/{draft['id']}", json={"rateSkin": 260})
+                      .get_json()["hotelSales"][0]["rate"])
 
     # ---- access control ---------------------------------------------------
     case("Hotel RBAC", "A supervisor cannot see another branch's ledger",
@@ -1683,8 +1730,8 @@ def test_dayclose():
     case("Cash tally", "nor for anyone else's branch", "priya -> B01", 403,
          lambda: SUP2.post("/api/dayclose",
                            json={"branch": "B01", "date": day, "cash": 1}).status_code)
-    case("Cash tally", "A supervisor CAN still see the handover screen",
-         "GET /api/dayclose", 200,
+    case("Cash tally", "A supervisor has no view onto the handover screen any more",
+         "GET /api/dayclose", 403,
          lambda: SUP.get("/api/dayclose?date=" + day + "&branch=B01").status_code)
 
     ok = ADMIN.post("/api/dayclose", json={"branch": "B01", "date": day,
@@ -1945,9 +1992,11 @@ def test_v10_reconciliation():
                  and "text-xs\"></i> Labour</button>" not in home)
 
     # ---- closing birds/weight/meat are computed, not accepted from the client
+    # (this is about the server ignoring a bogus figure, not supervisor
+    # permission — ADMIN keeps it on its own D(500) slot)
     day = D(500)
     bogus = base_entry(businessDate=day, closeBirds=999999, closeWtG=999999, closeMeatG=999999)
-    r = SUP.post("/api/entries", json=bogus)
+    r = ADMIN.post("/api/entries", json=bogus)
     case("Auto-closing stock", "A bogus client-supplied closing figure is still accepted (201)",
          "closeBirds: 999999 in the payload", 201, lambda: r.status_code)
     created = r.get_json()
@@ -2079,8 +2128,12 @@ def test_v11_admin_edits():
          "300", 300.0, lambda: raised.get_json()["balanceAdjustment"])
 
     # ---- manual override for closing birds/weight/meat, admin only --------
+    # Genuinely about supervisor capability, so this stays SUP — "broiler" on
+    # B01/today belongs to test_entries' permanent "main" record, so this
+    # uses "parents" (forced to today regardless of the D(511) sent).
     day = D(511)
-    entry = SUP.post("/api/entries", json=base_entry(businessDate=day)).get_json()
+    entry = SUP.post("/api/entries",
+                     json=base_entry(businessDate=day, category="parents")).get_json()
     computed_birds = entry["closeBirds"]
     case("Manual closing stock", "A supervisor's entry is still fully auto-computed",
          "server's own figure, not the payload's 120", entry["calc"]["expBirds"], lambda: computed_birds)
@@ -2119,6 +2172,110 @@ def test_v11_admin_edits():
     case("Manual closing stock", "Sending a value with no closeAuto flag at all is not treated as manual",
          "still computed, ignores 555", entry["calc"]["expBirds"],
          lambda: admin_no_flag.get_json()["closeBirds"])
+
+
+# ===========================================================================
+# 23b. A supervisor is now pinned to today only — entries, ledger, dayclose,
+#      and the carry-forward endpoint that replaces browsing yesterday
+# ===========================================================================
+def test_v12_supervisor_today_only():
+    print("\n[23b] Supervisor pinned to today only")
+
+    # ---- creation: a supervisor's chosen date never survives -------------
+    # B01's "today" is already spoken for (broiler by test_entries' "main",
+    # parents by test_v11's manual-closing-stock fixture), so this uses
+    # SUP2/B02 — priya's only untouched slot.
+    posted = SUP2.post("/api/entries", json=base_entry(
+        branch="B02", category="parents", businessDate=D(9))).get_json()
+    case("Today-only", "A supervisor's POST date is silently overridden to today",
+         "businessDate sent D(9)", D(0), lambda: posted["businessDate"])
+    eid = posted["id"]
+
+    admin_posted = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(600))).get_json()
+    case("Today-only", "An admin's POST date is left exactly as sent",
+         "businessDate sent D(600)", D(600), lambda: admin_posted["businessDate"])
+
+    # ---- GET: an admin-owned past-dated entry in the supervisor's branch --
+    other_past = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(601))).get_json()
+    case("Today-only", "A supervisor cannot GET another user's past-dated entry, even in their own branch",
+         "GET as ravi", 403,
+         lambda: SUP.get(f"/api/entries/{other_past['id']}").status_code)
+
+    # ---- an admin retimes the supervisor's OWN entry into the past -------
+    moved = ADMIN.put(f"/api/entries/{eid}/costing", json={"businessDate": D(9)}).get_json()
+    case("Today-only", "The admin's move actually lands the entry in the past",
+         "businessDate", D(9), lambda: moved["businessDate"])
+    case("Today-only", "A supervisor cannot GET even their own entry once it is dated in the past",
+         "GET as priya", 403,
+         lambda: SUP2.get(f"/api/entries/{eid}").status_code)
+    blocked_edit = SUP2.put(f"/api/entries/{eid}", json={"notes": "recounted"})
+    case("Today-only", "A supervisor cannot PUT their own draft once it is dated in the past",
+         "PUT as priya, still draft, still theirs", 403, lambda: blocked_edit.status_code)
+    case("Today-only", "...with the same 'locked' shape used for any other edit lock",
+         "error field", "locked", lambda: blocked_edit.get_json()["error"])
+
+    # ---- list / bootstrap: today only, whatever from/to says -------------
+    wide = SUP.get(f"/api/entries?from={D(400)}&to={D(0)}").get_json()
+    case("Today-only", "The entries list never returns anything but today, any from/to range",
+         "all businessDate == today", True,
+         lambda: all(x["businessDate"] == D(0) for x in wide))
+    boot = SUP.get("/api/bootstrap").get_json()
+    case("Today-only", "Bootstrap's entries array is today-only too",
+         "all businessDate == today", True,
+         lambda: all(x["businessDate"] == D(0) for x in boot["entries"]))
+    case("Today-only", "...and window.total matches what's actually loaded",
+         "total == loaded", True,
+         lambda: boot["window"]["total"] == len(boot["entries"]))
+
+    # ---- day close is fully hidden from a supervisor now ------------------
+    case("Today-only", "GET /api/dayclose is 403 for a supervisor",
+         "no read-only view any more", 403, lambda: SUP.get("/api/dayclose").status_code)
+    case("Today-only", "GET /api/dayclose/history is 403 for a supervisor",
+         "same lock", 403, lambda: SUP.get("/api/dayclose/history").status_code)
+
+    # ---- carry-forward: enough to seed tomorrow, without the full record --
+    main = ADMIN.get(f"/api/entries/{ENTRY_IDS['main']}").get_json()
+    cf = SUP.get("/api/entries/carry-forward?branch=B01&category=broiler").get_json()
+    case("Carry-forward", "found is true when an approved entry exists",
+         "B01/broiler", True, lambda: cf["found"])
+    case("Carry-forward", "Closing birds match the most recent approved entry",
+         "closeBirds", main["closeBirds"], lambda: cf["closeBirds"])
+    case("Carry-forward", "Closing weight matches too",
+         "closeWtG", main["closeWtG"], lambda: cf["closeWtG"])
+    case("Carry-forward", "Closing meat matches too",
+         "closeMeatG", main["closeMeatG"], lambda: cf["closeMeatG"])
+    case("Carry-forward", "The weighted average rate matches",
+         "avgRate", main["calc"]["avgRate"], lambda: cf["avgRate"])
+    case("Carry-forward", "The going sale rates carry forward too",
+         "rateSkin/rateSkinless/rateLiver/rateLive",
+         [main["rateSkin"], main["rateSkinless"], main["rateLiver"], main["rateLive"]],
+         lambda: [cf["rateSkin"], cf["rateSkinless"], cf["rateLiver"], cf["rateLive"]])
+    case("Carry-forward", "An admin gets the same closeBirds figure as a supervisor",
+         "ADMIN vs SUP", cf["closeBirds"],
+         lambda: ADMIN.get("/api/entries/carry-forward?branch=B01&category=broiler"
+                           ).get_json()["closeBirds"])
+    none_yet = ADMIN.get("/api/entries/carry-forward?branch=B02&category=parents").get_json()
+    case("Carry-forward", "found is false when nothing has ever been approved for that combo",
+         "B02/parents, no approvals", False, lambda: none_yet["found"])
+
+    # ---- ledger: same today-only pin, and the tightened permissions ------
+    wid = WORKER_ID["w"]
+    row = SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid,
+                                        "date": D(9), "type": "tea", "amount": 25}).get_json()
+    case("Today-only", "A supervisor's ledger POST date is also overridden to today",
+         "date sent D(9)", D(0), lambda: row["date"])
+
+    past_work = ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid,
+                                                 "date": D(31), "type": "work",
+                                                 "days": 1}).get_json()
+    case("Today-only", "A supervisor cannot edit a 'work' row dated in the past",
+         "PUT as ravi", 403,
+         lambda: SUP.put(f"/api/ledger/{past_work['id']}", json={"amount": 999}).status_code)
+    case("Today-only", "A supervisor cannot delete a ledger row at all any more",
+         "DELETE as ravi", 403,
+         lambda: SUP.delete(f"/api/ledger/{row['id']}").status_code)
 
 
 # ===========================================================================
@@ -2279,6 +2436,7 @@ if __name__ == "__main__":
     test_scale()
     test_v10_reconciliation()
     test_v11_admin_edits()
+    test_v12_supervisor_today_only()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
