@@ -611,6 +611,17 @@ class DayClose(db.Model):
     expected_amount = Column(Numeric(14, 2), nullable=False, default=0)
     note = Column(Text)
 
+    # -- meat-sales auto-adjustment -----------------------------------------
+    # cash + UPI + that day's wages + that day's overheads is compared against
+    # the day's recorded revenue. Whatever they differ by is credited or taken
+    # off the meat sale on `meat_adjust_entry_id` (extra cash in means extra
+    # meat must have gone out; short cash means recorded sales overstate what
+    # actually came in). Kept here so re-declaring the same day can undo the
+    # old adjustment before applying a new one, instead of stacking.
+    meat_adjust_entry_id = Column(String(32), ForeignKey("daily_entries.id", ondelete="SET NULL"))
+    meat_adjust_g = Column(Integer, nullable=False, default=0)          # signed: + credited, - removed
+    meat_adjust_amount = Column(Numeric(14, 2), nullable=False, default=0)  # signed, same sense
+
     declared_by_id = Column(Integer, ForeignKey("users.id"))
     declared_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     verified_by_id = Column(Integer, ForeignKey("users.id"))
@@ -619,6 +630,7 @@ class DayClose(db.Model):
     branch = relationship("Branch")
     declared_by = relationship("User", foreign_keys=[declared_by_id])
     verified_by = relationship("User", foreign_keys=[verified_by_id])
+    meat_adjust_entry = relationship("DailyEntry", foreign_keys=[meat_adjust_entry_id])
 
     __table_args__ = (
         UniqueConstraint("branch_id", "business_date", name="uq_dayclose_branch_date"),
@@ -632,6 +644,9 @@ class DayClose(db.Model):
                 "cash": cash, "upi": upi, "declared": cash + upi,
                 "expectedAtDeclaration": float(self.expected_amount),
                 "note": self.note or "",
+                "meatAdjustEntryId": self.meat_adjust_entry_id,
+                "meatAdjustG": self.meat_adjust_g,
+                "meatAdjustAmount": float(self.meat_adjust_amount),
                 "declaredBy": self.declared_by_id,
                 "declaredByName": self.declared_by.name if self.declared_by else "",
                 "declaredAt": self.declared_at.isoformat() if self.declared_at else None,

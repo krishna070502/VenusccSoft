@@ -672,7 +672,10 @@ function lockForm(locked){
 
 function loadEntry(id){
   S.editing=id?(S.entries.filter(function(x){return x.id===id;})[0]||null):null;
-  S.auto={ closeBirds:!id, closeWt:!id, closeMeat:!id };
+  // Closing birds/weight/meat are computed by the server and shown read-only —
+  // there is no manual mode any more, whether this is a new entry or one being
+  // reopened, so this always stays on.
+  S.auto={ closeBirds:true, closeWt:true, closeMeat:true };
   if(S.editing){
     S.cat=S.editing.category; S.branch=S.editing.branch;
     $('branchSelect').value=S.branch; syncSegs(); fillForm(S.editing); $('carryNote').textContent='';
@@ -1602,6 +1605,7 @@ function renderWorkers(){
       '<td class="px-4 py-2.5 text-right num font-bold '+(adv?'text-rose-600':'text-slate-400')+'">'+(adv?'−'+money0(adv):'—')+'</td>'+
       '<td class="px-4 py-2.5 text-right num font-bold '+(st.balance>0?'text-rose-600':'text-emerald-700')+'">'+money0(st.balance)+'</td>'+
       '<td class="px-4 py-2.5 text-right whitespace-nowrap">'+
+        '<button data-sheet="wage" data-id="'+w.id+'" title="Adjust today’s wage (e.g. Sunday surge rate)" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-sliders"></i></button>'+
         '<button data-sheet="adv" data-id="'+w.id+'" title="Give an advance" class="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-100"><i class="fa-solid fa-money-bill-transfer"></i></button>'+
         (isAdmin()?'<button data-sheet="edit" data-id="'+w.id+'" title="Edit worker" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>':'')+
       '</td></tr>';
@@ -1635,7 +1639,9 @@ function renderWorkers(){
       '<td class="px-4 py-2.5 text-slate-500 text-xs">'+esc(l.note||'')+'</td>'+
       '<td class="px-4 py-2.5 text-right num font-semibold">'+money0(l.amount)+'</td>'+
       '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+eff[0]+'">'+eff[1]+'</span></td>'+
-      '<td class="px-4 py-2.5 text-right"><button data-lact="del" data-id="'+l.id+'" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button></td></tr>';
+      '<td class="px-4 py-2.5 text-right whitespace-nowrap">'+
+        ((isAdmin()||l.type==='work')?'<button data-lact="edit" data-id="'+l.id+'" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>':'')+
+        '<button data-lact="del" data-id="'+l.id+'" title="Delete" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button></td></tr>';
   }).join(''):'<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No ledger entries for '+m+'.</td></tr>';
 }
 
@@ -2100,13 +2106,8 @@ function wire(){
   ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
     document.addEventListener(ev,function(){ if(Date.now()-S.lastAct>1500) bumpActivity(); },{passive:true});
   });
-  qsa('[data-auto]').forEach(function(b){ b.addEventListener('click',function(){
-    var k=b.getAttribute('data-auto'); S.auto[k]=!S.auto[k]; recalc();
-    toast(S.auto[k]?'Field back on auto-calculate.':'Field switched to manual entry.');
-  }); });
-  ['f_closeBirds'].forEach(function(id){ $(id).addEventListener('input',function(){ S.auto.closeBirds=false; }); });
-  ['f_closeWt_kg','f_closeWt_g'].forEach(function(id){ $(id).addEventListener('input',function(){ S.auto.closeWt=false; }); });
-  ['f_closeMeat_kg','f_closeMeat_g'].forEach(function(id){ $(id).addEventListener('input',function(){ S.auto.closeMeat=false; }); });
+  // Closing birds/weight/meat are always server-computed and the inputs are
+  // readonly — no manual-entry toggle any more.
   $('actUser').addEventListener('change',renderActivity);
   $('actKind').addEventListener('change',renderActivity);
   $('btnActClear').addEventListener('click',function(){
@@ -2947,14 +2948,31 @@ function renderDayClose() {
                 '<span class="font-bold num text-xl">' + money(b.expected) + '</span></div>' +
               '<p class="mt-2 text-[11px] text-slate-500 leading-snug">Revenue for the day was ' + money(x.revenue) +
                 '. The ' + money(x.hotelCredit) + ' sold on account is not cash — it sits on the customer ledgers until they pay.</p>' +
+              '<div class="mt-3 pt-3 border-t border-dashed border-slate-200">' +
+                '<p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Cash + UPI + wages + overheads vs revenue</p>' +
+                line('Wages today', money(b.wagesToday)) +
+                line('Overheads today', money(b.overheadsToday)) +
+                (c ? line('= handed over + wages + overheads', money(b.collectedTotal), 'font-bold') : '') +
+                (c ? line('vs revenue ' + money(b.revenueToday), (b.revenueDifference > 0 ? '+' : '') + money(b.revenueDifference),
+                    Math.abs(b.revenueDifference) < 0.5 ? 'text-emerald-700' : b.revenueDifference > 0 ? 'text-amber-700' : 'text-rose-600') : '') +
+                (c && c.meatAdjustG
+                  ? '<p class="mt-1 text-[11px] font-semibold ' + (c.meatAdjustG > 0 ? 'text-amber-700' : 'text-rose-600') + '">' +
+                    (c.meatAdjustG > 0
+                      ? 'Auto-credited ' + (c.meatAdjustG / 1000).toFixed(3) + ' kg extra meat sold (₹' + money0(c.meatAdjustAmount) + ').'
+                      : 'Auto-reduced meat sales by ' + (-c.meatAdjustG / 1000).toFixed(3) + ' kg (₹' + money0(-c.meatAdjustAmount) + ').') +
+                    '</p>'
+                  : '') +
+              '</div>' +
             '</div>' +
             '<div class="p-5">' +
-              '<p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">What was handed over</p>' +
+              '<p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">What was handed over' +
+                (isAdmin() ? '' : ' <span class="normal-case font-normal text-slate-400">— entered by an admin, view only</span>') +
+              '</p>' +
               '<div class="grid grid-cols-2 gap-3">' +
-                '<div><label class="lbl">Cash (₹)</label><input type="number" min="0" step="1" data-dc="cash" class="inp num" value="' + (c ? c.cash : '') + '" /></div>' +
-                '<div><label class="lbl">PhonePe / UPI (₹)</label><input type="number" min="0" step="1" data-dc="upi" class="inp num" value="' + (c ? c.upi : '') + '" /></div>' +
+                '<div><label class="lbl">Cash (₹)</label><input type="number" min="0" step="1" data-dc="cash" class="inp num" value="' + (c ? c.cash : '') + '"' + (isAdmin() ? '' : ' readonly tabindex="-1"') + ' /></div>' +
+                '<div><label class="lbl">PhonePe / UPI (₹)</label><input type="number" min="0" step="1" data-dc="upi" class="inp num" value="' + (c ? c.upi : '') + '"' + (isAdmin() ? '' : ' readonly tabindex="-1"') + ' /></div>' +
               '</div>' +
-              '<div><label class="lbl mt-3">Note</label><input data-dc="note" class="inp" placeholder="Optional" value="' + esc(c ? c.note : '') + '" /></div>' +
+              '<div><label class="lbl mt-3">Note</label><input data-dc="note" class="inp" placeholder="Optional" value="' + esc(c ? c.note : '') + '"' + (isAdmin() ? '' : ' readonly tabindex="-1"') + ' /></div>' +
               '<div class="mt-3 rounded-lg px-3 py-2 text-sm font-bold flex justify-between ' +
                 (diff === null ? 'bg-slate-100 text-slate-600'
                   : Math.abs(diff) < 0.5 ? 'bg-emerald-50 text-emerald-800'
@@ -2964,13 +2982,15 @@ function renderDayClose() {
               (c && c.verifiedAt
                 ? '<p class="mt-2 text-[11px] text-emerald-700 font-semibold"><i class="fa-solid fa-lock mr-1"></i>Verified by ' + esc(c.verifiedByName) + '</p>'
                 : '') +
-              '<div class="flex flex-wrap gap-2 mt-3">' +
-                '<button data-dcsave="' + esc(b.branch) + '" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-4 py-2.5 rounded-lg"><i class="fa-solid fa-floppy-disk mr-1"></i>' + (c ? 'Update handover' : 'Record handover') + '</button>' +
-                (isAdmin() && c
-                  ? '<button data-dcverify="' + esc(c.id) + '" data-reopen="' + (c.verifiedAt ? '1' : '') + '" class="border border-slate-300 text-slate-600 font-bold text-sm px-4 py-2.5 rounded-lg">' +
-                    (c.verifiedAt ? 'Reopen' : 'Verify') + '</button>'
-                  : '') +
-              '</div>' +
+              (isAdmin()
+                ? '<div class="flex flex-wrap gap-2 mt-3">' +
+                    '<button data-dcsave="' + esc(b.branch) + '" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-4 py-2.5 rounded-lg"><i class="fa-solid fa-floppy-disk mr-1"></i>' + (c ? 'Update handover' : 'Record handover') + '</button>' +
+                    (c
+                      ? '<button data-dcverify="' + esc(c.id) + '" data-reopen="' + (c.verifiedAt ? '1' : '') + '" class="border border-slate-300 text-slate-600 font-bold text-sm px-4 py-2.5 rounded-lg">' +
+                        (c.verifiedAt ? 'Reopen' : 'Verify') + '</button>'
+                      : '') +
+                  '</div>'
+                : (c ? '' : '<p class="mt-3 text-[11px] text-slate-400 italic">Not declared yet — an admin still needs to enter this.</p>')) +
               (c ? '<p class="mt-2 text-[11px] text-slate-400">Declared by ' + esc(c.declaredByName) + ' at ' + String(c.declaredAt || '').slice(11, 16) + '</p>' : '') +
             '</div>' +
           '</div></div>';
@@ -3026,7 +3046,56 @@ function renderDayCloseHistory() {
         badge.classList.toggle('hidden', bad === 0);
       }
       S.closeHistory = rows;
+      renderDayCloseGaps();
     }).catch(apiFail);
+}
+
+/* Two separate tables — days over, days short — built from the same history
+   data already loaded by renderDayCloseHistory(), filterable to one branch
+   or every branch someone can see. No extra request: it just re-slices
+   S.closeHistory. */
+function renderDayCloseGaps() {
+  if (!$('dcGapBranch')) return;
+  var sel = $('dcGapBranch');
+  var codes = myBranches();
+  var signature = codes.join(',');
+  if (sel.getAttribute('data-filled') !== signature) {
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">All branches</option>' +
+      codes.map(function (k) { return '<option value="' + esc(k) + '">' + esc(S.branches[k]) + '</option>'; }).join('');
+    sel.value = codes.indexOf(cur) >= 0 ? cur : '';
+    sel.setAttribute('data-filled', signature);
+  }
+  var branch = sel.value;
+  var rows = (S.closeHistory || []).filter(function (r) {
+    return r.declared !== null && r.difference !== null && Math.abs(r.difference) >= 0.5
+      && (!branch || r.branch === branch);
+  });
+  var byDate = function (a, b) { return a.date < b.date ? 1 : -1; };
+  var excess = rows.filter(function (r) { return r.difference > 0; }).sort(byDate);
+  var short = rows.filter(function (r) { return r.difference < 0; }).sort(byDate);
+
+  var body = function (list, cls, none) {
+    return list.length ? list.map(function (r) {
+      return '<tr class="rowhover"><td class="px-4 py-2 whitespace-nowrap font-semibold">' + r.date + '</td>' +
+        '<td class="px-4 py-2 text-xs text-slate-500">' + esc(r.branchName) + '</td>' +
+        '<td class="px-4 py-2 text-right num font-bold ' + cls + '">' + money0(Math.abs(r.difference)) + '</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">' + none + '</td></tr>';
+  };
+  var scope = branch ? (S.branches[branch] || branch) : 'any branch';
+  $('dcExcessBody').innerHTML = body(excess, 'text-amber-700', 'No excess handovers for ' + esc(scope) + '.');
+  $('dcShortBody').innerHTML = body(short, 'text-rose-600', 'No short handovers for ' + esc(scope) + '.');
+
+  var sumExcess = excess.reduce(function (s, r) { return s + r.difference; }, 0);
+  var sumShort = short.reduce(function (s, r) { return s + Math.abs(r.difference); }, 0);
+  $('dcExcessFoot').innerHTML = excess.length
+    ? '<tr><td class="px-4 py-2" colspan="2">Total (' + excess.length + ')</td>' +
+      '<td class="px-4 py-2 text-right num text-amber-700">' + money0(sumExcess) + '</td></tr>' : '';
+  $('dcShortFoot').innerHTML = short.length
+    ? '<tr><td class="px-4 py-2" colspan="2">Total (' + short.length + ')</td>' +
+      '<td class="px-4 py-2 text-right num text-rose-600">' + money0(sumShort) + '</td></tr>' : '';
+  $('dcGapNote').textContent = rows.length + ' day(s) out of tally' +
+    (branch ? ' · ' + esc(S.branches[branch] || branch) : ' · all branches');
 }
 
 function saveDayClose(branchCode) {
@@ -3041,11 +3110,20 @@ function saveDayClose(branchCode) {
     cash: num(g('cash').value), upi: num(g('upi').value), note: g('note').value })
     .then(function (r) {
       var d = r.difference;
+      var adj = r.close && r.close.meatAdjustG;
       toast(Math.abs(d) < 0.5 ? 'Handover recorded — it tallies.'
         : d > 0 ? 'Recorded. ' + money0(d) + ' MORE than expected.'
                 : 'Recorded. ' + money0(-d) + ' SHORT of expected.',
         Math.abs(d) < 0.5 ? 'success' : 'warn');
+      // cash+UPI+wages+overheads vs the day's revenue may have just adjusted
+      // a daily entry's meat sales — refresh entries so it shows everywhere,
+      // not just here.
+      return adj ? bootstrap() : null;
+    })
+    .then(function () {
       renderDayClose();
+      if (typeof recalc === 'function') recalc();
+      if (typeof renderDashboard === 'function') renderDashboard();
     })
     .catch(apiFail)
     .then(function () { done(key); });
@@ -3098,6 +3176,53 @@ function markAttendance(workerId, days) {
   api('POST', '/ledger', { branch: w.branch, workerId: workerId, date: date, type: 'work', days: days })
     .then(function () { return bootstrap(); })
     .then(function () { renderWorkers(); recalc(); renderDashboard(); })
+    .catch(apiFail)
+    .then(function () { done(key); });
+}
+
+/* A supervisor or admin can quote a worker a different rate for one day —
+   e.g. everyone wants extra on a Sunday — without touching the worker's
+   standing day_wage. This only changes the ledger row for that date. */
+function adjustWage(workerId) {
+  var date = $('wkDate').value || todayISO();
+  var w = S.workers.filter(function (x) { return x.id === workerId; })[0]; if (!w) return;
+  var existing = S.ledger.filter(function (x) { return x.workerId === workerId && x.date === date && x.type === 'work'; })[0];
+  var days = existing ? num(existing.days) : 1;
+  var suggestion = existing ? num(existing.amount) : (num(w.dayWage) * days);
+  var val = prompt('Wage for ' + w.name + ' on ' + date + ' (standard rate ' + money0(w.dayWage) + '/day, ' + days + ' day(s)):',
+    suggestion || w.dayWage);
+  if (val === null) return;
+  var amt = parseFloat(val);
+  if (!(amt > 0)) { toast('Enter a valid amount.', 'error'); return; }
+  var key = 'wageadj:' + workerId + ':' + date;
+  if (!once(key)) return;
+  api('POST', '/ledger', { branch: w.branch, workerId: workerId, date: date, type: 'work',
+    days: days || 1, wageOverride: amt })
+    .then(function () { return bootstrap(); })
+    .then(function () { renderWorkers(); recalc(); renderDashboard(); toast('Wage set to ' + money0(amt) + ' for ' + date + '.'); })
+    .catch(apiFail)
+    .then(function () { done(key); });
+}
+
+/* Correct an already-recorded wage/deduction row instead of deleting and
+   re-adding it. An admin can edit any row; a supervisor may only correct a
+   'work' (wage) row, matching what the server allows. No separate history is
+   kept — this overwrites the row, like any other edit in the app. */
+function editLedgerRow(id) {
+  var row = S.ledger.filter(function (x) { return x.id === id; })[0]; if (!row) return;
+  if (!isAdmin() && row.type !== 'work') { toast('Only an admin can edit this entry.', 'error'); return; }
+  var w = S.workers.filter(function (x) { return x.id === row.workerId; })[0];
+  var val = prompt('Amount for ' + (w ? w.name : 'this entry') + ' — ' + row.type + ' · ' + row.date + ':', row.amount);
+  if (val === null) return;
+  var amt = parseFloat(val);
+  if (!(amt > 0)) { toast('Enter a valid amount.', 'error'); return; }
+  var key = 'ledgeredit:' + id;
+  if (!once(key)) return;
+  var body = { amount: amt };
+  if (row.type === 'work') body.days = row.days;
+  api('PUT', '/ledger/' + id, body)
+    .then(function () { return bootstrap(); })
+    .then(function () { renderWorkers(); recalc(); renderDashboard(); toast('Entry updated.'); })
     .catch(apiFail)
     .then(function () { done(key); });
 }
@@ -3473,15 +3598,8 @@ function wire() {
     }
   });
 
-  qsa('[data-auto]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var k = b.getAttribute('data-auto'); S.auto[k] = !S.auto[k]; recalc();
-      toast(S.auto[k] ? 'Field back on auto-calculate.' : 'Field switched to manual entry.');
-    });
-  });
-  $('f_closeBirds').addEventListener('input', function () { S.auto.closeBirds = false; });
-  ['f_closeWt_kg', 'f_closeWt_g'].forEach(function (id) { $(id).addEventListener('input', function () { S.auto.closeWt = false; }); });
-  ['f_closeMeat_kg', 'f_closeMeat_g'].forEach(function (id) { $(id).addEventListener('input', function () { S.auto.closeMeat = false; }); });
+  // Closing birds/weight/meat are always server-computed and the inputs are
+  // readonly — no manual-entry toggle any more.
 
   $('f_photos').addEventListener('change', function () {
     var files = Array.prototype.slice.call(this.files || []), left = files.length; if (!left) return;
@@ -3551,8 +3669,9 @@ function wire() {
   });
   $('sheetBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-sheet]'); if (!b) return;
-    var id = b.getAttribute('data-id');
-    if (b.getAttribute('data-sheet') === 'adv') advanceModal(id);
+    var id = b.getAttribute('data-id'), act = b.getAttribute('data-sheet');
+    if (act === 'adv') advanceModal(id);
+    else if (act === 'wage') adjustWage(id);
     else workerModal(S.workers.filter(function (x) { return x.id === id; })[0]);
   });
   $('workerBody').addEventListener('click', function (ev) {
@@ -3568,7 +3687,9 @@ function wire() {
   });
   $('ledgerBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-lact]'); if (!b) return;
-    api('DELETE', '/ledger/' + b.getAttribute('data-id')).then(function () { return bootstrap(); })
+    var id = b.getAttribute('data-id'), act = b.getAttribute('data-lact');
+    if (act === 'edit') { editLedgerRow(id); return; }
+    api('DELETE', '/ledger/' + id).then(function () { return bootstrap(); })
       .then(function () { renderWorkers(); recalc(); renderDashboard(); toast('Ledger entry removed.', 'warn'); })
       .catch(apiFail);
   });
@@ -3581,6 +3702,7 @@ function wire() {
   ['dcFrom', 'dcTo'].forEach(function (id) {
     $(id).addEventListener('change', renderDayCloseHistory);
   });
+  if ($('dcGapBranch')) $('dcGapBranch').addEventListener('change', renderDayCloseGaps);
   $('dcCards').addEventListener('click', function (ev) {
     var save = ev.target.closest('[data-dcsave]');
     if (save) { saveDayClose(save.getAttribute('data-dcsave')); return; }

@@ -1678,11 +1678,14 @@ def test_dayclose():
          lambda: d["branches"][0]["close"])
 
     r = SUP2.post("/api/dayclose", json={"branch": "B02", "date": day, "cash": 1, "upi": 1})
-    case("Cash tally", "A supervisor can only close their own branch",
-         "priya -> B02 is fine", 201, lambda: r.status_code)
-    case("Cash tally", "and not someone else's", "priya -> B01", 403,
+    case("Cash tally", "A supervisor cannot declare a handover, even for their own branch",
+         "priya -> B02", 403, lambda: r.status_code)
+    case("Cash tally", "nor for anyone else's branch", "priya -> B01", 403,
          lambda: SUP2.post("/api/dayclose",
                            json={"branch": "B01", "date": day, "cash": 1}).status_code)
+    case("Cash tally", "A supervisor CAN still see the handover screen",
+         "GET /api/dayclose", 200,
+         lambda: SUP.get("/api/dayclose?date=" + day + "&branch=B01").status_code)
 
     ok = ADMIN.post("/api/dayclose", json={"branch": "B01", "date": day,
                                            "cash": 15000, "upi": 2180}).get_json()
@@ -1751,7 +1754,7 @@ def test_dayclose():
     case("Cash tally", "An admin can verify", "POST verify", True,
          lambda: ADMIN.post(f"/api/dayclose/{cid}/verify", json={})
                       .get_json()["close"]["verifiedAt"] is not None)
-    case("Cash tally", "Once verified a supervisor cannot overwrite it",
+    case("Cash tally", "A supervisor cannot overwrite it either, verified or not",
          "ravi re-declares", 403,
          lambda: SUP.post("/api/dayclose",
                           json={"branch": "B01", "date": day, "cash": 99}).status_code)
@@ -1928,6 +1931,122 @@ def test_scale():
 
 
 # ===========================================================================
+# 22. Workers rename, wage overrides, ledger edits, auto-closing stock and
+#     the day-close meat-sales reconciliation
+# ===========================================================================
+def test_v10_reconciliation():
+    print("\n[22] Workers, wage overrides & meat-sales reconciliation")
+
+    # ---- "Labour" renamed to "Workers" in the menu bar --------------------
+    home = ADMIN.get("/").data.decode("utf-8", "ignore")
+    case("Workers rename", "The menu tab reads Workers, not Labour",
+         "nav tab button text", True,
+         lambda: "text-xs\"></i> Workers</button>" in home
+                 and "text-xs\"></i> Labour</button>" not in home)
+
+    # ---- closing birds/weight/meat are computed, not accepted from the client
+    day = D(500)
+    bogus = base_entry(businessDate=day, closeBirds=999999, closeWtG=999999, closeMeatG=999999)
+    r = SUP.post("/api/entries", json=bogus)
+    case("Auto-closing stock", "A bogus client-supplied closing figure is still accepted (201)",
+         "closeBirds: 999999 in the payload", 201, lambda: r.status_code)
+    created = r.get_json()
+    case("Auto-closing stock", "...but ignored — closing birds is the server's own figure",
+         "expBirds from the formula", created["calc"]["expBirds"],
+         lambda: created["closeBirds"])
+    case("Auto-closing stock", "Closing bird weight is likewise computed",
+         "expCloseWtG", created["calc"]["expCloseWtG"],
+         lambda: created["closeWtG"])
+    case("Auto-closing stock", "Closing meat is likewise computed",
+         "expCloseMeatG", created["calc"]["expCloseMeatG"],
+         lambda: created["closeMeatG"])
+    case("Auto-closing stock", "With nothing left to hand-count, variance is always zero",
+         "birdVar", 0, lambda: created["calc"]["birdVar"])
+    upd = ADMIN.put(f"/api/entries/{created['id']}",
+                    json={"closeBirds": 5, "closeWtG": 5, "closeMeatG": 5}).get_json()
+    case("Auto-closing stock", "An edit also ignores a bogus closing figure",
+         "stays at the computed value", created["closeBirds"], lambda: upd["closeBirds"])
+
+    # ---- a supervisor or admin can quote a worker a one-off day rate ------
+    w = ADMIN.post("/api/workers", json={"branch": "B01", "name": "Sunday Surge Tester",
+                                         "role": "dresser", "dayWage": 700}).get_json()
+    wdate = D(501)
+    mark = SUP.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": wdate,
+                                         "type": "work", "days": 1, "wageOverride": 1200})
+    case("Wage override", "A custom day rate is accepted instead of the standard wage",
+         "wageOverride=1200, standard is 700", 1200.0, lambda: mark.get_json()["amount"])
+    work_row_id = mark.get_json()["id"]
+    still700 = [x["dayWage"] for x in ADMIN.get("/api/bootstrap").get_json()["workers"]
+               if x["id"] == w["id"]][0]
+    case("Wage override", "The worker's standing day_wage is untouched by a one-off rate",
+         "still 700", 700.0, lambda: still700)
+
+    # ---- editing an already-recorded row instead of delete + re-add -------
+    edited = ADMIN.put(f"/api/ledger/{work_row_id}", json={"amount": 1500})
+    case("Ledger edit", "An admin can correct an already-recorded wage row",
+         "1200 -> 1500", 1500.0, lambda: edited.get_json()["amount"])
+    resup = SUP.put(f"/api/ledger/{work_row_id}", json={"amount": 1600})
+    case("Ledger edit", "A supervisor may also correct a 'work' (wage) row",
+         "1500 -> 1600", 1600.0, lambda: resup.get_json()["amount"])
+
+    paid = ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w["id"], "date": wdate,
+                                           "type": "paid", "amount": 300}).get_json()
+    case("Ledger edit", "A supervisor cannot edit a 'paid' row",
+         "403 — not a wage row", 403,
+         lambda: SUP.put(f"/api/ledger/{paid['id']}", json={"amount": 999}).status_code)
+    case("Ledger edit", "An admin can edit any kind of row",
+         "300 -> 999", 999.0,
+         lambda: ADMIN.put(f"/api/ledger/{paid['id']}", json={"amount": 999}).get_json()["amount"])
+
+    # ---- day-close: cash + UPI + wages + overheads vs revenue -------------
+    # branch B02, fresh dates, no labour/overhead records that day — so wages
+    # and overheads are exactly zero and the arithmetic is clean.
+    day_over = D(502)
+    e_over = ADMIN.post("/api/entries", json=base_entry(branch="B02", businessDate=day_over)).get_json()
+    revenue = e_over["calc"]["revenue"]
+    skin_before = e_over["skinSoldG"]
+    close_over = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_over,
+                                                    "cash": revenue / 2 + 500,
+                                                    "upi": revenue / 2 + 500}).get_json()
+    case("Meat reconciliation", "₹1,000 more handed over than revenue credits 5,000g of meat",
+         "+₹1000 at ₹200/kg = +5000g", 5000, lambda: close_over["close"]["meatAdjustG"])
+    refetched = ADMIN.get(f"/api/entries/{e_over['id']}").get_json()
+    case("Meat reconciliation", "The entry's meat sold actually increased",
+         "skinSoldG +5000g", skin_before + 5000, lambda: refetched["skinSoldG"])
+    case("Meat reconciliation", "A note explaining the adjustment is left on the entry",
+         "mentions 'extra meat sold'", True,
+         lambda: "extra meat sold" in refetched["notes"])
+
+    # re-declaring the same day balanced should UNDO the adjustment, not stack it
+    balanced = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_over,
+                                                  "cash": revenue / 2, "upi": revenue / 2}).get_json()
+    case("Meat reconciliation", "Re-declaring it balanced undoes the earlier credit",
+         "meatAdjustG back to 0", 0, lambda: balanced["close"]["meatAdjustG"])
+    back = ADMIN.get(f"/api/entries/{e_over['id']}").get_json()
+    case("Meat reconciliation", "...and the entry's meat sold reverts too",
+         "skinSoldG back to " + str(skin_before), skin_before, lambda: back["skinSoldG"])
+
+    # shortfall — a different day, so it is independent of the case above
+    day_short = D(503)
+    e_short = ADMIN.post("/api/entries", json=base_entry(branch="B02", businessDate=day_short)).get_json()
+    revenue2 = e_short["calc"]["revenue"]
+    skin_before2 = e_short["skinSoldG"]
+    close_short = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_short,
+                                                     "cash": revenue2 / 2 - 400,
+                                                     "upi": revenue2 / 2 - 400}).get_json()
+    case("Meat reconciliation", "₹800 less handed over than revenue removes 4,000g of meat",
+         "-₹800 at ₹200/kg = -4000g", -4000, lambda: close_short["close"]["meatAdjustG"])
+    refetched2 = ADMIN.get(f"/api/entries/{e_short['id']}").get_json()
+    case("Meat reconciliation", "The entry's recorded meat sold actually decreased",
+         "skinSoldG -4000g", skin_before2 - 4000, lambda: refetched2["skinSoldG"])
+    case("Meat reconciliation", "A note explaining the shortfall is left on the entry",
+         "mentions 'reduced meat sales'", True,
+         lambda: "reduced meat sales" in refetched2["notes"])
+    case("Meat reconciliation", "The classic declared-vs-expected figure is unaffected by its own adjustment",
+         "still short by exactly ₹800", -800.0, lambda: close_short["difference"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2083,6 +2202,7 @@ if __name__ == "__main__":
     test_dayclose()
     test_dupes()
     test_scale()
+    test_v10_reconciliation()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

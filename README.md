@@ -189,7 +189,7 @@ venus/
 │  ├─ schema.sql         the DDL, for provisioning by hand
 │  └─ test-report.md     latest test run
 ├─ tests/
-│  └─ test_api.py        367-case suite
+│  └─ test_api.py        389-case suite
 ├─ docker-compose.yml
 ├─ manage.py  run.py  wsgi.py
 ├─ requirements.txt

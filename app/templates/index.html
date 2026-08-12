@@ -178,7 +178,7 @@
       <button data-view="entry" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-pen-to-square text-xs"></i> Daily Entry</button>
       <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Functions <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
-      <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Labour</button>
+      <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Workers</button>
       <button data-view="dayclose" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-cash-register text-xs"></i> Day Close <span id="closeBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
@@ -535,11 +535,11 @@
 
         <!-- I: Closing -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">meat = open + obtained − counter sales − hotel sales − damage</span></div>
+          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">computed automatically — opening + purchased − sold − mortality − damage</span></div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_closeBirds">Closing birds <span class="req">*</span> <button type="button" data-auto="closeBirds" class="autoBtn">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
-            <div><label class="lbl">Closing bird weight <span class="req">*</span> <button type="button" data-auto="closeWt" class="autoBtn">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
-            <div><label class="lbl">Closing meat <button type="button" data-auto="closeMeat" class="autoBtn">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeMeat"></p></div>
+            <div><label class="lbl" for="f_closeBirds">Closing birds</label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" readonly tabindex="-1" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
+            <div><label class="lbl">Closing bird weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
+            <div><label class="lbl">Closing meat</label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeMeat"></p></div>
             <div class="sm:col-span-2"><label class="lbl" for="f_notes">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
           </div>
         </fieldset>
@@ -663,7 +663,7 @@
   <!-- ================= LABOUR ================= -->
   <section id="view-workers" class="view hidden">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
-      <div><h2 class="text-xl font-bold text-slate-900">Labour — dressers &amp; cutters</h2>
+      <div><h2 class="text-xl font-bold text-slate-900">Workers — dressers &amp; cutters</h2>
         <p class="text-sm text-slate-500"><span id="wkBranchLabel" class="font-semibold text-emerald-700">—</span> · paid per working day · tea &amp; tiffin never deducted</p></div>
       <div class="flex items-end gap-3 flex-wrap">
         <div><label class="lbl" for="wkDate">Work date</label><input type="date" id="wkDate" class="inp" /></div>
@@ -692,7 +692,7 @@
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
         <i class="fa-solid fa-money-bill-transfer text-amber-600"></i>
-        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Daily labour sheet</h3>
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Daily workers sheet</h3>
         <span class="text-xs text-slate-400" id="sheetNote"></span>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -714,7 +714,7 @@
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
         <i class="fa-solid fa-calendar-week text-rose-600"></i>
-        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Day-wise labour &amp; deductions</h3>
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Day-wise workers &amp; deductions</h3>
         <span class="text-xs text-slate-400" id="dwNote"></span>
         <div class="ml-auto flex items-end gap-2">
           <div><label class="lbl" for="dwFrom">From</label><input type="date" id="dwFrom" class="inp !py-1.5 !text-xs" /></div>
@@ -819,6 +819,51 @@
         <tbody id="dcHistBody" class="divide-y divide-slate-100"></tbody>
         <tfoot id="dcHistFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
       </table></div>
+    </div>
+
+    <div class="card overflow-hidden mt-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-right-left text-amber-600"></i>
+          <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Excess &amp; shortage by branch</h3>
+          <span class="text-xs text-slate-400" id="dcGapNote"></span>
+        </div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="dcGapBranch">Branch</label>
+            <select id="dcGapBranch" class="inp !py-1.5 !text-xs"><option value="">All branches</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+        <div>
+          <div class="px-4 py-2 bg-amber-50 text-amber-800 text-xs font-bold uppercase tracking-wide">
+            <i class="fa-solid fa-arrow-up mr-1"></i>Excess — more handed over than expected
+          </div>
+          <div class="overflow-x-auto"><table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+              <th class="px-4 py-2 font-bold text-xs uppercase">Date</th>
+              <th class="px-4 py-2 font-bold text-xs uppercase">Branch</th>
+              <th class="px-4 py-2 font-bold text-xs uppercase text-right">Excess</th>
+            </tr></thead>
+            <tbody id="dcExcessBody" class="divide-y divide-slate-100"></tbody>
+            <tfoot id="dcExcessFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+          </table></div>
+        </div>
+        <div>
+          <div class="px-4 py-2 bg-rose-50 text-rose-700 text-xs font-bold uppercase tracking-wide">
+            <i class="fa-solid fa-arrow-down mr-1"></i>Shortage — less handed over than expected
+          </div>
+          <div class="overflow-x-auto"><table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+              <th class="px-4 py-2 font-bold text-xs uppercase">Date</th>
+              <th class="px-4 py-2 font-bold text-xs uppercase">Branch</th>
+              <th class="px-4 py-2 font-bold text-xs uppercase text-right">Short</th>
+            </tr></thead>
+            <tbody id="dcShortBody" class="divide-y divide-slate-100"></tbody>
+            <tfoot id="dcShortFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+          </table></div>
+        </div>
+      </div>
     </div>
   </section>
 

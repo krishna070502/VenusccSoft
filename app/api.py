@@ -322,7 +322,17 @@ def visible_branch_ids() -> list[int]:
 
 
 def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
-    """Copy the editable numeric fields from a client payload onto the row."""
+    """
+    Copy the editable numeric fields from a client payload onto the row.
+
+    closeBirds/closeWtG/closeMeatG are deliberately NOT in this map. A
+    supervisor no longer hand-counts and types the closing stock — it is
+    whatever opening stock + purchases − sales − mortality − damage says it
+    is, worked out by _recompute_closing_stock() after every other field on
+    the entry is applied. Anything the client sends for those three keys is
+    ignored, not just overwritten later, so there is no path left where a
+    typed number reaches the database.
+    """
     ints = {
         "openBirds": "open_birds", "openWtG": "open_weight_g", "openMeatG": "open_meat_g",
         "liveSoldCount": "live_sold_count", "liveSoldWtG": "live_sold_weight_g",
@@ -330,8 +340,7 @@ def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
         "damageG": "damage_meat_g", "dressedCount": "dressed_count",
         "dressedWtG": "dressed_weight_g", "actualMeatG": "actual_meat_g",
         "skinSoldG": "skin_sold_g", "skinlessSoldG": "skinless_sold_g",
-        "liverSoldG": "liver_sold_g", "closeBirds": "close_birds",
-        "closeWtG": "close_weight_g", "closeMeatG": "close_meat_g",
+        "liverSoldG": "liver_sold_g",
     }
     for src, col in ints.items():
         if src in d:
@@ -352,6 +361,26 @@ def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
     # Buying prices are admin-only, in the payload and in the database write.
     if g.user.is_admin and "openRate" in d:
         entry.open_rate = to_dec(d.get("openRate"), "openRate")
+
+
+def _recompute_closing_stock(entry: DailyEntry) -> None:
+    """
+    Set closing birds, closing bird weight and closing meat weight from the
+    formula, not from a hand count. Call this after opening stock, purchases,
+    counter sales and hotel/hostel sales are all in place on `entry` — it
+    reads them straight off the object via to_dict(), so purchases/hotel_sales
+    only need to be appended to the in-memory relationship, not flushed.
+
+    Day-close reconciliation (see day_close()) may still nudge close_meat_g
+    afterwards, when what was actually collected in cash/UPI doesn't match
+    what the day's entry says was sold — that happens after this, not instead
+    of it.
+    """
+    data = entry.to_dict(include_costs=True)
+    calc = compute_entry(data, get_settings())
+    entry.close_birds = calc["expBirds"]
+    entry.close_weight_g = calc["expCloseWtG"]
+    entry.close_meat_g = calc["expCloseMeatG"]
 
 
 def _replace_purchases(entry: DailyEntry, rows: list) -> None:
@@ -682,7 +711,12 @@ def create_entry():
         return jsonify({"error": "duplicate",
                         "message": f"A {clash.status} entry already exists for {bdate}."}), 409
 
-    entry = DailyEntry(branch_id=branch.id, category=category, business_date=bdate,
+    # `branch=branch`, not `branch_id=branch.id` — _recompute_closing_stock()
+    # below calls entry.to_dict(), which reads entry.branch.code, and that
+    # relationship is otherwise unpopulated (None) until the object is
+    # flushed and reloaded. Assigning the object directly sets branch_id AND
+    # makes entry.branch usable immediately, no round trip needed.
+    entry = DailyEntry(branch=branch, category=category, business_date=bdate,
                        entered_at=bstamp, created_by_id=g.user.id, status="draft")
     _apply_entry_fields(entry, d)
     _replace_purchases(entry, d.get("purchases"))
@@ -690,6 +724,10 @@ def create_entry():
     _replace_hotel_sales(entry, d.get("hotelSales"))
     db.session.add(entry)
     db.session.flush()
+    # after the flush, not before: any numeric field the client left out is
+    # still None in memory until the INSERT resolves the column's default —
+    # to_dict() (which _recompute_closing_stock calls) needs the real 0s.
+    _recompute_closing_stock(entry)
 
     if status == "pending":
         problems = _submission_problems(entry, d)
@@ -740,6 +778,7 @@ def update_entry(entry_id):
     else:
         # the selling rates may have just changed; the hotel bills follow them
         _reprice_hotel_sales(entry)
+    _recompute_closing_stock(entry)
     entry.updated_by_id = g.user.id
     db.session.flush()
 
@@ -1417,11 +1456,22 @@ def add_ledger():
                                entry_date=day, kind="work")
             db.session.add(row)
         row.days = Decimal(str(days))
-        row.amount = Decimal(str(float(worker.day_wage) * days))
-        row.note = "Half day" if days == 0.5 else "Full day"
+        # A supervisor or admin may quote this worker a different rate for the
+        # day (e.g. a Sunday surge rate) instead of the worker's standard
+        # day_wage — send "wageOverride" and it wins; otherwise the usual
+        # day_wage * days applies.
+        override = d.get("wageOverride")
+        if override not in (None, ""):
+            row.amount = to_dec(override, "wageOverride")
+        else:
+            row.amount = Decimal(str(float(worker.day_wage) * days))
+        default_note = "Half day" if days == 0.5 else "Full day"
+        row.note = (d.get("note") or "").strip()[:500] or (
+            default_note if override in (None, "") else f"{default_note} · custom rate")
         row.created_by_id = g.user.id
         log_activity("Attendance",
-                     f"{worker.name} · {day} · {'half day' if days == 0.5 else 'full day'}",
+                     f"{worker.name} · {day} · {'half day' if days == 0.5 else 'full day'}"
+                     + (f" · custom rate ₹{row.amount}" if override not in (None, "") else ""),
                      branch_code=branch.code)
         try:
             db.session.commit()
@@ -1434,8 +1484,9 @@ def add_ledger():
             if not row:
                 raise
             row.days = Decimal(str(days))
-            row.amount = Decimal(str(float(worker.day_wage) * days))
-            row.note = "Half day" if days == 0.5 else "Full day"
+            row.amount = (to_dec(override, "wageOverride") if override not in (None, "")
+                         else Decimal(str(float(worker.day_wage) * days)))
+            row.note = (d.get("note") or "").strip()[:500] or default_note
             db.session.commit()
         return jsonify(row.to_dict()), 201
 
@@ -1473,6 +1524,61 @@ def add_ledger():
     log_activity(f"Ledger {kind}", f"₹{row.amount} · {worker.name}", branch_code=branch.code)
     db.session.commit()
     return jsonify(row.to_dict()), 201
+
+
+@bp.put("/ledger/<row_id>")
+@login_required
+def update_ledger(row_id):
+    """
+    Correct an already-recorded wage/deduction row instead of deleting and
+    re-adding it. An admin can edit any row — this is the "change or undo a
+    transaction" ability. A supervisor may only touch a 'work' (wage) row for
+    their own branch, and only its amount/days/note — that covers adjusting a
+    worker's pay for the day (e.g. a Sunday surge rate) after it was marked.
+    No separate history is kept; this simply overwrites the row, same as any
+    other edit in the app.
+    """
+    row = db.session.get(LabourLedger, row_id)
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(row.branch.code)
+    if err:
+        return err
+    if not g.user.is_admin and row.kind != "work":
+        return jsonify({"error": "forbidden",
+                        "message": "Only an admin can edit a paid/advance/deduction entry."}), 403
+
+    d = request.get_json(silent=True) or {}
+    before = f"{row.kind} · ₹{row.amount}"
+
+    if g.user.is_admin and d.get("type") in ("work", "paid", "advance", "tea", "tiffin", "other"):
+        row.kind = d["type"]
+
+    if row.kind == "work" and ("days" in d or "amount" in d or "wageOverride" in d):
+        days = float(d.get("days", row.days) or 0)
+        if days <= 0:
+            return jsonify({"error": "validation", "message": "Days must be greater than zero."}), 422
+        row.days = Decimal(str(days))
+        override = d.get("wageOverride", d.get("amount"))
+        if override not in (None, ""):
+            row.amount = to_dec(override, "amount")
+        else:
+            row.amount = Decimal(str(float(row.worker.day_wage) * days))
+    elif "amount" in d:
+        amt = to_dec(d.get("amount"), "amount")
+        if amt <= 0:
+            return jsonify({"error": "validation", "message": "Enter an amount."}), 422
+        row.amount = amt
+
+    if "note" in d:
+        row.note = (d.get("note") or "")[:500]
+    if g.user.is_admin and "date" in d:
+        row.entry_date = parse_date(d.get("date"), row.entry_date)
+
+    log_activity("Edited ledger entry", f"{before} → {row.kind} · ₹{row.amount}",
+                 branch_code=row.branch.code)
+    db.session.commit()
+    return jsonify(row.to_dict())
 
 
 @bp.delete("/ledger/<row_id>")
@@ -1719,10 +1825,91 @@ def expected_cash(branch_id: int, day: date) -> dict:
     }
 
 
-def close_payload(branch, day: date) -> dict:
-    exp = expected_cash(branch.id, day)
+def _undo_meat_adjustment(row: DayClose) -> None:
+    """Reverse a previously-applied meat-sales adjustment. Called before
+    working out a fresh one, so re-declaring the same handover never stacks
+    adjustments on top of each other."""
+    if not row.meat_adjust_entry_id or not row.meat_adjust_g:
+        return
+    entry = db.session.get(DailyEntry, row.meat_adjust_entry_id)
+    if entry:
+        entry.skin_sold_g = max(0, entry.skin_sold_g - row.meat_adjust_g)
+        _recompute_closing_stock(entry)
+    row.meat_adjust_entry_id = None
+    row.meat_adjust_g = 0
+    row.meat_adjust_amount = Decimal("0")
+
+
+def _apply_meat_adjustment(row: DayClose, branch_id: int, day: date, diff: float) -> None:
+    """
+    Credit or remove meat sales so the day's recorded revenue matches what
+    cash + UPI + that day's wages + that day's overheads says actually came
+    in and went out.
+
+      diff > 0 — more was accounted for (handed over, or paid out in wages
+                 and overheads) than the entry shows as sold: the excess is
+                 treated as meat that went out but was never recorded.
+      diff < 0 — the entry shows more revenue than was accounted for: that
+                 much comes back out of recorded meat sales.
+
+    The conversion uses the day's skin rate — the counter's headline meat
+    price. Whichever entry is this branch's counter (broiler, where there is
+    one) absorbs the adjustment; a note is left on it either way.
+    """
+    if abs(diff) < 0.5:
+        return
+    entry = (DailyEntry.query.filter_by(branch_id=branch_id, business_date=day,
+                                        category="broiler").first()
+            or DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).first())
+    if not entry or float(entry.rate_skin) <= 0:
+        return
+    rate = float(entry.rate_skin)
+    grams = int(round(abs(diff) / rate * 1000))
+    if grams <= 0:
+        return
+    if diff > 0:
+        entry.skin_sold_g += grams
+        applied_g = grams
+        note = (f"Day-close {day.isoformat()}: cash + UPI + wages + overheads was "
+                f"₹{diff:.2f} more than recorded revenue — credited as {grams}g "
+                f"extra meat sold.")
+    else:
+        applied = min(grams, entry.skin_sold_g)
+        entry.skin_sold_g -= applied
+        applied_g = -applied
+        leftover = abs(diff) - applied / 1000 * rate
+        short_note = ("" if applied == grams else
+                     f" Only {applied}g of recorded meat sales was available to remove — "
+                     f"₹{leftover:.2f} of the shortfall is still unexplained.")
+        note = (f"Day-close {day.isoformat()}: recorded revenue was ₹{abs(diff):.2f} more "
+                f"than cash + UPI + wages + overheads — reduced meat sales by "
+                f"{applied}g.{short_note}")
+    entry.notes = ((entry.notes or "") + ("\n" if entry.notes else "") + note)[:2000]
+    _recompute_closing_stock(entry)
+    row.meat_adjust_entry_id = entry.id
+    row.meat_adjust_g = applied_g
+    row.meat_adjust_amount = Decimal(str(diff))
+
+
+def close_payload(branch, day: date, exp=None, wages_today=None, overheads_today=None) -> dict:
+    """
+    `exp`/`wages_today`/`overheads_today` can be passed in already computed.
+    save_dayclose() does this with the figures from BEFORE its own meat-sales
+    adjustment ran, so a declaration's response reports what was actually
+    declared against, not a figure the same request's own correction just
+    moved. Every other caller (a plain GET) leaves them out and gets the
+    current, live numbers — if entries were edited since the last
+    declaration, that drift should show.
+    """
+    if exp is None:
+        exp = expected_cash(branch.id, day)
+    if wages_today is None:
+        wages_today = labour_for(branch.id, day)["wages"]
+    if overheads_today is None:
+        overheads_today = overhead_day_share(branch.id, day)
     row = DayClose.query.filter_by(branch_id=branch.id, business_date=day).first()
     declared = float(row.cash_amount) + float(row.upi_amount) if row else 0.0
+    collected_total = declared + wages_today + overheads_today
     return {
         "branch": branch.code, "branchName": branch.name,
         "expectedBreakdown": exp,
@@ -1730,6 +1917,14 @@ def close_payload(branch, day: date) -> dict:
         "close": row.to_dict() if row else None,
         "declared": declared if row else None,
         "difference": round(declared - exp["expected"], 2) if row else None,
+        # cash + UPI + that day's wages + that day's overheads, vs the day's
+        # recorded revenue — the comparison behind the automatic meat-sales
+        # adjustment above.
+        "wagesToday": round(wages_today, 2),
+        "overheadsToday": round(overheads_today, 2),
+        "revenueToday": exp["revenue"],
+        "collectedTotal": round(collected_total, 2) if row else None,
+        "revenueDifference": round(collected_total - exp["revenue"], 2) if row else None,
     }
 
 
@@ -1752,8 +1947,12 @@ def get_dayclose():
 
 
 @bp.post("/dayclose")
-@login_required
+@admin_required
 def save_dayclose():
+    # Only an admin declares or edits a handover now — management is who
+    # physically receives and counts the cash, so they are who enters it.
+    # A supervisor can still see everything via GET /api/dayclose; they just
+    # cannot write to it any more.
     d = request.get_json(silent=True) or {}
     err = require_branch(d.get("branch"))
     if err:
@@ -1768,15 +1967,20 @@ def save_dayclose():
                         "message": "Amounts cannot be negative."}), 422
 
     row = DayClose.query.filter_by(branch_id=branch.id, business_date=day).first()
-    if row and not g.user.is_admin and row.verified_by_id is not None:
-        return jsonify({"error": "locked",
-                        "message": "This handover was already verified by an "
-                                   "admin. Ask them to reopen it."}), 403
+    # the "already verified, only an admin may overwrite" lock is gone: this
+    # whole endpoint is admin-only now, so it never applied to anyone else
 
-    exp = expected_cash(branch.id, day)
     if not row:
         row = DayClose(branch_id=branch.id, business_date=day)
         db.session.add(row)
+    else:
+        # undo whatever the previous declaration for this day credited/removed
+        # from meat sales BEFORE reading the entries below — re-declaring the
+        # same handover (a correction) must start from the untouched figures,
+        # not stack a second adjustment on top of the first
+        _undo_meat_adjustment(row)
+
+    exp = expected_cash(branch.id, day)
     row.cash_amount = cash
     row.upi_amount = upi
     row.expected_amount = Decimal(str(exp["expected"]))
@@ -1791,6 +1995,16 @@ def save_dayclose():
                  + ("balanced" if abs(diff) < 0.5
                     else f"{'over' if diff > 0 else 'short'} ₹{abs(diff):.2f}"),
                  branch_code=branch.code)
+
+    # cash + UPI handed over, plus that day's wages and overheads (paid out of
+    # the same day's takings before the handover), against what the day's
+    # entry says was actually sold. The difference becomes an automatic
+    # adjustment to that day's meat sales — see _apply_meat_adjustment().
+    wages_today = labour_for(branch.id, day)["wages"]
+    overheads_today = overhead_day_share(branch.id, day)
+    revenue_diff = float(cash + upi) + wages_today + overheads_today - exp["revenue"]
+    _apply_meat_adjustment(row, branch.id, day, revenue_diff)
+
     try:
         db.session.commit()
     except IntegrityError:
@@ -1802,7 +2016,12 @@ def save_dayclose():
         row.cash_amount, row.upi_amount = cash, upi
         row.expected_amount = Decimal(str(exp["expected"]))
         db.session.commit()
-    return jsonify(close_payload(branch, day)), 201
+    # Report against the figures this declaration was actually measured
+    # against — not a live recompute, which would already include the meat
+    # adjustment just applied above and make a genuine shortfall/excess look
+    # like it was never there.
+    return jsonify(close_payload(branch, day, exp=exp, wages_today=wages_today,
+                                 overheads_today=overheads_today)), 201
 
 
 @bp.post("/dayclose/<close_id>/verify")
@@ -1859,6 +2078,8 @@ def dayclose_history():
                 "verified": bool(row and row.verified_by_id),
                 "declaredByName": row.declared_by.name if row and row.declared_by else "",
                 "missing": row is None,
+                "meatAdjustG": row.meat_adjust_g if row else 0,
+                "meatAdjustAmount": float(row.meat_adjust_amount) if row else 0.0,
             })
         day -= timedelta(days=1)
     return jsonify({"from": from_day.isoformat(), "to": to_day.isoformat(),
