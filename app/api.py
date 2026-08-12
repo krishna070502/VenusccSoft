@@ -612,6 +612,18 @@ def can_edit(entry: DailyEntry) -> bool:
             and entry.business_date == date.today())
 
 
+def day_is_closed(branch_id: int, day: date) -> bool:
+    """
+    True once an admin has declared the cash handover for this branch+day.
+    Wages and overheads feed straight into that reconciliation (see
+    save_dayclose()/expected_cash()), so once it's declared a supervisor can
+    no longer add or edit either for that day — it would quietly throw the
+    already-reconciled figures out of step with what was actually recorded.
+    An admin can still amend after the fact, same as everywhere else.
+    """
+    return DayClose.query.filter_by(branch_id=branch_id, business_date=day).first() is not None
+
+
 # ==========================================================================
 # session
 # ==========================================================================
@@ -1559,6 +1571,12 @@ def add_ledger():
     if not g.user.is_admin:
         day = date.today()
     branch = branch_by_code(d["branch"])
+    # Once an admin has declared today's handover, its wages are already
+    # baked into that reconciliation — a supervisor can no longer add to or
+    # change them; only an admin can still amend at that point.
+    if not g.user.is_admin and day_is_closed(branch.id, day):
+        return jsonify({"error": "forbidden",
+                        "message": "Today's handover is already declared — ask an admin to make changes."}), 403
 
     if kind == "work":
         # attendance is one row per worker per day; re-marking replaces it
@@ -1669,6 +1687,9 @@ def update_ledger(row_id):
     if not g.user.is_admin and row.entry_date != date.today():
         return jsonify({"error": "forbidden",
                         "message": "Only today's entries can be edited."}), 403
+    if not g.user.is_admin and day_is_closed(row.branch_id, row.entry_date):
+        return jsonify({"error": "forbidden",
+                        "message": "Today's handover is already declared — ask an admin to make changes."}), 403
 
     d = request.get_json(silent=True) or {}
     before = f"{row.kind} · ₹{row.amount}"
@@ -1737,10 +1758,20 @@ def add_overhead():
     # A dated overhead is spent on one day and charged there in full; an
     # undated one is a standing monthly cost spread across the month.
     spend = parse_date(d.get("date"), None, field="date") if d.get("date") else None
+    # A supervisor only ever logs today's dated costs — same floor as
+    # entries and ledger rows. A standing monthly cost has no "date" to pin,
+    # so it is unaffected (and stays admin-only to edit afterwards).
+    if spend and not g.user.is_admin:
+        spend = date.today()
     month = (spend.strftime("%Y-%m") if spend
              else (d.get("month") or date.today().strftime("%Y-%m"))[:7])
 
-    o = Overhead(branch_id=branch_by_code(d["branch"]).id,
+    branch = branch_by_code(d["branch"])
+    if spend and not g.user.is_admin and day_is_closed(branch.id, spend):
+        return jsonify({"error": "forbidden",
+                        "message": "Today's handover is already declared — ask an admin to make changes."}), 403
+
+    o = Overhead(branch_id=branch.id,
                  period_month=month, spend_date=spend,
                  category=d.get("category", "other"),
                  amount=to_dec(d.get("amount"), "amount"),
@@ -1760,11 +1791,32 @@ def add_overhead():
 
 
 @bp.put("/overheads/<ov_id>")
-@admin_required
+@login_required
 def update_overhead(ov_id):
+    """
+    An admin can edit any overhead, any date, any time — the usual "change or
+    undo" ability. A supervisor may only correct one of their own DATED
+    overheads, dated exactly today, and only while it is still pending —
+    once an admin approves or rejects it, or once today's handover is
+    declared, it is out of their reach, same as everywhere else on this
+    screen. A standing monthly cost has no "today" to pin it to, so it stays
+    admin-only to touch, as before.
+    """
     o = db.session.get(Overhead, ov_id)
     if not o:
         return jsonify({"error": "not_found"}), 404
+    err = require_branch(o.branch.code)
+    if err:
+        return err
+    if not g.user.is_admin:
+        if (o.created_by_id != g.user.id or o.status != "pending"
+                or o.spend_date != date.today()):
+            return jsonify({"error": "forbidden",
+                            "message": "Only your own pending overhead for today can be edited."}), 403
+        if day_is_closed(o.branch_id, o.spend_date):
+            return jsonify({"error": "forbidden",
+                            "message": "Today's handover is already declared — ask an admin to make changes."}), 403
+
     d = request.get_json(silent=True) or {}
     if "amount" in d:
         o.amount = to_dec(d.get("amount"), "amount")
@@ -1772,11 +1824,13 @@ def update_overhead(ov_id):
         o.category = d.get("category") or "other"
     if "note" in d:
         o.note = (d.get("note") or "")[:2000]
-    if "date" in d:
+    # Moving the date, or off a date entirely, reshapes what this overhead
+    # even is (a one-day cost vs. a standing monthly one) — admin only.
+    if g.user.is_admin and "date" in d:
         o.spend_date = parse_date(d.get("date"), None, field="date") if d.get("date") else None
         if o.spend_date:
             o.period_month = o.spend_date.strftime("%Y-%m")
-    if "month" in d and not o.spend_date:
+    if g.user.is_admin and "month" in d and not o.spend_date:
         o.period_month = (d.get("month") or o.period_month)[:7]
     log_activity("Edited overhead", f"{o.category} · ₹{o.amount}", branch_code=o.branch.code)
     db.session.commit()
@@ -1808,12 +1862,24 @@ def list_overheads():
     rows = (Overhead.query.filter(Overhead.branch_id.in_(bids),
                                   Overhead.period_month.in_(months))
             .order_by(Overhead.period_month.desc()).all()) if bids else []
+
+    # The by-day/by-branch totals below are computed from every APPROVED row
+    # regardless of role — that is a branch-level figure, not a browsable
+    # history, so it stays accurate for a supervisor too. The itemized list
+    # they actually see is narrower: their own, and — like the rest of the
+    # Workers/Overheads screens — only today's dated ones, never a past
+    # day's; a standing monthly cost has no date to be "past", so it stays
+    # visible either way.
+    approved_rows = rows
+    if not g.user.is_admin:
+        rows = [o for o in rows if o.created_by_id == g.user.id
+                and (o.spend_date is None or o.spend_date == date.today())]
     if request.args.get("status"):
         rows = [o for o in rows if o.status == request.args["status"]]
 
     by_day, by_branch, total = {}, {}, 0.0
     span = (to_day - from_day).days + 1
-    for o in rows:
+    for o in approved_rows:
         if o.status != "approved":
             continue
         code = o.branch.code
@@ -1883,9 +1949,13 @@ def delete_overhead(ov_id):
     o = db.session.get(Overhead, ov_id)
     if not o:
         return jsonify({"error": "not_found"}), 404
-    if not g.user.is_admin and (o.status == "approved" or o.created_by_id != g.user.id):
-        return jsonify({"error": "forbidden",
-                        "message": "Approved overheads can only be removed by an admin."}), 403
+    if not g.user.is_admin:
+        if o.status == "approved" or o.created_by_id != g.user.id:
+            return jsonify({"error": "forbidden",
+                            "message": "Approved overheads can only be removed by an admin."}), 403
+        if o.spend_date is not None and o.spend_date != date.today():
+            return jsonify({"error": "forbidden",
+                            "message": "Only today's dated overhead can be removed."}), 403
     log_activity("Deleted overhead", f"{o.category} · {o.period_month} · ₹{o.amount}",
                  branch_code=o.branch.code)
     db.session.delete(o)

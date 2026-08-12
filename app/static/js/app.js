@@ -1877,6 +1877,11 @@ function renderOverheads(){
 
   $('ovhBody').innerHTML=list.length?list.map(function(o){
     var canDel=isAdmin()||(o.status!=='approved'&&o.createdBy===S.user.id);
+    // A supervisor may only correct their own, still-pending, TODAY-dated
+    // overhead — same floor as everything else on this screen. An admin can
+    // always amend. A standing monthly cost has no "today" to pin to, so a
+    // supervisor never gets an edit button for one.
+    var canEdit=isAdmin()||(o.status==='pending'&&o.createdBy===S.user.id&&o.date===todayISO());
     return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap font-semibold">'+(o.date
         ? esc(o.date)+'<span class="block text-[10px] font-bold uppercase text-rose-600">that day</span>'
         : esc(o.month)+'<span class="block text-[10px] font-bold uppercase text-slate-400">spread</span>')+'</td>'+
@@ -1889,6 +1894,7 @@ function renderOverheads(){
       '<td class="px-4 py-2.5 text-right whitespace-nowrap">'+
         (isAdmin()&&o.status!=='approved'?'<button data-ovh="ok" data-id="'+o.id+'" title="Approve" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-circle-check"></i></button>':'')+
         (isAdmin()&&o.status==='pending'?'<button data-ovh="no" data-id="'+o.id+'" title="Return" class="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-100"><i class="fa-solid fa-circle-xmark"></i></button>':'')+
+        (canEdit?'<button data-ovh="edit" data-id="'+o.id+'" title="Edit amount/note" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>':'')+
         (canDel?'<button data-ovh="del" data-id="'+o.id+'" title="Delete" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>':'')+
       '</td></tr>';
   }).join(''):'<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400"><i class="fa-solid fa-file-invoice text-3xl mb-2 block"></i>No overheads recorded for '+m+'.</td></tr>';
@@ -3421,7 +3427,7 @@ function overheadModal() {
     '</select></div>' +
     '<div class="grid grid-cols-2 gap-3">' +
     '<div id="ovMonthWrap"><label class="lbl" for="ovMonth">Month</label><input type="month" id="ovMonth" class="inp" value="' + ($('ovhMonth').value || todayISO().slice(0, 7)) + '" /></div>' +
-    '<div id="ovDateWrap" class="hidden"><label class="lbl" for="ovDate">Date spent</label><input type="date" id="ovDate" class="inp" value="' + todayISO() + '" /></div>' +
+    '<div id="ovDateWrap" class="hidden"><label class="lbl" for="ovDate" title="Supervisors can only charge a cost to today">Date spent</label><input type="date" id="ovDate" class="inp" value="' + todayISO() + '"' + (isAdmin() ? '' : ' disabled') + ' /></div>' +
     '<div><label class="lbl" for="ovAmt">Amount (₹)</label><input type="number" min="0" step="1" id="ovAmt" class="inp num" /></div>' +
     '</div>' +
     '<div><label class="lbl" for="ovCat">Category</label><select id="ovCat" class="inp">' +
@@ -3878,6 +3884,21 @@ function wire() {
         var rr = tv('ovhReason'); if (!rr) { toast('Give a reason.', 'error'); return; }
         closeModal('genModal'); decideOverhead(id, 'rejected', rr);
       });
+    } else if (act === 'edit') {
+      var o = S.overheads.filter(function (x) { return x.id === id; })[0]; if (!o) return;
+      var val = prompt('Amount for ' + ovhCatName(o.category) + ' (' + (o.date || o.month) + '):', o.amount);
+      if (val === null) return;
+      var amt = parseFloat(val);
+      if (!(amt > 0)) { toast('Enter a valid amount.', 'error'); return; }
+      var key = 'ovhedit:' + id;
+      if (!once(key)) return;
+      api('PUT', '/overheads/' + id, { amount: amt })
+        .then(function (rec) {
+          var i = S.overheads.findIndex(function (x) { return x.id === rec.id; });
+          if (i >= 0) S.overheads[i] = rec;
+          renderOverheads(); renderDashboard(); toast('Overhead updated.');
+        })
+        .catch(apiFail).then(function () { done(key); });
     } else if (act === 'del' && confirm('Delete this overhead entry?')) {
       api('DELETE', '/overheads/' + id).then(function () {
         S.overheads = S.overheads.filter(function (x) { return x.id !== id; });

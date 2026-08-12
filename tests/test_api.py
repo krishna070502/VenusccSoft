@@ -2279,6 +2279,82 @@ def test_v12_supervisor_today_only():
 
 
 # ===========================================================================
+# 20c. Overhead edit-until-approved, and the day-close lock on workers/overheads
+# ===========================================================================
+def test_v13_dayclose_lock_and_overhead_edit():
+    print("\n[24] Overhead edit-until-approved & the day-close lock")
+
+    # ---- a supervisor can now edit their own pending, today-dated overhead
+    ov = SUP.post("/api/overheads", json={"branch": "B01", "date": D(9),
+                                          "category": "repair", "amount": 500}).get_json()
+    case("Overhead edit", "A supervisor's dated overhead is pinned to today, not D(9)",
+         "date", D(0), lambda: ov["date"])
+    up = SUP.put(f"/api/overheads/{ov['id']}", json={"amount": 650})
+    case("Overhead edit", "...and they can correct it while it's still pending",
+         "650", 650.0, lambda: up.get_json()["amount"])
+
+    other_sup = SUP2.put(f"/api/overheads/{ov['id']}", json={"amount": 1})
+    case("Overhead edit", "Another supervisor cannot touch someone else's overhead",
+         "PUT as priya", 403, lambda: other_sup.status_code)
+
+    ADMIN.post(f"/api/overheads/{ov['id']}/decision", json={"verdict": "approved"})
+    locked = SUP.put(f"/api/overheads/{ov['id']}", json={"amount": 700})
+    case("Overhead edit", "Once approved, the supervisor can no longer edit it",
+         "PUT after approval", 403, lambda: locked.status_code)
+    case("Overhead edit", "An admin can still amend it after approval",
+         "PUT as admin", 700.0,
+         lambda: ADMIN.put(f"/api/overheads/{ov['id']}", json={"amount": 700}).get_json()["amount"])
+
+    stale = SUP.post("/api/overheads", json={"branch": "B01", "date": D(9),
+                                              "category": "other", "amount": 40}).get_json()
+    with app.app_context():
+        row = db.session.get(Overhead, stale["id"])
+        row.spend_date = date.fromisoformat(D(9))
+        db.session.commit()
+    case("Overhead edit", "A stale past-dated pending overhead is also out of reach",
+         "PUT as ravi", 403,
+         lambda: SUP.put(f"/api/overheads/{stale['id']}", json={"amount": 41}).status_code)
+    case("Overhead edit", "...and cannot be deleted either",
+         "DELETE as ravi", 403, lambda: SUP.delete(f"/api/overheads/{stale['id']}").status_code)
+
+    # ---- a supervisor's list only ever shows their own + today/undated ----
+    ADMIN.post("/api/overheads", json={"branch": "B01", "month": TODAY.strftime("%Y-%m"),
+                                       "category": "rent", "amount": 999})
+    listed = SUP.get(f"/api/overheads?from={D(30)}&to={D(0)}").get_json()["rows"]
+    case("Overhead visibility", "A supervisor never sees another user's overhead",
+         "admin's rent row hidden", True,
+         lambda: all(r["createdByName"] == "Ravi Kumar" for r in listed))
+    case("Overhead visibility", "...nor their own stale past-dated one",
+         "stale D(9) row hidden", True,
+         lambda: all(r["id"] != stale["id"] for r in listed))
+
+    # ---- once an admin declares the handover, that day locks for a supervisor
+    day_close_branch = "B01"
+    ADMIN.post("/api/dayclose", json={"branch": day_close_branch, "date": D(0),
+                                      "cash": 0, "upi": 0})
+    wid = WORKER_ID["w"]
+    ledger_blocked = SUP.post("/api/ledger", json={"branch": "B01", "workerId": wid,
+                                                    "date": D(0), "type": "tea", "amount": 10})
+    case("Day-close lock", "A supervisor cannot add a ledger row once today is declared",
+         "POST /api/ledger", 403, lambda: ledger_blocked.status_code)
+    ov_blocked = SUP.post("/api/overheads", json={"branch": "B01", "date": D(0),
+                                                   "category": "other", "amount": 15})
+    case("Day-close lock", "...nor a dated overhead for that same day",
+         "POST /api/overheads", 403, lambda: ov_blocked.status_code)
+    case("Day-close lock", "An admin is unaffected and can still add a ledger row",
+         "POST as admin", 201,
+         lambda: ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": wid,
+                                                  "date": D(0), "type": "tea",
+                                                  "amount": 10}).status_code)
+
+    # a different, still-open branch is unaffected
+    still_open = SUP2.post("/api/overheads", json={"branch": "B02", "date": D(0),
+                                                    "category": "other", "amount": 20})
+    case("Day-close lock", "A branch with no declared handover today is unaffected",
+         "POST as priya on B02", 201, lambda: still_open.status_code)
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2437,6 +2513,7 @@ if __name__ == "__main__":
     test_v10_reconciliation()
     test_v11_admin_edits()
     test_v12_supervisor_today_only()
+    test_v13_dayclose_lock_and_overhead_edit()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
