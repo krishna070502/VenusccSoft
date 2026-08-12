@@ -310,7 +310,10 @@ class Customer(db.Model):
     address = Column(Text)
 
     # How this customer's price is worked out:
-    #   'less'  — today's market rate MINUS a fixed concession (the usual deal)
+    #   'less'  — today's market rate, adjusted by less_* (the usual deal).
+    #             Positive is a concession (they pay below market); negative
+    #             flips it into a premium (they pay above market) — same
+    #             field, either direction, still tied to today's rate.
     #   'fixed' — a flat contract rate, whatever the market does
     price_mode = Column(String(8), nullable=False, default="less")
     less_skin = Column(Numeric(12, 2), nullable=False, default=0)

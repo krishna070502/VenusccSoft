@@ -51,9 +51,12 @@ def price_hotel_line(line: dict, entry: dict) -> dict:
     The market rate is whatever the shop is charging at the counter that day
     (Section C of the entry). The hotel's own rate is that market rate less the
     agreed concession — so if skin is ₹250 today and this hotel is on ₹50 less,
-    they are billed ₹200. A fixed-rate customer ignores the market, and a
-    one-off override beats both. The gap between the two is the concession, and
-    it is reported rather than hidden.
+    they are billed ₹200. That concession can also be negative, which flips it
+    into a premium: -20 bills ₹270, above the counter. A fixed-rate customer
+    ignores the market entirely, and a one-off override beats both. The gap
+    between the market rate and what they actually pay is reported signed —
+    positive is a concession given away, negative is a premium earned — rather
+    than clamped to hide which way it went.
     """
     product = line.get("product") if line.get("product") in PRODUCTS else "skin"
     market = _d(entry.get(MARKET_KEY[product]))
@@ -71,7 +74,7 @@ def price_hotel_line(line: dict, entry: dict) -> dict:
     grams = int(line.get("weightG") or 0)
     kg = _d(grams) / Decimal(1000)
     amount = kg * rate
-    concession = kg * (market - rate) if market > rate else D0
+    concession = kg * (market - rate)
 
     return {"product": product, "grams": grams, "market": market, "rate": rate,
             "amount": amount, "concession": concession,

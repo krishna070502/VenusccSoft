@@ -1285,9 +1285,16 @@ def _customer_fields(c: Customer, d: dict) -> None:
         c.kind = d["kind"]
     if d.get("mode") in ("less", "fixed"):
         c.price_mode = d["mode"]
+    # less_* can go negative on purpose — that flips a concession into a
+    # premium above market (see price_hotel_line() in calc.py), so a
+    # supervisor or admin can charge a customer more than the counter as
+    # easily as less. rate_* is a flat contract figure with no market to be
+    # relative to, so it still has to be a real, non-negative price.
     for key, col in (("lessSkin", "less_skin"), ("lessSkinless", "less_skinless"),
-                     ("lessLiver", "less_liver"), ("lessLive", "less_live"),
-                     ("rateSkin", "rate_skin"), ("rateSkinless", "rate_skinless"),
+                     ("lessLiver", "less_liver"), ("lessLive", "less_live")):
+        if key in d:
+            setattr(c, col, to_dec(d.get(key), key))
+    for key, col in (("rateSkin", "rate_skin"), ("rateSkinless", "rate_skinless"),
                      ("rateLiver", "rate_liver"), ("rateLive", "rate_live")):
         if key in d:
             value = to_dec(d.get(key), key)
@@ -1304,12 +1311,21 @@ def _customer_fields(c: Customer, d: dict) -> None:
         c.is_active = bool(d.get("active"))
 
 
+def _adj_txt(v) -> str:
+    # A negative less_* is a premium, not a concession — say so rather than
+    # printing a confusing "less ₹-20". v can still be None here: this runs
+    # before the row is flushed, so a column left out of the payload hasn't
+    # picked up its database default yet (see create_customer()).
+    v = float(v or 0)
+    return f"less ₹{v}" if v >= 0 else f"plus ₹{-v}"
+
+
 def _price_summary(c: Customer) -> str:
     if c.price_mode == "fixed":
         return (f"fixed ₹{c.rate_skin} skin / ₹{c.rate_skinless} skinless "
                 f"/ ₹{c.rate_liver} liver / ₹{c.rate_live} live")
-    return (f"market less ₹{c.less_skin} skin / ₹{c.less_skinless} skinless "
-            f"/ ₹{c.less_liver} liver / ₹{c.less_live} live")
+    return (f"market {_adj_txt(c.less_skin)} skin / {_adj_txt(c.less_skinless)} skinless "
+            f"/ {_adj_txt(c.less_liver)} liver / {_adj_txt(c.less_live)} live")
 
 
 @bp.get("/customers")

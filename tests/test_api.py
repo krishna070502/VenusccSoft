@@ -1309,6 +1309,24 @@ def test_hotels():
          "product='wings'", "skin",
          lambda: price_hotel_line({"product": "wings", "weightG": 1_000}, market)["product"])
 
+    # ---- a negative "less" flips into a premium: charging above market ----
+    case("Hotel pricing", "A negative concession bills above market",
+         "market 250, less -20", 270.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 10_000, "mode": "less", "less": -20}, market)["rate"]))
+    case("Hotel pricing", "10 kg at 270 is ₹2,700",
+         "10 kg skin at a premium", 2700.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 10_000, "mode": "less", "less": -20}, market)["amount"]))
+    case("Hotel pricing", "Charging above market records a negative concession",
+         "-20/kg over 10 kg", -200.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 10_000, "mode": "less", "less": -20}, market)["concession"]))
+    case("Hotel pricing", "A fixed rate above market also shows a negative concession",
+         "fixed 300 vs market 250, 4 kg", -200.0,
+         lambda: float(price_hotel_line(
+             {"product": "skin", "weightG": 4_000, "mode": "fixed", "fixed": 300}, market)["concession"]))
+
     # ---- creating customers ----------------------------------------------
     r = SUP.post("/api/customers", json={
         "branch": "B01", "name": "Grand Palace", "kind": "hotel", "mode": "less",
@@ -1346,10 +1364,17 @@ def test_hotels():
          "ravi -> B02", 403,
          lambda: SUP.post("/api/customers",
                           json={"branch": "B02", "name": "Not Mine"}).status_code)
-    case("Hotels", "A negative concession is rejected",
-         "lessSkin=-10", 422,
+    prem = SUP.post("/api/customers",
+                    json={"branch": "B01", "name": "Premium Diner", "lessSkin": -10})
+    case("Hotels", "A negative concession is accepted — it's a premium above market",
+         "lessSkin=-10", 201, lambda: prem.status_code)
+    case("Hotels", "...and stored exactly as sent, not clamped to zero",
+         "lessSkin=-10", -10.0, lambda: prem.get_json().get("lessSkin"))
+    case("Hotels", "A negative FIXED rate is still rejected — no market to be relative to",
+         "rateSkin=-10", 422,
          lambda: SUP.post("/api/customers",
-                          json={"branch": "B01", "name": "Neg", "lessSkin": -10}).status_code)
+                          json={"branch": "B01", "name": "BadFixed", "mode": "fixed",
+                                "rateSkin": -10}).status_code)
     case("Hotels", "A non-numeric concession is a 422, not a crash",
          "lessSkin='abc'", 422,
          lambda: SUP.post("/api/customers",
@@ -1399,6 +1424,23 @@ def test_hotels():
     case("Hotel sales", "The market rate of the day is snapshotted",
          "skin line", 200.0,
          lambda: HOTEL["entry"]["hotelSales"][0]["marketRate"])
+
+    # ---- a customer on a premium (negative lessSkin) bills above market ---
+    premium_cust = ADMIN.post("/api/customers", json={
+        "branch": "B01", "name": "Wedding Caterer", "mode": "less", "lessSkin": -20}).get_json()
+    prem_day = D(46)  # D(40)-D(44) are already spoken for above/below
+    prem_payload = base_entry(businessDate=prem_day, skinSoldG=0, skinlessSoldG=0,
+                              liverSoldG=0, closeMeatG=50_000, submit=True,
+                              hotelSales=[{"customerId": premium_cust["id"], "product": "skin",
+                                          "weightG": 10_000, "settled": True}])
+    prem_entry = ADMIN.post("/api/entries", json=prem_payload).get_json()
+    prem_calc = prem_entry.get("calc", {})
+    # base_entry's rateSkin is 200, so -20 bills 220/kg over 10 kg = 2200
+    case("Hotel sales", "A premium customer is billed above the counter rate",
+         "200 + 20 over 10 kg", 2200.0,
+         lambda: prem_entry["hotelSales"][0]["amount"])
+    case("Hotel sales", "The extra earned shows as a negative concession",
+         "-20 x 10 kg", -200.0, lambda: prem_calc.get("hotelConcession"))
 
     case("Hotel sales", "A line for another branch's customer is refused",
          "B01 entry, B02 customer", 422,

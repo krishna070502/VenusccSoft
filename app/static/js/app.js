@@ -174,8 +174,11 @@ function priceHotelLine(line,e){
   else rate=market-num(line.less);
   if(rate<0) rate=0;
   var kg=num(line.weightG)/1000;
+  /* signed on purpose: positive is a concession given away, negative is a
+     premium earned (the customer's less/adjustment figure went negative —
+     see applyDeal()/customerModal()) — mirrors price_hotel_line() in calc.py */
   return { product:def.v, grams:num(line.weightG), market:market, rate:rate,
-           amount:kg*rate, concession:market>rate?kg*(market-rate):0,
+           amount:kg*rate, concession:kg*(market-rate),
            birds:def.v==='live'?num(line.birds):0,
            settled:!!line.settled };
 }
@@ -499,14 +502,16 @@ function applyDeal(line){
 function hotelRowSummary(l,e){
   var p=priceHotelLine(l,e);
   var c=customerById(l.customerId);
+  var lessVal=num(l.less);
   var dealTxt = !c ? 'choose a customer'
     : c.mode==='fixed' ? 'fixed '+money(p.rate)+'/kg'
-    : 'market '+money(p.market)+' less '+money(num(l.less))+' = '+money(p.rate)+'/kg';
+    : 'market '+money(p.market)+(lessVal>=0?' less '+money(lessVal):' plus '+money(-lessVal))+' = '+money(p.rate)+'/kg';
   return '<span class="text-slate-500">'+esc(dealTxt)+'</span>'+
     (p.product==='live'
       ? '<span class="text-amber-800 font-semibold">'+num(p.birds)+' bird(s) off the shed</span>'
       : '')+
-    (p.concession>0?'<span class="text-amber-700 font-semibold">concession '+money(p.concession)+'</span>':'')+
+    (p.concession>0?'<span class="text-amber-700 font-semibold">concession '+money(p.concession)+'</span>'
+      :p.concession<0?'<span class="text-emerald-700 font-semibold">premium '+money(-p.concession)+'</span>':'')+
     '<span class="ml-auto font-bold text-indigo-900">'+money(p.amount)+'</span>'+
     '<span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full '+
       (l.settled?'bg-emerald-100 text-emerald-800':'bg-rose-100 text-rose-700')+'">'+
@@ -1129,26 +1134,35 @@ function renderHotelPanel(a){
       '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded '+kindDef(r.kind).cls+'">'+esc(kindDef(r.kind).t)+'</span></td>'+
       '<td class="px-4 py-2.5 text-right num">'+fmtW(r.g)+'</td>'+
       '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">'+money0(r.amount)+'</td>'+
-      '<td class="px-4 py-2.5 text-right num '+(r.concession?'text-amber-700':'text-slate-400')+'">'+(r.concession?'−'+money0(r.concession):'—')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num '+(r.concession>0?'text-amber-700':r.concession<0?'text-emerald-700':'text-slate-400')+'">'+
+        (r.concession>0?'−'+money0(r.concession):r.concession<0?'+'+money0(-r.concession):'—')+'</td>'+
       '<td class="px-4 py-2.5 text-right num font-bold '+(r.balance>0?'text-rose-600':'text-emerald-700')+'">'+money0(r.balance)+'</td></tr>';
   }).join(''):'<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">Nothing sold to a hotel or hostel between '+dashRange().from+' and '+dashRange().to+'.</td></tr>';
 
   $('dhFoot').innerHTML=rows.length?'<tr><td class="px-4 py-2.5" colspan="2">Totals</td>'+
     '<td class="px-4 py-2.5 text-right num">'+fmtW(t.g)+'</td>'+
     '<td class="px-4 py-2.5 text-right num">'+money0(t.amount)+'</td>'+
-    '<td class="px-4 py-2.5 text-right num">−'+money0(t.concession)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+(t.concession>=0?'−'+money0(t.concession):'+'+money0(-t.concession))+'</td>'+
     '<td class="px-4 py-2.5 text-right num">'+money0(t.balance)+'</td></tr>':'';
 
   $('dhCounter').textContent=money0(a.counterAmt);
   $('dhHotel').textContent=money0(a.hotelAmt);
   $('dhCash').textContent=money0(a.hotelCash);
   $('dhCredit').textContent=money0(a.hotelCredit);
-  $('dhConc').textContent=money0(a.hotelConcession);
+  $('dhConc').textContent=money0(Math.abs(a.hotelConcession));
+  if($('dhConcLabel')){
+    $('dhConcLabel').textContent=a.hotelConcession>=0?'Concession given':'Premium earned';
+    $('dhConc').className='font-bold num '+(a.hotelConcession>=0?'text-amber-700':'text-emerald-700');
+  }
+  var counterEquiv=a.hotelAmt+a.hotelConcession;
+  var concPhrase = a.hotelConcession>=0
+    ? money0(a.hotelConcession)+' was given away as concession to hold this business.'
+    : money0(-a.hotelConcession)+' was earned above the counter rate as a premium on these accounts.';
   $('dhExplain').textContent=a.hotelAmt>0
     ? 'These sales are already inside the '+money0(a.revenue)+' revenue above. Had the same '
-      +fmtW(a.hotelG)+' gone over the counter it would have fetched '+money0(a.hotelAmt+a.hotelConcession)
-      +', so '+money0(a.hotelConcession)+' was given away as concession to hold this business.'
-    : 'Concession is the gap between the counter rate and what these customers actually pay. Nothing sold to them in this period.';
+      +fmtW(a.hotelG)+' gone over the counter it would have fetched '+money0(counterEquiv)
+      +', so '+concPhrase
+    : 'Concession (or premium) is the gap between the counter rate and what these customers actually pay. Nothing sold to them in this period.';
 }
 
 function renderDashboard(){
@@ -1503,11 +1517,13 @@ function openReview(id){
           (l.settled?'bg-emerald-100 text-emerald-800':'bg-rose-100 text-rose-700')+'">'+
           (l.settled?'paid':'on account')+'</span>',
           fmtW(p.grams)+' @ '+money(p.rate)+' = '+money(p.amount)+
-          (p.concession>0?' <span class="text-amber-700">(−'+money(p.concession)+')</span>':''));
+          (p.concession>0?' <span class="text-amber-700">(−'+money(p.concession)+')</span>'
+            :p.concession<0?' <span class="text-emerald-700">(+'+money(-p.concession)+')</span>':''));
       }).join('')+
       row('Total billed',money(c.hotelAmt),'text-indigo-700')+
       row('Of which on account',money(c.hotelCredit),c.hotelCredit>0?'text-rose-600':'')+
-      row('Concession given',money(c.hotelConcession),'text-amber-700')
+      row(c.hotelConcession>=0?'Concession given':'Premium earned',
+          money(Math.abs(c.hotelConcession)),c.hotelConcession>=0?'text-amber-700':'text-emerald-700')
     : '<p class="text-xs text-slate-400 italic">Nothing sold to a hotel or hostel on this day.</p>';
 
   $('reviewBody').innerHTML=alertHtml(warnings(e,c),false)+
@@ -2715,8 +2731,9 @@ function dealText(c, product) {
                  : '<span class="text-slate-300">—</span>';
   }
   var l = num(c[def.less]);
-  return l > 0 ? '<span class="font-semibold num text-amber-700">−' + money(l) + '</span><span class="text-[10px] text-slate-400 block">off market</span>'
-               : '<span class="num">market</span><span class="text-[10px] text-slate-400 block">no concession</span>';
+  if (l > 0) return '<span class="font-semibold num text-amber-700">−' + money(l) + '</span><span class="text-[10px] text-slate-400 block">off market</span>';
+  if (l < 0) return '<span class="font-semibold num text-emerald-700">+' + money(-l) + '</span><span class="text-[10px] text-slate-400 block">above market</span>';
+  return '<span class="num">market</span><span class="text-[10px] text-slate-400 block">no concession</span>';
 }
 
 function renderCustomers() {
@@ -2748,7 +2765,11 @@ function renderCustomers() {
   $('ckBilled').textContent = money0(t.billed);
   $('ckReceived').textContent = money0(t.received);
   $('ckOutstanding').textContent = money0(t.balance);
-  $('ckConcession').textContent = money0(t.concession);
+  $('ckConcession').textContent = money0(Math.abs(t.concession));
+  if ($('ckConcessionLabel')) {
+    $('ckConcessionLabel').textContent = t.concession >= 0 ? 'Concession given' : 'Premium earned';
+    $('ckConcession').className = 'mt-2 text-2xl font-bold num ' + (t.concession >= 0 ? 'text-amber-600' : 'text-emerald-600');
+  }
   $('custNote').textContent = list.length + ' shown' +
     (t.pending > 0 ? ' · ' + money0(t.pending) + ' still awaiting approval, not counted in any balance' : '');
 
@@ -2797,8 +2818,10 @@ function customerModal(c) {
   var isNew = !c.id;
   var mode = c.mode || 'less';
   var row = function (label, lessId, fixedId, lessVal, fixedVal) {
+    /* the "less" box has no min — a negative value is how you charge this
+       customer ABOVE market instead of below it (see the hint text) */
     return '<tr><td class="py-2 pr-3 font-semibold text-sm">' + label + '</td>' +
-      '<td class="py-2 pr-2"><input type="number" min="0" step="0.5" id="' + lessId + '" class="inp num" value="' + (lessVal || '') + '" placeholder="0.00" /></td>' +
+      '<td class="py-2 pr-2"><input type="number" step="0.5" id="' + lessId + '" class="inp num" value="' + (lessVal || '') + '" placeholder="0.00" title="Positive charges less than today\'s market rate, negative charges more" /></td>' +
       '<td class="py-2"><input type="number" min="0" step="0.5" id="' + fixedId + '" class="inp num" value="' + (fixedVal || '') + '" placeholder="0.00" /></td></tr>';
   };
   openGen(isNew ? 'Add a hotel or hostel' : 'Edit ' + c.name,
@@ -2814,14 +2837,14 @@ function customerModal(c) {
       '<div><label class="lbl" for="cuPhone">Phone</label><input id="cuPhone" class="inp" value="' + esc(c.phone || '') + '" placeholder="Optional" /></div>' +
     '</div>' +
     '<div><label class="lbl" for="cuMode">How is their price set?</label><select id="cuMode" class="inp">' +
-      '<option value="less"' + (mode === 'less' ? ' selected' : '') + '>Market rate minus a concession (usual)</option>' +
+      '<option value="less"' + (mode === 'less' ? ' selected' : '') + '>Adjusted from today\'s market rate (usual)</option>' +
       '<option value="fixed"' + (mode === 'fixed' ? ' selected' : '') + '>A flat contract rate</option>' +
     '</select></div>' +
     '<div class="rounded-lg border border-slate-200 overflow-hidden">' +
       '<div class="bg-slate-100 px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-600">Agreed price (₹ per kg)</div>' +
       '<div class="p-3"><table class="w-full"><thead><tr class="text-left">' +
         '<th class="pb-1"></th>' +
-        '<th class="pb-1 text-[11px] font-bold uppercase text-amber-700" id="thLess">Less than market</th>' +
+        '<th class="pb-1 text-[11px] font-bold uppercase text-amber-700" id="thLess">+/− vs market</th>' +
         '<th class="pb-1 text-[11px] font-bold uppercase text-slate-500" id="thFixed">Fixed rate</th>' +
       '</tr></thead><tbody>' +
         row('Skin', 'cuLessSkin', 'cuRateSkin', c.lessSkin, c.rateSkin) +
@@ -2846,10 +2869,10 @@ function customerModal(c) {
     $('thFixed').className = 'pb-1 text-[11px] font-bold uppercase ' + (m === 'fixed' ? 'text-emerald-700' : 'text-slate-300');
     if (m === 'fixed') {
       h.className = 'mt-2 text-xs rounded-lg px-3 py-2 font-semibold border bg-emerald-50 text-emerald-800 border-emerald-200';
-      h.textContent = 'They pay this rate whatever the counter price does. The difference against the counter rate is still recorded as concession.';
+      h.textContent = 'They pay this rate whatever the counter price does. The difference against the counter rate is still recorded as concession (or premium, if it runs the other way).';
     } else {
       h.className = 'mt-2 text-xs rounded-lg px-3 py-2 font-semibold border bg-amber-50 text-amber-800 border-amber-200';
-      h.textContent = 'Example: if skin is ₹250 at the counter today and you enter 50 here, this customer is billed ₹200 per kg, and ₹50 a kg shows as concession given. Live birds work the same way against the live rate.';
+      h.textContent = 'A positive number is a discount below today\'s market rate; a negative number charges more than market. Example: if skin is ₹250 at the counter today, entering 50 bills them ₹200/kg (₹50 concession given), and entering -50 bills them ₹300/kg (₹50 premium earned). Live birds work the same way against the live rate, updating automatically with each day\'s entry.';
     }
   };
   $('cuMode').addEventListener('change', upd); upd();
@@ -2939,7 +2962,9 @@ function openCustomerLedger(cid) {
         '<td class="px-3 py-2">' + esc(productDef(r.product).t) + '</td>' +
         '<td class="px-3 py-2 text-right num">' + fmtW(r.weightG) + '</td>' +
         '<td class="px-3 py-2 text-right num text-xs text-slate-500">' + money(r.marketRate) + '</td>' +
-        '<td class="px-3 py-2 text-right num">' + money(r.rate) + (r.concession > 0 ? '<span class="block text-[10px] text-amber-700">−' + money(r.concession) + '</span>' : '') + '</td>' +
+        '<td class="px-3 py-2 text-right num">' + money(r.rate) +
+          (r.concession > 0 ? '<span class="block text-[10px] text-amber-700">−' + money(r.concession) + '</span>'
+            : r.concession < 0 ? '<span class="block text-[10px] text-emerald-700">+' + money(-r.concession) + '</span>' : '') + '</td>' +
         '<td class="px-3 py-2 text-right num font-semibold">' + money0(r.amount) + ' ' + chip + '</td>' +
         '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="px-3 py-10 text-center text-slate-400">Nothing on this ledger yet.</td></tr>';
