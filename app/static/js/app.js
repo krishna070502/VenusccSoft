@@ -750,6 +750,19 @@ function loadEntry(id){
     ? 'Supervisors can only work today’s entry'
     : '';
 
+  /* Opening birds/weight/meat are carried forward from the previous approved
+     day by the server (see _carry_forward_opening() in api.py) — a supervisor
+     can see the figure but never key over it, same reasoning as the date
+     above. The value itself still shows, just not editable, so keep it
+     readonly rather than disabled (disabled inputs are skipped by some
+     browsers' form-read logic and grey out harder than needed here). */
+  ['f_openBirds','f_openWt_kg','f_openWt_g','f_openMeat_kg','f_openMeat_g'].forEach(function(id){
+    var el=$(id); if(!el) return;
+    el.readOnly = !isAdmin();
+    el.title = isAdmin() ? '' : 'Carried forward automatically — only an admin can change opening figures';
+    el.classList.toggle('bg-slate-50', !isAdmin());
+  });
+
   $('entryLockNotice').classList.toggle('hidden',!locked);
   if(locked) $('entryLockNotice').innerHTML='<i class="fa-solid fa-lock mr-1"></i>'+(st==='approved'?'Approved records can only be modified by an admin.':'Submitted — only an admin can modify it now.');
   if(!locked && e && isAdmin()){

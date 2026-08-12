@@ -391,6 +391,19 @@ ENTRY_IDS = {}
 
 def test_entries():
     print("\n[6] Daily entry & approval workflow")
+    # Opening birds/weight/meat are carried forward server-side now (a
+    # supervisor can no longer type them in — see _carry_forward_opening() in
+    # api.py), so "main" below no longer gets base_entry()'s openBirds=80/
+    # openWtG=200_000/openMeatG=5_000 just by sending them. Seed yesterday's
+    # approved entry with exactly those as its closing figures so today's
+    # carry-forward reproduces the same starting point the rest of this test
+    # (weighted-average pricing included) was written to expect.
+    seed = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(1), submit=True,
+        closeAuto={"birds": False, "wt": False, "meat": False},
+        closeBirds=80, closeWtG=200_000, closeMeatG=5_000)).get_json()
+    ADMIN.post(f"/api/entries/{seed['id']}/decision", json={"verdict": "approved"})
+
     # A supervisor is now pinned to today's date no matter what businessDate
     # they send, so the "main" workflow entry has to live at D(0) — the only
     # date a supervisor can ever create/edit/view.
@@ -2134,6 +2147,7 @@ def test_v11_admin_edits():
     day = D(511)
     entry = SUP.post("/api/entries",
                      json=base_entry(businessDate=day, category="parents")).get_json()
+    ENTRY_IDS["v11_parents"] = entry["id"]  # reused by test_v14's opening-figure lock checks
     computed_birds = entry["closeBirds"]
     case("Manual closing stock", "A supervisor's entry is still fully auto-computed",
          "server's own figure, not the payload's 120", entry["calc"]["expBirds"], lambda: computed_birds)
@@ -2355,6 +2369,62 @@ def test_v13_dayclose_lock_and_overhead_edit():
 
 
 # ===========================================================================
+# 25. Opening birds/weight/meat are admin-only (mirrors openRate's lock)
+# ===========================================================================
+def test_v14_opening_figures_admin_only():
+    print("\n[25] Opening birds/weight/meat are admin-only")
+
+    # ---- PUT: a supervisor's explicit values are silently ignored ---------
+    # Reuses test_v11's still-draft B01/parents entry (today, never
+    # submitted/approved, owned by ravi) — can_edit() still says yes.
+    eid = ENTRY_IDS["v11_parents"]
+    before = ADMIN.get(f"/api/entries/{eid}").get_json()
+    sup_try = SUP.put(f"/api/entries/{eid}", json={
+        "openBirds": 999, "openWtG": 888_000, "openMeatG": 77_000})
+    case("Opening lock", "A supervisor's PUT cannot change opening birds",
+         "stays as before", before["openBirds"], lambda: sup_try.get_json()["openBirds"])
+    case("Opening lock", "...nor opening weight",
+         "stays as before", before["openWtG"], lambda: sup_try.get_json()["openWtG"])
+    case("Opening lock", "...nor opening meat",
+         "stays as before", before["openMeatG"], lambda: sup_try.get_json()["openMeatG"])
+
+    # ---- PUT: an admin's explicit values ARE honored -----------------------
+    admin_try = ADMIN.put(f"/api/entries/{eid}", json={
+        "openBirds": 999, "openWtG": 888_000, "openMeatG": 77_000})
+    case("Opening lock", "An admin's PUT can set opening birds",
+         "999", 999, lambda: admin_try.get_json()["openBirds"])
+    case("Opening lock", "...and opening weight",
+         "888000", 888_000, lambda: admin_try.get_json()["openWtG"])
+    case("Opening lock", "...and opening meat",
+         "77000", 77_000, lambda: admin_try.get_json()["openMeatG"])
+
+    # free B01/parents/today so the same lock can be proven at creation time too
+    ADMIN.delete(f"/api/entries/{eid}")
+
+    # ---- POST: a supervisor's explicit values are ignored, carry-forward wins
+    cf = ADMIN.get("/api/entries/carry-forward?branch=B01&category=parents").get_json()
+    expected = (cf["closeBirds"], cf["closeWtG"], cf["closeMeatG"]) if cf.get("found") else (0, 0, 0)
+    created = SUP.post("/api/entries", json=base_entry(
+        branch="B01", category="parents", businessDate=D(0),
+        openBirds=999, openWtG=888_000, openMeatG=77_000)).get_json()
+    case("Opening lock", "A supervisor's POST cannot set opening birds either",
+         "carry-forward value, not 999", expected,
+         lambda: (created["openBirds"], created["openWtG"], created["openMeatG"]))
+
+    # ---- POST: an admin's explicit values on a brand-new entry ARE honored -
+    ADMIN.delete(f"/api/entries/{created['id']}")
+    admin_created = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="parents", businessDate=D(0),
+        openBirds=42, openWtG=100_000, openMeatG=2_000)).get_json()
+    case("Opening lock", "An admin's POST sets opening birds exactly as sent",
+         "42", 42, lambda: admin_created["openBirds"])
+    case("Opening lock", "...and opening weight",
+         "100000", 100_000, lambda: admin_created["openWtG"])
+    case("Opening lock", "...and opening meat",
+         "2000", 2_000, lambda: admin_created["openMeatG"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2514,6 +2584,7 @@ if __name__ == "__main__":
     test_v11_admin_edits()
     test_v12_supervisor_today_only()
     test_v13_dayclose_lock_and_overhead_edit()
+    test_v14_opening_figures_admin_only()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

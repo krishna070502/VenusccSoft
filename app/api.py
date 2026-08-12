@@ -360,7 +360,6 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
     (from _manual_close_keys) says which ones, if any, to honor here.
     """
     ints = {
-        "openBirds": "open_birds", "openWtG": "open_weight_g", "openMeatG": "open_meat_g",
         "liveSoldCount": "live_sold_count", "liveSoldWtG": "live_sold_weight_g",
         "mortCount": "mortality_count", "mortWtG": "mortality_weight_g",
         "damageG": "damage_meat_g", "dressedCount": "dressed_count",
@@ -387,9 +386,47 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
     if "explanation" in d:
         entry.explanation = (d.get("explanation") or "")[:2000]
 
-    # Buying prices are admin-only, in the payload and in the database write.
-    if g.user.is_admin and "openRate" in d:
-        entry.open_rate = to_dec(d.get("openRate"), "openRate")
+    # Opening birds/weight/meat and the buying price are admin-only, in the
+    # payload and in the database write — a supervisor's opening figures are
+    # never taken from what they submit, whether that's a fresh mistake or a
+    # stale readonly field; see _carry_forward_opening() for how a new entry
+    # gets them instead, and get_entry()'s comment for why editing them later
+    # isn't reachable by a supervisor at all (today-only).
+    if g.user.is_admin:
+        for src, col in (("openBirds", "open_birds"), ("openWtG", "open_weight_g"),
+                         ("openMeatG", "open_meat_g")):
+            if src in d:
+                setattr(entry, col, to_int(d.get(src), src))
+        if "openRate" in d:
+            entry.open_rate = to_dec(d.get("openRate"), "openRate")
+
+
+def _previous_approved(branch_id: int, category: str) -> DailyEntry | None:
+    """The most recent APPROVED entry for this branch+category, or None."""
+    return (DailyEntry.query.filter_by(branch_id=branch_id, category=category, status="approved")
+            .order_by(DailyEntry.business_date.desc()).first())
+
+
+def _carry_forward_opening(entry: DailyEntry) -> None:
+    """
+    Set a brand-new entry's opening birds/weight/meat from the previous
+    approved day, server-side — a supervisor never gets to type these in (see
+    _apply_entry_fields above), so this is what actually carries them
+    forward for a supervisor-created entry. An admin's own submission already
+    carries the same client-fetched figures in the payload (see
+    entries_carry_forward()), so this only needs to run for a supervisor;
+    it's a no-op — and harmless — on the very first entry for a branch, where
+    opening figures are optional anyway.
+    """
+    # entry.branch.id, not entry.branch_id — the object was constructed with
+    # `branch=branch` (see create_entry()), so the relationship is populated
+    # immediately but the FK column only resolves at flush; entry.branch is
+    # the one that's safe to read before that.
+    prev = _previous_approved(entry.branch.id, entry.category)
+    if prev:
+        entry.open_birds = prev.close_birds
+        entry.open_weight_g = prev.close_weight_g
+        entry.open_meat_g = prev.close_meat_g
 
 
 def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None) -> None:
@@ -784,6 +821,12 @@ def create_entry():
     entry = DailyEntry(branch=branch, category=category, business_date=bdate,
                        entered_at=bstamp, created_by_id=g.user.id, status="draft")
     _apply_entry_fields(entry, d, manual_close)
+    # Opening birds/weight/meat are admin-only in _apply_entry_fields above —
+    # a supervisor never gets to type these in, so this is what actually
+    # fills them in for a supervisor-created entry, straight from the
+    # previous approved day, ignoring anything sent in the payload.
+    if not g.user.is_admin:
+        _carry_forward_opening(entry)
     _replace_purchases(entry, d.get("purchases"))
     _replace_photos(entry, d.get("photos"))
     _replace_hotel_sales(entry, d.get("hotelSales"))
@@ -976,8 +1019,7 @@ def entries_carry_forward():
     branch = branch_by_code(branch_code)
     category = request.args.get("category") if request.args.get("category") in ("broiler", "parents") else "broiler"
 
-    prev = (DailyEntry.query.filter_by(branch_id=branch.id, category=category, status="approved")
-            .order_by(DailyEntry.business_date.desc()).first())
+    prev = _previous_approved(branch.id, category)
     if not prev:
         return jsonify({"found": False})
 
