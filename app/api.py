@@ -321,17 +321,43 @@ def visible_branch_ids() -> list[int]:
     return [b.id for b in Branch.query.filter(Branch.code.in_(codes)).all()]
 
 
-def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
+CLOSE_FIELD_COL = {"closeBirds": "close_birds", "closeWtG": "close_weight_g",
+                   "closeMeatG": "close_meat_g"}
+
+
+def _manual_close_keys(d: dict) -> set:
+    """
+    Which of closeBirds/closeWtG/closeMeatG (if any) the client is asking to
+    set by hand this save, rather than have the server compute.
+
+    Only an admin gets this — a supervisor's screen never shows the fields as
+    editable, so nothing they send here is trusted even if present. The
+    client signals per-field via `closeAuto: {birds, wt, meat}`; a field is
+    manual only when its flag is explicitly False AND the matching value is
+    present in the payload.
+    """
+    if not g.user.is_admin:
+        return set()
+    auto = d.get("closeAuto") or {}
+    manual = set()
+    if auto.get("birds") is False and "closeBirds" in d:
+        manual.add("closeBirds")
+    if auto.get("wt") is False and "closeWtG" in d:
+        manual.add("closeWtG")
+    if auto.get("meat") is False and "closeMeatG" in d:
+        manual.add("closeMeatG")
+    return manual
+
+
+def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = None) -> None:
     """
     Copy the editable numeric fields from a client payload onto the row.
 
-    closeBirds/closeWtG/closeMeatG are deliberately NOT in this map. A
-    supervisor no longer hand-counts and types the closing stock — it is
-    whatever opening stock + purchases − sales − mortality − damage says it
-    is, worked out by _recompute_closing_stock() after every other field on
-    the entry is applied. Anything the client sends for those three keys is
-    ignored, not just overwritten later, so there is no path left where a
-    typed number reaches the database.
+    closeBirds/closeWtG/closeMeatG are handled separately: normally the
+    server works them out (see _recompute_closing_stock), but an admin can
+    switch any one of the three to manual and type a figure by hand — for a
+    physical recount that does not match the formula, say. `manual_close`
+    (from _manual_close_keys) says which ones, if any, to honor here.
     """
     ints = {
         "openBirds": "open_birds", "openWtG": "open_weight_g", "openMeatG": "open_meat_g",
@@ -345,6 +371,9 @@ def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
     for src, col in ints.items():
         if src in d:
             setattr(entry, col, to_int(d.get(src), src))
+
+    for src in (manual_close or ()):
+        setattr(entry, CLOSE_FIELD_COL[src], to_int(d.get(src), src))
 
     money = {"rateSkin": "rate_skin", "rateSkinless": "rate_skinless",
              "rateLiver": "rate_liver", "rateLive": "rate_live",
@@ -363,24 +392,30 @@ def _apply_entry_fields(entry: DailyEntry, d: dict) -> None:
         entry.open_rate = to_dec(d.get("openRate"), "openRate")
 
 
-def _recompute_closing_stock(entry: DailyEntry) -> None:
+def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None) -> None:
     """
     Set closing birds, closing bird weight and closing meat weight from the
-    formula, not from a hand count. Call this after opening stock, purchases,
-    counter sales and hotel/hostel sales are all in place on `entry` — it
-    reads them straight off the object via to_dict(), so purchases/hotel_sales
-    only need to be appended to the in-memory relationship, not flushed.
+    formula, not from a hand count — except any field an admin just put in
+    manual mode (`manual_close`), which _apply_entry_fields() already set and
+    this leaves alone. Call this after opening stock, purchases, counter
+    sales and hotel/hostel sales are all in place on `entry` — it reads them
+    straight off the object via to_dict(), so purchases/hotel_sales only need
+    to be appended to the in-memory relationship, not flushed.
 
     Day-close reconciliation (see day_close()) may still nudge close_meat_g
     afterwards, when what was actually collected in cash/UPI doesn't match
     what the day's entry says was sold — that happens after this, not instead
     of it.
     """
+    manual_close = manual_close or set()
     data = entry.to_dict(include_costs=True)
     calc = compute_entry(data, get_settings())
-    entry.close_birds = calc["expBirds"]
-    entry.close_weight_g = calc["expCloseWtG"]
-    entry.close_meat_g = calc["expCloseMeatG"]
+    if "closeBirds" not in manual_close:
+        entry.close_birds = calc["expBirds"]
+    if "closeWtG" not in manual_close:
+        entry.close_weight_g = calc["expCloseWtG"]
+    if "closeMeatG" not in manual_close:
+        entry.close_meat_g = calc["expCloseMeatG"]
 
 
 def _replace_purchases(entry: DailyEntry, rows: list) -> None:
@@ -716,9 +751,10 @@ def create_entry():
     # relationship is otherwise unpopulated (None) until the object is
     # flushed and reloaded. Assigning the object directly sets branch_id AND
     # makes entry.branch usable immediately, no round trip needed.
+    manual_close = _manual_close_keys(d)
     entry = DailyEntry(branch=branch, category=category, business_date=bdate,
                        entered_at=bstamp, created_by_id=g.user.id, status="draft")
-    _apply_entry_fields(entry, d)
+    _apply_entry_fields(entry, d, manual_close)
     _replace_purchases(entry, d.get("purchases"))
     _replace_photos(entry, d.get("photos"))
     _replace_hotel_sales(entry, d.get("hotelSales"))
@@ -727,7 +763,7 @@ def create_entry():
     # after the flush, not before: any numeric field the client left out is
     # still None in memory until the INSERT resolves the column's default —
     # to_dict() (which _recompute_closing_stock calls) needs the real 0s.
-    _recompute_closing_stock(entry)
+    _recompute_closing_stock(entry, manual_close)
 
     if status == "pending":
         problems = _submission_problems(entry, d)
@@ -765,7 +801,8 @@ def update_entry(entry_id):
     if err:
         return err
 
-    _apply_entry_fields(entry, d)
+    manual_close = _manual_close_keys(d)
+    _apply_entry_fields(entry, d, manual_close)
     if "purchases" in d:
         _replace_purchases(entry, d.get("purchases"))
     # Photos are only replaced when the client says it actually had them
@@ -778,7 +815,7 @@ def update_entry(entry_id):
     else:
         # the selling rates may have just changed; the hotel bills follow them
         _reprice_hotel_sales(entry)
-    _recompute_closing_stock(entry)
+    _recompute_closing_stock(entry, manual_close)
     entry.updated_by_id = g.user.id
     db.session.flush()
 
@@ -1407,6 +1444,21 @@ def update_worker(worker_id):
         w.day_wage = Decimal(str(d["dayWage"]))
     if "phone" in d:
         w.phone = d["phone"]
+
+    # A correction to the balance-due figure — admin only. Logged with the
+    # before/after so it shows up distinctly in the activity log rather than
+    # blending into an ordinary "edited worker" line.
+    if g.user.is_admin and "balanceAdjustment" in d:
+        before = float(w.balance_adjustment)
+        w.balance_adjustment = to_dec(d.get("balanceAdjustment"), "balanceAdjustment")
+        if "balanceNote" in d:
+            w.balance_note = (d.get("balanceNote") or "")[:500]
+        if float(w.balance_adjustment) != before:
+            log_activity("Adjusted worker balance",
+                         f"{w.name} · ₹{before:.2f} → ₹{float(w.balance_adjustment):.2f}"
+                         + (f" — {w.balance_note}" if w.balance_note else ""),
+                         branch_code=w.branch.code)
+
     log_activity("Edited worker", w.name, branch_code=w.branch.code)
     db.session.commit()
     return jsonify(w.to_dict())

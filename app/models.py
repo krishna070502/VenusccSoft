@@ -481,6 +481,16 @@ class Worker(db.Model):
     joined_on = Column(Date, default=date.today)
     is_active = Column(Boolean, nullable=False, default=True)
 
+    # An admin-only correction folded into the balance-due figure — earned
+    # minus paid minus advances is worked out from the ledger as always, this
+    # is added on top of that. Positive raises what the worker is owed
+    # (a missed wage that never got logged), negative lowers it (a write-off,
+    # a cash-box shortage taken out of what's due). Kept as one running figure
+    # with a note, rather than a ledger kind, so it needs no schema change to
+    # the ledger's ck_ledger_kind check constraint on a live database.
+    balance_adjustment = Column(Numeric(12, 2), nullable=False, default=0)
+    balance_note = Column(Text)
+
     branch = relationship("Branch", back_populates="workers")
     ledger = relationship("LabourLedger", back_populates="worker",
                           cascade="all, delete-orphan")
@@ -489,7 +499,9 @@ class Worker(db.Model):
         return {"id": self.id, "branch": self.branch.code, "name": self.name,
                 "role": self.role, "dayWage": float(self.day_wage),
                 "phone": self.phone or "", "active": self.is_active,
-                "joinedOn": self.joined_on.isoformat() if self.joined_on else None}
+                "joinedOn": self.joined_on.isoformat() if self.joined_on else None,
+                "balanceAdjustment": float(self.balance_adjustment),
+                "balanceNote": self.balance_note or ""}
 
 
 class LabourLedger(db.Model):

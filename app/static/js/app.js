@@ -371,6 +371,13 @@ function autoLogout(){
 }
 
 /* ---------------- auto-filled closing values ---------------- */
+/* Only an admin may ever flip a field to manual (the toggle buttons are
+   data-admin, hidden from supervisors, and blankForm()/loadEntry() always
+   reset S.auto to all-true) — so a supervisor's fields stay readonly and
+   server-computed no matter what. */
+function setCloseReadonly(ids,on){
+  ids.forEach(function(id){ var el=$(id); if(!el) return; el.readOnly=on; el.tabIndex=on?-1:0; });
+}
 function applyAutoFill(c){
   var hb=$('hint_closeBirds'), hw=$('hint_closeWt'), hm=$('hint_closeMeat');
   var expB=Math.max(Math.round(c.expBirds),0), expW=Math.max(Math.round(c.expCloseWtG),0), expM=Math.max(Math.round(c.expCloseMeatG),0);
@@ -386,9 +393,17 @@ function applyAutoFill(c){
     x[1].className='text-[11px] mt-1 '+(S.auto[x[0]]?'text-emerald-600':'text-amber-600');
   });
   qsa('[data-auto]').forEach(function(b){
+    /* This overwrites the whole className every recalc(), which runs on
+       every keystroke — so the admin-only 'hidden' class applyRbac() set
+       has to be re-applied here too, or a supervisor's button reappears
+       the moment they type anything. */
     var on=S.auto[b.getAttribute('data-auto')];
-    b.className='autoBtn'+(on?'':' off'); b.textContent=on?'auto':'manual';
+    b.className='autoBtn ml-auto'+(on?'':' off')+(isAdmin()?'':' hidden');
+    b.textContent=on?'auto':'manual';
   });
+  setCloseReadonly(['f_closeBirds'],S.auto.closeBirds);
+  setCloseReadonly(['f_closeWt_kg','f_closeWt_g'],S.auto.closeWt);
+  setCloseReadonly(['f_closeMeat_kg','f_closeMeat_g'],S.auto.closeMeat);
 }
 
 /* ---------------- auth & RBAC ---------------- */
@@ -556,6 +571,9 @@ function readForm(){
   e.dressedCount=v('f_dressedCount'); e.dressedWtG=gv('f_dressedWt'); e.actualMeatG=gv('f_actualMeat');
   e.skinSoldG=gv('f_skinSold'); e.skinlessSoldG=gv('f_skinlessSold'); e.liverSoldG=gv('f_liverSold');
   e.closeBirds=v('f_closeBirds'); e.closeWtG=gv('f_closeWt'); e.closeMeatG=gv('f_closeMeat');
+  /* tells the server which (if any) of these three the admin set by hand this
+     save, rather than have it recompute them — see _manual_close_keys() */
+  e.closeAuto={ birds:S.auto.closeBirds, wt:S.auto.closeWt, meat:S.auto.closeMeat };
   e.notes=tv('f_notes'); e.explanation=tv('f_explanation');
   e.photos=S.photos.slice();
   /* tells the server these images are real and not an empty list from a
@@ -672,9 +690,11 @@ function lockForm(locked){
 
 function loadEntry(id){
   S.editing=id?(S.entries.filter(function(x){return x.id===id;})[0]||null):null;
-  // Closing birds/weight/meat are computed by the server and shown read-only —
-  // there is no manual mode any more, whether this is a new entry or one being
-  // reopened, so this always stays on.
+  // Closing birds/weight/meat are computed by the server and shown read-only
+  // by default, whether this is a new entry or one being reopened. An admin
+  // (and only an admin — the toggle buttons are data-admin) can flip any of
+  // the three to manual from here; a supervisor never sees the toggle so
+  // theirs stays on regardless.
   S.auto={ closeBirds:true, closeWt:true, closeMeat:true };
   if(S.editing){
     S.cat=S.editing.category; S.branch=S.editing.branch;
@@ -1532,7 +1552,9 @@ function workerStats(id){
     else if(l.type==='paid'){ paid+=num(l.amount); }
     else if(l.type==='advance'){ ded+=num(l.amount); }
   });
-  return { earned:earned, paid:paid, ded:ded, days:days, balance:earned-paid-ded };
+  var w=S.workers.filter(function(x){return x.id===id;})[0];
+  var adj=w?num(w.balanceAdjustment):0;
+  return { earned:earned, paid:paid, ded:ded, days:days, adj:adj, balance:earned-paid-ded+adj };
 }
 
 function renderWorkers(){
@@ -1566,7 +1588,9 @@ function renderWorkers(){
     var td=S.ledger.filter(function(x){ return x.workerId===w.id&&x.date===date&&x.type==='work'; })[0];
     if(td&&num(td.days)>0){ presentToday++; earnToday+=num(td.amount); }
     tot.days+=s.days; tot.earned+=s.earned; tot.paid+=s.paid; tot.ded+=s.ded; tot.bal+=s.balance;
-    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(w.name)+'<span class="block text-xs text-slate-400">'+esc(w.phone||'')+'</span></td>'+
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(w.name)+
+      (s.adj?' <span title="'+esc(w.balanceNote||'Balance correction')+'" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">'+(s.adj>0?'+':'')+money0(s.adj)+'</span>':'')+
+      '<span class="block text-xs text-slate-400">'+esc(w.phone||'')+'</span></td>'+
       '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded bg-slate-100 text-slate-700">'+esc(w.role)+'</span></td>'+
       '<td class="px-4 py-2.5 text-right num">'+money0(w.dayWage)+'</td>'+
       '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">'+s.days+'</td>'+
@@ -3229,6 +3253,8 @@ function editLedgerRow(id) {
 
 function workerModal(w) {
   w = w || {};
+  var showBalance = isAdmin() && w.id;
+  var st = w.id ? workerStats(w.id) : null;
   openGen(w.id ? 'Edit worker' : 'Add worker',
     '<div class="space-y-3">' +
     '<div><label class="lbl" for="wkName">Name</label><input id="wkName" class="inp" value="' + esc(w.name || '') + '" /></div>' +
@@ -3238,12 +3264,25 @@ function workerModal(w) {
     '<div><label class="lbl" for="wkWage">Wage per day (₹)</label><input type="number" min="0" step="10" id="wkWage" class="inp num" value="' + (w.dayWage || S.settings.dayWage || '') + '" /></div>' +
     '</div>' +
     '<div><label class="lbl" for="wkPhone">Phone (optional)</label><input id="wkPhone" class="inp" value="' + esc(w.phone || '') + '" /></div>' +
+    (showBalance
+      ? '<div class="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">' +
+        '<p class="text-[11px] font-bold uppercase tracking-wider text-amber-800">Balance correction — admin only</p>' +
+        '<p class="text-xs text-slate-500">Ledger balance due is ' + money0(st.earned - st.paid - st.ded) +
+          '. Current correction ' + money0(st.adj) + ' makes it ' + money0(st.balance) + '.</p>' +
+        '<div class="grid grid-cols-2 gap-3">' +
+          '<div><label class="lbl" for="wkAdj">Correction (₹, +/-)</label><input type="number" step="1" id="wkAdj" class="inp num" value="' + (w.balanceAdjustment || 0) + '" /></div>' +
+          '<div><label class="lbl" for="wkAdjNote">Reason</label><input id="wkAdjNote" class="inp" placeholder="Optional" value="' + esc(w.balanceNote || '') + '" /></div>' +
+        '</div>' +
+        '<p class="text-[11px] text-slate-400">Positive raises what is owed to them; negative lowers it (a write-off, a shortage taken out).</p>' +
+      '</div>'
+      : '') +
     '<button id="wkSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg mt-2">Save worker</button></div>');
   bind('wkSave', function () {
     var name = tv('wkName');
     if (!name) { toast('Enter a name.', 'error'); return; }
     if (v('wkWage') <= 0) { toast('Enter the daily wage.', 'error'); return; }
     var body = { branch: S.branch, name: name, role: tv('wkRole'), dayWage: v('wkWage'), phone: tv('wkPhone') };
+    if (showBalance) { body.balanceAdjustment = v('wkAdj'); body.balanceNote = tv('wkAdjNote'); }
     if (!once('wkSave')) return;
     var p = w.id ? api('PUT', '/workers/' + w.id, body) : api('POST', '/workers', body);
     p.then(function () { return bootstrap(); })
@@ -3510,6 +3549,16 @@ function wire() {
   /* ---- daily entry ---- */
   $('entryForm').addEventListener('input', recalc);
   $('entryForm').addEventListener('submit', function (ev) { ev.preventDefault(); });
+  /* Auto/manual toggle for closing birds/weight/meat — admin only (the
+     buttons themselves are data-admin and hidden from a supervisor, but the
+     isAdmin() check here is a second gate so a supervisor's own S.auto can
+     never be flipped even if the button were somehow present/clicked). */
+  $('entryForm').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-auto]'); if (!b || !isAdmin()) return;
+    var key = b.getAttribute('data-auto');
+    S.auto[key] = !S.auto[key];
+    recalc();
+  });
   $('btnAddPurchase').addEventListener('click', function () {
     S.purchases.push({ supplier: '', birds: 0, wtG: 0, rate: 0 }); renderPurchases(); recalc();
   });

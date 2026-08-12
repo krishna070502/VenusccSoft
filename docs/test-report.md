@@ -2,7 +2,7 @@
 
 **Run:** 2026-08-12  
 **Database:** throwaway SQLite file, deleted after the run  
-**Result:** 390/390 passed, 0 failed
+**Result:** 402/402 passed, 0 failed
 
 ## Summary by module
 
@@ -14,6 +14,7 @@
 | Attendance | 7 | 7 | 0 |
 | Authentication | 10 | 10 | 0 |
 | Auto-closing stock | 6 | 6 | 0 |
+| Balance correction | 5 | 5 | 0 |
 | Branches | 8 | 8 | 0 |
 | Calc engine | 23 | 23 | 0 |
 | Cash history | 2 | 2 | 0 |
@@ -33,6 +34,7 @@
 | Ledger edit | 4 | 4 | 0 |
 | Live pricing | 3 | 3 | 0 |
 | Live sales | 10 | 10 | 0 |
+| Manual closing stock | 7 | 7 | 0 |
 | Meat reconciliation | 9 | 9 | 0 |
 | Overhead ledger | 10 | 10 | 0 |
 | Overheads | 16 | 16 | 0 |
@@ -50,7 +52,7 @@
 | Wage override | 2 | 2 | 0 |
 | Window | 4 | 4 | 0 |
 | Workers rename | 1 | 1 | 0 |
-| **Total** | **390** | **390** | **0** |
+| **Total** | **402** | **402** | **0** |
 
 ## Test cases
 
@@ -386,63 +388,75 @@
 | TC-328 | Meat reconciliation | The entry's recorded meat sold actually decreased | skinSoldG -4000g | 26000 | 26000 | PASS |
 | TC-329 | Meat reconciliation | A note explaining the shortfall is left on the entry | mentions 'reduced meat sales' | True | as expected | PASS |
 | TC-330 | Meat reconciliation | The classic declared-vs-expected figure is unaffected by its own adjustment | still short by exactly ₹800 | -800.0 | -800.0 | PASS |
-| TC-331 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
-| TC-332 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
-| TC-333 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
-| TC-334 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
-| TC-335 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
-| TC-336 | Schema | and says exactly what to run | message | True | as expected | PASS |
-| TC-337 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
-| TC-338 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
-| TC-339 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
-| TC-340 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
-| TC-341 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
-| TC-342 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
-| TC-343 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
-| TC-344 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
-| TC-345 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
-| TC-346 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
-| TC-347 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
-| TC-348 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
-| TC-349 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
-| TC-350 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
-| TC-351 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
-| TC-352 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
-| TC-353 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
-| TC-354 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
-| TC-355 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
-| TC-356 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
-| TC-357 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
-| TC-358 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
-| TC-359 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
-| TC-360 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
-| TC-361 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
-| TC-362 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
-| TC-363 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
-| TC-364 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
-| TC-365 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
-| TC-366 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
-| TC-367 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
-| TC-368 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
-| TC-369 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
-| TC-370 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
-| TC-371 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
-| TC-372 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
-| TC-373 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
-| TC-374 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
-| TC-375 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
-| TC-376 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
-| TC-377 | Activity log | Captures who did it | userName present | True | as expected | PASS |
-| TC-378 | Activity log | Captures the role | role present | True | as expected | PASS |
-| TC-379 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
-| TC-380 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
-| TC-381 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
-| TC-382 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
-| TC-383 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
-| TC-384 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
-| TC-385 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
-| TC-386 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
-| TC-387 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
-| TC-388 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
-| TC-389 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
-| TC-390 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
+| TC-331 | Balance correction | A freshly added worker starts with no correction | balanceAdjustment | 0.0 | 0.0 | PASS |
+| TC-332 | Balance correction | A supervisor's attempt to set it is silently ignored, not an error | 200, but unchanged | (200, 0.0) | (200, 0.0) | PASS |
+| TC-333 | Balance correction | An admin can write off part of what's owed (negative) | -150 | -150.0 | -150.0 | PASS |
+| TC-334 | Balance correction | ...with the reason saved alongside it | note text | Cash-box shortage on Aug 5 | Cash-box shortage on Aug 5 | PASS |
+| TC-335 | Balance correction | It can also raise what's owed (positive) — 300 replaces -150, not adds | 300 | 300.0 | 300.0 | PASS |
+| TC-336 | Manual closing stock | A supervisor's entry is still fully auto-computed | server's own figure, not the payload's 120 | 120 | 120 | PASS |
+| TC-337 | Manual closing stock | A supervisor cannot switch closing birds to manual | stays computed, ignores closeAuto+7 | 120 | 120 | PASS |
+| TC-338 | Manual closing stock | An admin CAN switch closing birds to manual and type a figure | 111 | 111 | 111 | PASS |
+| TC-339 | Manual closing stock | Closing weight (still auto) ignores a bogus manual value | server's own figure | 282000 | 282000 | PASS |
+| TC-340 | Manual closing stock | ...while closing birds (kept manual, value re-sent) holds at 111 | 111 | 111 | 111 | PASS |
+| TC-341 | Manual closing stock | Switching back to auto recomputes it, discarding 111 | server's own figure again | 120 | 120 | PASS |
+| TC-342 | Manual closing stock | Sending a value with no closeAuto flag at all is not treated as manual | still computed, ignores 555 | 120 | 120 | PASS |
+| TC-343 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
+| TC-344 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
+| TC-345 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
+| TC-346 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
+| TC-347 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
+| TC-348 | Schema | and says exactly what to run | message | True | as expected | PASS |
+| TC-349 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
+| TC-350 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
+| TC-351 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
+| TC-352 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
+| TC-353 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
+| TC-354 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
+| TC-355 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
+| TC-356 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
+| TC-357 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
+| TC-358 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
+| TC-359 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
+| TC-360 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
+| TC-361 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
+| TC-362 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
+| TC-363 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
+| TC-364 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
+| TC-365 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
+| TC-366 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
+| TC-367 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
+| TC-368 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
+| TC-369 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
+| TC-370 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
+| TC-371 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
+| TC-372 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
+| TC-373 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
+| TC-374 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
+| TC-375 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
+| TC-376 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
+| TC-377 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
+| TC-378 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
+| TC-379 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
+| TC-380 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
+| TC-381 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
+| TC-382 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
+| TC-383 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
+| TC-384 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
+| TC-385 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
+| TC-386 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
+| TC-387 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
+| TC-388 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
+| TC-389 | Activity log | Captures who did it | userName present | True | as expected | PASS |
+| TC-390 | Activity log | Captures the role | role present | True | as expected | PASS |
+| TC-391 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
+| TC-392 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
+| TC-393 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
+| TC-394 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
+| TC-395 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
+| TC-396 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
+| TC-397 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
+| TC-398 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
+| TC-399 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
+| TC-400 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
+| TC-401 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
+| TC-402 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |

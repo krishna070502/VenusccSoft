@@ -2047,6 +2047,81 @@ def test_v10_reconciliation():
 
 
 # ===========================================================================
+# 20b. Worker balance corrections & manual closing-stock override (admin only)
+# ===========================================================================
+def test_v11_admin_edits():
+    print("\n[23] Worker balance corrections & manual closing stock")
+
+    # ---- balance-due correction, admin only --------------------------------
+    w = ADMIN.post("/api/workers", json={"branch": "B01", "name": "Balance Test Worker",
+                                         "role": "helper", "dayWage": 500}).get_json()
+    case("Balance correction", "A freshly added worker starts with no correction",
+         "balanceAdjustment", 0.0, lambda: w["balanceAdjustment"])
+
+    sup_try = SUP.put(f"/api/workers/{w['id']}", json={"balanceAdjustment": 999, "balanceNote": "nope"})
+    case("Balance correction", "A supervisor's attempt to set it is silently ignored, not an error",
+         "200, but unchanged", (200, 0.0),
+         lambda: (sup_try.status_code, sup_try.get_json()["balanceAdjustment"]))
+
+    up = ADMIN.put(f"/api/workers/{w['id']}",
+                   json={"balanceAdjustment": -150, "balanceNote": "Cash-box shortage on Aug 5"})
+    case("Balance correction", "An admin can write off part of what's owed (negative)",
+         "-150", -150.0, lambda: up.get_json()["balanceAdjustment"])
+    case("Balance correction", "...with the reason saved alongside it",
+         "note text", "Cash-box shortage on Aug 5", lambda: up.get_json()["balanceNote"])
+
+    # the UI folds this adjustment into the ledger-derived balance client-side
+    # (workerStats()); the API's own figure is just the raw adjustment amount,
+    # which is what's being checked here.
+    raised = ADMIN.put(f"/api/workers/{w['id']}",
+                       json={"balanceAdjustment": 300, "balanceNote": "Missed wage, 3 days back"})
+    case("Balance correction", "It can also raise what's owed (positive) — 300 replaces -150, not adds",
+         "300", 300.0, lambda: raised.get_json()["balanceAdjustment"])
+
+    # ---- manual override for closing birds/weight/meat, admin only --------
+    day = D(511)
+    entry = SUP.post("/api/entries", json=base_entry(businessDate=day)).get_json()
+    computed_birds = entry["closeBirds"]
+    case("Manual closing stock", "A supervisor's entry is still fully auto-computed",
+         "server's own figure, not the payload's 120", entry["calc"]["expBirds"], lambda: computed_birds)
+
+    sup_manual = SUP.put(f"/api/entries/{entry['id']}",
+                         json={"closeBirds": 7, "closeAuto": {"birds": False}})
+    case("Manual closing stock", "A supervisor cannot switch closing birds to manual",
+         "stays computed, ignores closeAuto+7", computed_birds,
+         lambda: sup_manual.get_json()["closeBirds"])
+
+    admin_manual = ADMIN.put(f"/api/entries/{entry['id']}",
+                             json={"closeBirds": 111, "closeAuto": {"birds": False}})
+    case("Manual closing stock", "An admin CAN switch closing birds to manual and type a figure",
+         "111", 111, lambda: admin_manual.get_json()["closeBirds"])
+
+    # manual mode isn't sticky server-side — like every other field, the client
+    # re-sends the figure (and the flag) on every save, exactly as the real
+    # form does via readForm()'s closeAuto object built from S.auto.
+    still_manual = ADMIN.put(f"/api/entries/{entry['id']}",
+                             json={"closeBirds": 111, "closeWtG": 999,
+                                   "closeAuto": {"birds": False, "wt": True}})
+    case("Manual closing stock", "Closing weight (still auto) ignores a bogus manual value",
+         "server's own figure", entry["calc"]["expCloseWtG"], lambda: still_manual.get_json()["closeWtG"])
+    case("Manual closing stock", "...while closing birds (kept manual, value re-sent) holds at 111",
+         "111", 111, lambda: still_manual.get_json()["closeBirds"])
+
+    # ...and confirms manual mode is NOT sticky: omitting the flag next time
+    # (as if the client forgot) reverts it to computed, same as switching back.
+    back_auto = ADMIN.put(f"/api/entries/{entry['id']}",
+                          json={"closeBirds": 111, "closeAuto": {"birds": True}})
+    case("Manual closing stock", "Switching back to auto recomputes it, discarding 111",
+         "server's own figure again", entry["calc"]["expBirds"],
+         lambda: back_auto.get_json()["closeBirds"])
+
+    admin_no_flag = ADMIN.put(f"/api/entries/{entry['id']}", json={"closeBirds": 555})
+    case("Manual closing stock", "Sending a value with no closeAuto flag at all is not treated as manual",
+         "still computed, ignores 555", entry["calc"]["expBirds"],
+         lambda: admin_no_flag.get_json()["closeBirds"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2203,6 +2278,7 @@ if __name__ == "__main__":
     test_dupes()
     test_scale()
     test_v10_reconciliation()
+    test_v11_admin_edits()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
