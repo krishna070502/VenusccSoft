@@ -11,7 +11,7 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, request, session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, undefer
 
@@ -580,7 +580,8 @@ def customers_payload(branch_ids: list) -> tuple:
     """Customers for these branches plus their running balances."""
     if not branch_ids:
         return [], {}
-    rows = (Customer.query.filter(Customer.branch_id.in_(branch_ids))
+    rows = (Customer.query.options(joinedload(Customer.branch))
+            .filter(Customer.branch_id.in_(branch_ids))
             .order_by(Customer.branch_id, Customer.code).all())
     totals = customer_totals([c.id for c in rows])
     for c in rows:
@@ -737,22 +738,46 @@ def bootstrap():
     q = q.filter(DailyEntry.business_date >= win_from)
     entries = q.order_by(DailyEntry.business_date.desc()).limit(MAX_PAGE).all()
 
-    workers = Worker.query.filter(Worker.branch_id.in_(bids)).all() if bids else []
-    ledger = (LabourLedger.query
+    # Explicit joinedload on every one of these — to_dict() below reads
+    # .branch (and, for DayClose, .declared_by/.verified_by too) on every
+    # row. Branches happen to already be warm in the session from the query
+    # above, so skipping this mostly got away with it, but declared_by/
+    # verified_by were not warm for anyone but an admin (and only after the
+    # "users" key, further down, which was too late to help). Making it
+    # explicit here means this isn't quietly depending on load order.
+    workers = (Worker.query.options(joinedload(Worker.branch))
+              .filter(Worker.branch_id.in_(bids)).all()) if bids else []
+    ledger = (LabourLedger.query.options(joinedload(LabourLedger.branch))
               .filter(LabourLedger.branch_id.in_(bids),
                       LabourLedger.entry_date >= win_from)
               .order_by(LabourLedger.entry_date.desc()).limit(MAX_PAGE).all()) if bids else []
     customers, cust_totals = customers_payload(bids)
-    receipts = (CustomerPayment.query.filter(CustomerPayment.branch_id.in_(bids))
+    receipts = (CustomerPayment.query.options(joinedload(CustomerPayment.branch))
+                .filter(CustomerPayment.branch_id.in_(bids))
                 .order_by(CustomerPayment.pay_date.desc()).limit(2000).all()) if bids else []
-    closes = (DayClose.query.filter(DayClose.branch_id.in_(bids),
-                                    DayClose.business_date >= win_from)
+    closes = (DayClose.query.options(joinedload(DayClose.branch), joinedload(DayClose.declared_by),
+                                     joinedload(DayClose.verified_by))
+              .filter(DayClose.branch_id.in_(bids),
+                      DayClose.business_date >= win_from)
               .order_by(DayClose.business_date.desc()).all()) if bids else []
 
-    oq = Overhead.query.filter(Overhead.branch_id.in_(bids)) if bids else Overhead.query.filter(False)
+    oq = (Overhead.query.options(joinedload(Overhead.branch), joinedload(Overhead.created_by))
+          .filter(Overhead.branch_id.in_(bids))) if bids else Overhead.query.filter(False)
     if not g.user.is_admin:
-        oq = oq.filter(Overhead.branch_id.in_(bids))
-    overheads = oq.all()
+        # Same narrower view list_overheads() already enforces: a supervisor
+        # only ever sees their own overhead, and only a dated one for today —
+        # never another user's, and never a stale past-dated one of their
+        # own either. This filter was missing here, so a supervisor's very
+        # first page load (before they ever open the Overheads screen) could
+        # hand over overhead entries that were never meant to be visible to
+        # them.
+        oq = oq.filter(Overhead.created_by_id == g.user.id,
+                       or_(Overhead.spend_date.is_(None), Overhead.spend_date == date.today()))
+    # Capped like entries/ledger above rather than left to grow forever — no
+    # eager loading was applied here either, so every row used to cost an
+    # extra query apiece for .branch and .created_by once the identity map
+    # ran cold (see Overhead.to_dict()).
+    overheads = oq.order_by(Overhead.period_month.desc()).limit(MAX_PAGE).all()
 
     payload = {
         "user": g.user.to_dict(),

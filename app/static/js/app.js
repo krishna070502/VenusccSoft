@@ -90,6 +90,7 @@ function num(v){ var x=parseFloat(v); return isFinite(x)?x:0; }
 function v(id){ var el=$(id); return el?num(el.value):0; }
 function tv(id){ var el=$(id); return el?String(el.value||'').trim():''; }
 function filled(id){ var el=$(id); return !!(el && String(el.value||'').trim()!==''); }
+function filledG(id){ var a=$(id+'_kg'),b=$(id+'_g'); return !!((a&&String(a.value||'').trim()!=='')||(b&&String(b.value||'').trim()!=='')); }
 function gv(id){ return v(id+'_kg')*1000 + v(id+'_g'); }
 function setG(id,g){ g=Math.round(num(g)); var a=$(id+'_kg'); if(a) a.value=g?Math.floor(g/1000):''; var b=$(id+'_g'); if(b) b.value=g?(g%1000):''; }
 function setV(id,x){ var el=$(id); if(el) el.value=(x===0||x)?x:''; }
@@ -650,9 +651,19 @@ function blankForm(){
       if(S.branch!==branch || S.cat!==cat) return;
       if(cf.found){
         S.carryForward=cf;
-        setV('f_openBirds',cf.closeBirds); setG('f_openWt',cf.closeWtG); setG('f_openMeat',cf.closeMeatG);
-        setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
-        setV('f_rateSkin',cf.rateSkin); setV('f_rateSkinless',cf.rateSkinless); setV('f_rateLiver',cf.rateLiver); setV('f_rateLive',cf.rateLive);
+        /* Only fill a field the user hasn't already started typing into. On
+           a slow connection this fetch can resolve well after someone has
+           begun the day's entry, and overwriting what they just typed —
+           especially the skin/skinless rate — is exactly the "values change
+           on their own" bug this guards against. */
+        if(!filled('f_openBirds')) setV('f_openBirds',cf.closeBirds);
+        if(!filledG('f_openWt')) setG('f_openWt',cf.closeWtG);
+        if(!filledG('f_openMeat')) setG('f_openMeat',cf.closeMeatG);
+        if(!filled('f_openRate')) setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
+        if(!filled('f_rateSkin')) setV('f_rateSkin',cf.rateSkin);
+        if(!filled('f_rateSkinless')) setV('f_rateSkinless',cf.rateSkinless);
+        if(!filled('f_rateLiver')) setV('f_rateLiver',cf.rateLiver);
+        if(!filled('f_rateLive')) setV('f_rateLive',cf.rateLive);
         $('carryNote').textContent='Carried forward from '+cf.date+' — '+num(cf.closeBirds)+' birds'+(isAdmin()?' @ '+money(cf.avgRate)+'/kg':'');
       } else {
         S.carryForward=null;

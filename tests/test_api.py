@@ -2405,6 +2405,19 @@ def test_v13_dayclose_lock_and_overhead_edit():
          "stale D(9) row hidden", True,
          lambda: all(r["id"] != stale["id"] for r in listed))
 
+    # ---- bootstrap must not leak what list_overheads() already hides -----
+    boot_ovh = SUP.get("/api/bootstrap").get_json()["overheads"]
+    case("Overhead visibility", "Bootstrap's overheads are just as narrow as the list endpoint",
+         "admin's rent row hidden here too", True,
+         lambda: all(o["createdByName"] == "Ravi Kumar" for o in boot_ovh))
+    case("Overhead visibility", "...including the same stale past-dated one",
+         "stale D(9) row hidden from bootstrap too", True,
+         lambda: all(o["id"] != stale["id"] for o in boot_ovh))
+    case("Overhead visibility", "An admin's bootstrap is unrestricted, same as ever",
+         "admin's rent row IS there", True,
+         lambda: any(o["amount"] == 999 and o["month"] == TODAY.strftime("%Y-%m")
+                     for o in ADMIN.get("/api/bootstrap").get_json()["overheads"]))
+
     # ---- once an admin declares the handover, that day locks for a supervisor
     day_close_branch = "B01"
     ADMIN.post("/api/dayclose", json={"branch": day_close_branch, "date": D(0),
