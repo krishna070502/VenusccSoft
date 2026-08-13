@@ -2103,81 +2103,29 @@ def expected_cash(branch_id: int, day: date) -> dict:
     }
 
 
-def _undo_meat_adjustment(row: DayClose) -> None:
-    """Reverse a previously-applied meat-sales adjustment. Called before
-    working out a fresh one, so re-declaring the same handover never stacks
-    adjustments on top of each other."""
-    if not row.meat_adjust_entry_id or not row.meat_adjust_g:
-        return
-    entry = db.session.get(DailyEntry, row.meat_adjust_entry_id)
-    if entry:
-        entry.skin_sold_g = max(0, entry.skin_sold_g - row.meat_adjust_g)
-        _recompute_closing_stock(entry)
-    row.meat_adjust_entry_id = None
-    row.meat_adjust_g = 0
-    row.meat_adjust_amount = Decimal("0")
-
-
-def _apply_meat_adjustment(row: DayClose, branch_id: int, day: date, diff: float) -> None:
-    """
-    Credit or remove meat sales so the day's recorded revenue matches what
-    cash + UPI + that day's wages + that day's overheads says actually came
-    in and went out.
-
-      diff > 0 — more was accounted for (handed over, or paid out in wages
-                 and overheads) than the entry shows as sold: the excess is
-                 treated as meat that went out but was never recorded.
-      diff < 0 — the entry shows more revenue than was accounted for: that
-                 much comes back out of recorded meat sales.
-
-    The conversion uses the day's skin rate — the counter's headline meat
-    price. Whichever entry is this branch's counter (broiler, where there is
-    one) absorbs the adjustment; a note is left on it either way.
-    """
-    if abs(diff) < 0.5:
-        return
-    entry = (DailyEntry.query.filter_by(branch_id=branch_id, business_date=day,
-                                        category="broiler").first()
-            or DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).first())
-    if not entry or float(entry.rate_skin) <= 0:
-        return
-    rate = float(entry.rate_skin)
-    grams = int(round(abs(diff) / rate * 1000))
-    if grams <= 0:
-        return
-    if diff > 0:
-        entry.skin_sold_g += grams
-        applied_g = grams
-        note = (f"Day-close {day.isoformat()}: cash + UPI + wages + overheads was "
-                f"₹{diff:.2f} more than recorded revenue — credited as {grams}g "
-                f"extra meat sold.")
-    else:
-        applied = min(grams, entry.skin_sold_g)
-        entry.skin_sold_g -= applied
-        applied_g = -applied
-        leftover = abs(diff) - applied / 1000 * rate
-        short_note = ("" if applied == grams else
-                     f" Only {applied}g of recorded meat sales was available to remove — "
-                     f"₹{leftover:.2f} of the shortfall is still unexplained.")
-        note = (f"Day-close {day.isoformat()}: recorded revenue was ₹{abs(diff):.2f} more "
-                f"than cash + UPI + wages + overheads — reduced meat sales by "
-                f"{applied}g.{short_note}")
-    entry.notes = ((entry.notes or "") + ("\n" if entry.notes else "") + note)[:2000]
-    _recompute_closing_stock(entry)
-    row.meat_adjust_entry_id = entry.id
-    row.meat_adjust_g = applied_g
-    row.meat_adjust_amount = Decimal(str(diff))
+# A previous version of this endpoint silently credited or removed meat
+# sales on the day's entry to force cash + UPI + wages + overheads to match
+# recorded revenue — including on an already-APPROVED entry, well after
+# whoever approved it had signed off on its figures. That surprised people
+# (an entry's skin/skinless numbers would change on their own days later,
+# just from someone declaring the till count) and bypassed the normal
+# admin-edit path entirely, so it has been removed. Declaring a handover now
+# only ever records what was declared; any mismatch against expected cash is
+# still reported (see "difference"/"revenueDifference" in close_payload()
+# below) for a human to look at and, if it's genuinely wrong, correct
+# through the entry's own edit screen — not something this endpoint does to
+# it silently. meat_adjust_* on DayClose is kept on the model purely so any
+# handover declared before this change still displays what it recorded.
 
 
 def close_payload(branch, day: date, exp=None, wages_today=None, overheads_today=None) -> dict:
     """
     `exp`/`wages_today`/`overheads_today` can be passed in already computed.
-    save_dayclose() does this with the figures from BEFORE its own meat-sales
-    adjustment ran, so a declaration's response reports what was actually
-    declared against, not a figure the same request's own correction just
-    moved. Every other caller (a plain GET) leaves them out and gets the
-    current, live numbers — if entries were edited since the last
-    declaration, that drift should show.
+    save_dayclose() does this with the figures measured at the moment of
+    declaration, so the response reports what was actually declared against
+    rather than a fresh recompute. Every other caller (a plain GET) leaves
+    them out and gets the current, live numbers — if entries were edited
+    since the last declaration, that drift should show.
     """
     if exp is None:
         exp = expected_cash(branch.id, day)
@@ -2196,8 +2144,8 @@ def close_payload(branch, day: date, exp=None, wages_today=None, overheads_today
         "declared": declared if row else None,
         "difference": round(declared - exp["expected"], 2) if row else None,
         # cash + UPI + that day's wages + that day's overheads, vs the day's
-        # recorded revenue — the comparison behind the automatic meat-sales
-        # adjustment above.
+        # recorded revenue — purely informational (see the comment above
+        # save_dayclose()'s former meat-adjustment functions).
         "wagesToday": round(wages_today, 2),
         "overheadsToday": round(overheads_today, 2),
         "revenueToday": exp["revenue"],
@@ -2254,12 +2202,6 @@ def save_dayclose():
     if not row:
         row = DayClose(branch_id=branch.id, business_date=day)
         db.session.add(row)
-    else:
-        # undo whatever the previous declaration for this day credited/removed
-        # from meat sales BEFORE reading the entries below — re-declaring the
-        # same handover (a correction) must start from the untouched figures,
-        # not stack a second adjustment on top of the first
-        _undo_meat_adjustment(row)
 
     exp = expected_cash(branch.id, day)
     row.cash_amount = cash
@@ -2279,12 +2221,10 @@ def save_dayclose():
 
     # cash + UPI handed over, plus that day's wages and overheads (paid out of
     # the same day's takings before the handover), against what the day's
-    # entry says was actually sold. The difference becomes an automatic
-    # adjustment to that day's meat sales — see _apply_meat_adjustment().
+    # entry says was actually sold. Just reported below, never acted on — see
+    # the comment above this function for why it no longer touches the entry.
     wages_today = labour_for(branch.id, day)["wages"]
     overheads_today = overhead_day_share(branch.id, day)
-    revenue_diff = float(cash + upi) + wages_today + overheads_today - exp["revenue"]
-    _apply_meat_adjustment(row, branch.id, day, revenue_diff)
 
     try:
         db.session.commit()
@@ -2298,9 +2238,10 @@ def save_dayclose():
         row.expected_amount = Decimal(str(exp["expected"]))
         db.session.commit()
     # Report against the figures this declaration was actually measured
-    # against — not a live recompute, which would already include the meat
-    # adjustment just applied above and make a genuine shortfall/excess look
-    # like it was never there.
+    # against, rather than a fresh recompute — entries can keep changing
+    # after a handover is declared (an admin correction, a late edit), and
+    # this response should reflect what was true at the moment of
+    # declaration, not drift with whatever the entry says right now.
     return jsonify(close_payload(branch, day, exp=exp, wages_today=wages_today,
                                  overheads_today=overheads_today)), 201
 

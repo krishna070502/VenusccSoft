@@ -2133,23 +2133,32 @@ def test_v10_reconciliation():
     close_over = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_over,
                                                     "cash": revenue / 2 + 500,
                                                     "upi": revenue / 2 + 500}).get_json()
-    case("Meat reconciliation", "₹1,000 more handed over than revenue credits 5,000g of meat",
-         "+₹1000 at ₹200/kg = +5000g", 5000, lambda: close_over["close"]["meatAdjustG"])
+    # A mismatched handover used to silently rewrite the entry's skin_sold_g
+    # to force the books to balance — even on an already-approved entry. That
+    # auto-adjustment mechanism has been removed entirely (see the comment
+    # above save_dayclose() in api.py): a handover is purely a cash-vs-books
+    # report now, and never touches the entry it's reporting against.
+    case("Meat reconciliation", "₹1,000 over handed over is reported, but no adjustment field remains",
+         "meatAdjustG absent/0", True,
+         lambda: not close_over["close"].get("meatAdjustG"))
     refetched = ADMIN.get(f"/api/entries/{e_over['id']}").get_json()
-    case("Meat reconciliation", "The entry's meat sold actually increased",
-         "skinSoldG +5000g", skin_before + 5000, lambda: refetched["skinSoldG"])
-    case("Meat reconciliation", "A note explaining the adjustment is left on the entry",
-         "mentions 'extra meat sold'", True,
-         lambda: "extra meat sold" in refetched["notes"])
+    case("Meat reconciliation", "The entry's meat sold is completely untouched by the surplus",
+         "skinSoldG unchanged", skin_before, lambda: refetched["skinSoldG"])
+    case("Meat reconciliation", "No note is added to the entry either",
+         "notes unchanged", e_over["notes"], lambda: refetched["notes"])
+    case("Meat reconciliation", "The mismatch still shows up in the informational revenue-difference figure",
+         "declared ₹1000 over collectedTotal-vs-revenue", 1000.0,
+         lambda: close_over["revenueDifference"])
 
-    # re-declaring the same day balanced should UNDO the adjustment, not stack it
+    # re-declaring the same day balanced does not touch the entry either
     balanced = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_over,
                                                   "cash": revenue / 2, "upi": revenue / 2}).get_json()
-    case("Meat reconciliation", "Re-declaring it balanced undoes the earlier credit",
-         "meatAdjustG back to 0", 0, lambda: balanced["close"]["meatAdjustG"])
+    case("Meat reconciliation", "Re-declaring it balanced still reports no adjustment field",
+         "meatAdjustG absent/0", True,
+         lambda: not balanced["close"].get("meatAdjustG"))
     back = ADMIN.get(f"/api/entries/{e_over['id']}").get_json()
-    case("Meat reconciliation", "...and the entry's meat sold reverts too",
-         "skinSoldG back to " + str(skin_before), skin_before, lambda: back["skinSoldG"])
+    case("Meat reconciliation", "...and the entry's meat sold is still untouched",
+         "skinSoldG unchanged throughout", skin_before, lambda: back["skinSoldG"])
 
     # shortfall — a different day, so it is independent of the case above
     day_short = D(503)
@@ -2159,15 +2168,15 @@ def test_v10_reconciliation():
     close_short = ADMIN.post("/api/dayclose", json={"branch": "B02", "date": day_short,
                                                      "cash": revenue2 / 2 - 400,
                                                      "upi": revenue2 / 2 - 400}).get_json()
-    case("Meat reconciliation", "₹800 less handed over than revenue removes 4,000g of meat",
-         "-₹800 at ₹200/kg = -4000g", -4000, lambda: close_short["close"]["meatAdjustG"])
+    case("Meat reconciliation", "₹800 short handed over is reported, but no adjustment field remains",
+         "meatAdjustG absent/0", True,
+         lambda: not close_short["close"].get("meatAdjustG"))
     refetched2 = ADMIN.get(f"/api/entries/{e_short['id']}").get_json()
-    case("Meat reconciliation", "The entry's recorded meat sold actually decreased",
-         "skinSoldG -4000g", skin_before2 - 4000, lambda: refetched2["skinSoldG"])
-    case("Meat reconciliation", "A note explaining the shortfall is left on the entry",
-         "mentions 'reduced meat sales'", True,
-         lambda: "reduced meat sales" in refetched2["notes"])
-    case("Meat reconciliation", "The classic declared-vs-expected figure is unaffected by its own adjustment",
+    case("Meat reconciliation", "The entry's recorded meat sold is completely untouched by the shortfall",
+         "skinSoldG unchanged", skin_before2, lambda: refetched2["skinSoldG"])
+    case("Meat reconciliation", "No note is added for the shortfall either",
+         "notes unchanged", e_short["notes"], lambda: refetched2["notes"])
+    case("Meat reconciliation", "The classic declared-vs-expected figure still reports the shortfall",
          "still short by exactly ₹800", -800.0, lambda: close_short["difference"])
 
 
