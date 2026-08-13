@@ -78,7 +78,7 @@ function kindDef(v){ return CUSTOMER_KINDS.filter(function(k){ return k.v===v; }
 
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
           customers:[], receipts:[], custTotals:{}, closes:[],
-          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, closeHistory:[],
+          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null };
@@ -1729,26 +1729,14 @@ function renderWorkers(){
   $('pkPaid').textContent=money0(tot.paid+tot.ded);
   $('pkBalance').textContent=money0(tot.bal);
 
-  /* ledger */
-  var m=$('wkMonth').value||todayISO().slice(0,7);
-  var rows=S.ledger.filter(function(l){ return l.branch===S.branch && String(l.date).slice(0,7)===m; })
-    .sort(function(a,b){ return a.date<b.date?1:-1; });
-  $('ledgerBody').innerHTML=rows.length?rows.map(function(l){
-    var w=S.workers.filter(function(x){return x.id===l.workerId;})[0];
-    var def=LEDGER_TYPES[l.type]||{t:l.type,effect:'none'};
-    var eff=def.effect==='earn'?['bg-emerald-100 text-emerald-800','Adds to balance']
-      :def.effect==='settle'?['bg-slate-200 text-slate-700','Reduces balance']
-      :['bg-amber-100 text-amber-800','Company paid — not deducted'];
-    return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+l.date+'</td>'+
-      '<td class="px-4 py-2.5">'+esc(w?w.name:'—')+'</td>'+
-      '<td class="px-4 py-2.5 text-slate-600">'+esc(def.t)+(l.type==='work'?' ('+num(l.days)+'d)':'')+'</td>'+
-      '<td class="px-4 py-2.5 text-slate-500 text-xs">'+esc(l.note||'')+'</td>'+
-      '<td class="px-4 py-2.5 text-right num font-semibold">'+money0(l.amount)+'</td>'+
-      '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+eff[0]+'">'+eff[1]+'</span></td>'+
-      '<td class="px-4 py-2.5 text-right whitespace-nowrap">'+
-        ((isAdmin()||l.type==='work')?'<button data-lact="edit" data-id="'+l.id+'" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>':'')+
-        '<button data-lact="del" data-id="'+l.id+'" title="Delete" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button></td></tr>';
-  }).join(''):'<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No ledger entries for '+m+'.</td></tr>';
+  /* ledger — itemized transaction log, admin only; keeps its own from/to
+     range instead of piggy-backing on this render's single "date" */
+  if($('wkWorkerFilter')){
+    var curWkFilter=$('wkWorkerFilter').value;
+    $('wkWorkerFilter').innerHTML='<option value="">All workers</option>'+
+      ws.map(function(w){ return '<option value="'+w.id+'"'+(w.id===curWkFilter?' selected':'')+'>'+esc(w.name)+'</option>'; }).join('');
+  }
+  renderLedgerLog();
 }
 
 /* One row per day, built straight from the ledger records, so the dashboard
@@ -3295,6 +3283,48 @@ function renderOverheadLedger() {
     }).catch(apiFail);
 }
 
+/* ---------------- worker ledger — itemized log, date range + filters ---------------- */
+function renderLedgerLog() {
+  if (!$('ledgerBody') || !isAdmin() || !S.branch) return;
+  var from = $('wkFrom').value || monthStart();
+  var to = $('wkTo').value || todayISO();
+  var workerId = $('wkWorkerFilter') ? $('wkWorkerFilter').value : '';
+  var type = $('wkTypeFilter') ? $('wkTypeFilter').value : '';
+  var qs = '/ledger?branch=' + encodeURIComponent(S.branch) + '&from=' + from + '&to=' + to
+    + (workerId ? '&workerId=' + encodeURIComponent(workerId) : '')
+    + (type ? '&type=' + encodeURIComponent(type) : '');
+  api('GET', qs).then(function (d) {
+    S.wkLedger = d;
+    var rows = d.rows || [];
+    $('ledgerBody').innerHTML = rows.length ? rows.map(function (l) {
+      var def = LEDGER_TYPES[l.type] || { t: l.type, effect: 'none' };
+      var eff = def.effect === 'earn' ? ['bg-emerald-100 text-emerald-800', 'Adds to balance']
+        : def.effect === 'settle' ? ['bg-slate-200 text-slate-700', 'Reduces balance']
+        : ['bg-amber-100 text-amber-800', 'Company paid — not deducted'];
+      return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">' + l.date + '</td>' +
+        '<td class="px-4 py-2.5">' + esc(l.workerName || '—') + '</td>' +
+        '<td class="px-4 py-2.5 text-slate-600">' + esc(def.t) + (l.type === 'work' ? ' (' + num(l.days) + 'd)' : '') + '</td>' +
+        '<td class="px-4 py-2.5 text-slate-500 text-xs">' + esc(l.note || '') + '</td>' +
+        '<td class="px-4 py-2.5 text-right num font-semibold">' + money0(l.amount) + '</td>' +
+        '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full ' + eff[0] + '">' + eff[1] + '</span></td>' +
+        '<td class="px-4 py-2.5 text-right whitespace-nowrap">' +
+          ((isAdmin() || l.type === 'work') ? '<button data-lact="edit" data-id="' + l.id + '" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>' : '') +
+          '<button data-lact="del" data-id="' + l.id + '" title="Delete" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button></td></tr>';
+    }).join('') : '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No ledger entries between ' + from + ' and ' + to + '.</td></tr>';
+
+    var s = d.summary || {};
+    $('ledgerFoot').innerHTML = rows.length
+      ? '<tr><td class="px-4 py-2.5" colspan="4">Totals ' + from + ' → ' + to + ' · ' + (s.count || 0) + ' entr' + (s.count === 1 ? 'y' : 'ies') + '</td>' +
+        '<td class="px-4 py-2.5 text-right num">' + money0(s.work || 0) + ' earned</td>' +
+        '<td class="px-4 py-2.5" colspan="2">−' + money0(s.deducted || 0) + ' paid out · net ' + money0(s.net || 0) + '</td></tr>'
+      : '';
+    $('wkLedgerNote').textContent = rows.length
+      ? money0(s.advance || 0) + ' in advances, ' + money0(s.paid || 0) + ' paid, ' +
+        money0((s.tea || 0) + (s.tiffin || 0) + (s.other || 0)) + ' tea/tiffin/other in this range.'
+      : 'Pick a date range to see wage, advance, payment and deduction entries.';
+  }).catch(apiFail);
+}
+
 /* ---------------- labour ---------------- */
 function markAttendance(workerId, days) {
   var date = $('wkDate').value || todayISO();
@@ -3340,7 +3370,12 @@ function adjustWage(workerId) {
    the primary gate. No separate history is kept — this overwrites the row,
    like any other edit in the app. */
 function editLedgerRow(id) {
-  var row = S.ledger.filter(function (x) { return x.id === id; })[0]; if (!row) return;
+  // The itemized ledger log can show entries outside bootstrap()'s loaded
+  // window (its own from/to range hits the server directly) — fall back to
+  // that freshly-fetched set if the row isn't in the bootstrap-loaded S.ledger.
+  var row = S.ledger.filter(function (x) { return x.id === id; })[0]
+    || (S.wkLedger && S.wkLedger.rows.filter(function (x) { return x.id === id; })[0]);
+  if (!row) return;
   if (!isAdmin() && row.type !== 'work') { toast('Only an admin can edit this entry.', 'error'); return; }
   if (!isAdmin() && row.date !== todayISO()) { toast('Only today’s entries can be edited.', 'error'); return; }
   var w = S.workers.filter(function (x) { return x.id === row.workerId; })[0];
@@ -3553,7 +3588,8 @@ function startApp(user, fresh) {
   $('recTo').value = todayISO();
   $('recFrom').disabled = !isAdmin(); $('recTo').disabled = !isAdmin();
   $('recFrom').title = $('recTo').title = isAdmin() ? '' : 'Supervisors can only see today’s entry.';
-  $('wkDate').value = todayISO(); $('wkMonth').value = todayISO().slice(0, 7);
+  $('wkDate').value = todayISO();
+  $('wkFrom').value = monthStart(); $('wkTo').value = todayISO();
   $('dwFrom').value = monthStart(); $('dwTo').value = todayISO();
   $('ovhMonth').value = todayISO().slice(0, 7);
   $('ovhFrom').value = monthStart(); $('ovhTo').value = todayISO();
@@ -3806,7 +3842,25 @@ function wire() {
 
   /* ---- labour ---- */
   $('wkDate').addEventListener('change', renderWorkers);
-  $('wkMonth').addEventListener('change', renderWorkers);
+  ['wkFrom', 'wkTo', 'wkWorkerFilter', 'wkTypeFilter'].forEach(function (id) {
+    $(id).addEventListener('change', renderLedgerLog);
+  });
+  $('wkThisMonth').addEventListener('click', function () {
+    $('wkFrom').value = monthStart(); $('wkTo').value = todayISO(); renderLedgerLog();
+  });
+  $('wkExport').addEventListener('click', function () {
+    var d = S.wkLedger; if (!d || !d.rows.length) return;
+    var out = [['Date', 'Worker', 'Type', 'Note', 'Amount']];
+    d.rows.forEach(function (l) {
+      var def = LEDGER_TYPES[l.type] || { t: l.type };
+      out.push([l.date, l.workerName || '', def.t, l.note || '', l.amount]);
+    });
+    var csv = out.map(function (row) {
+      return row.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+    }).join('\r\n');
+    download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }),
+      'VCC_ledger_' + d.from + '_to_' + d.to + '.csv');
+  });
   ['dwFrom', 'dwTo'].forEach(function (id) { $(id).addEventListener('change', renderDayWise); });
   $('dwMonth').addEventListener('click', function () {
     $('dwFrom').value = monthStart(); $('dwTo').value = todayISO(); renderDayWise();

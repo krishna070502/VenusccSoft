@@ -759,9 +759,27 @@
     </div>
 
     <div data-admin="1" class="card overflow-hidden">
-      <div class="px-5 py-3 bg-slate-100 flex items-center gap-2">
-        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Ledger entries — transaction log</h3>
-        <div class="ml-auto"><input type="month" id="wkMonth" class="inp" /></div>
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-2">
+        <div><h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Ledger entries — transaction log</h3>
+          <span class="text-xs text-slate-400" id="wkLedgerNote">Pick a date range to see wage, advance, payment and deduction entries.</span></div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="wkFrom" title="Start of the date range for this ledger — admin only.">From</label><input type="date" id="wkFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="wkTo" title="End of the date range for this ledger — admin only.">To</label><input type="date" id="wkTo" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="wkWorkerFilter" title="Show entries for one worker only.">Worker</label>
+            <select id="wkWorkerFilter" class="inp !py-1.5 !text-xs"><option value="">All workers</option></select></div>
+          <div><label class="lbl" for="wkTypeFilter" title="Show only one kind of entry — wage, advance, payment or deduction.">Type</label>
+            <select id="wkTypeFilter" class="inp !py-1.5 !text-xs">
+              <option value="">All types</option>
+              <option value="work">Wage</option>
+              <option value="advance">Advance</option>
+              <option value="paid">Payment</option>
+              <option value="tea">Tea</option>
+              <option value="tiffin">Tiffin</option>
+              <option value="other">Other</option>
+            </select></div>
+          <button id="wkThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Jump the date range to this calendar month.">This month</button>
+          <button id="wkExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as a CSV file."><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+        </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
@@ -774,6 +792,7 @@
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right"></th>
         </tr></thead>
         <tbody id="ledgerBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="ledgerFoot" class="bg-slate-50 font-bold text-slate-800"></tfoot>
       </table></div>
     </div>
   </section>

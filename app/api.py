@@ -1632,6 +1632,67 @@ def delete_worker(worker_id):
     return jsonify({"ok": True})
 
 
+@bp.get("/ledger")
+@admin_required
+def list_ledger():
+    """
+    Itemized worker ledger — wages, advances, deductions, tea/tiffin, other
+    payments — over a date range, with optional worker and type filters.
+    This is the "monitor advances/deductions over time" screen.
+
+    Admin only, same as every other historical Workers view (the day-wise
+    table, the old month-only transaction log): a supervisor's Workers
+    screen only ever shows today, never a browsable past — see
+    add_ledger()/update_ledger() below for the matching write-side floor.
+    """
+    bids = visible_branch_ids()
+    if not bids:
+        return jsonify({"rows": [], "summary": {}, "from": None, "to": None})
+    if request.args.get("branch"):
+        b = branch_by_code(request.args["branch"])
+        err = require_branch(request.args["branch"])
+        if err:
+            return err
+        bids = [b.id] if b else []
+
+    to_day = parse_date(request.args.get("to"), date.today(), field="to")
+    from_day = parse_date(request.args.get("from"), to_day.replace(day=1), field="from")
+    if from_day > to_day:
+        from_day, to_day = to_day, from_day
+
+    q = (LabourLedger.query
+         .options(joinedload(LabourLedger.branch), joinedload(LabourLedger.worker))
+         .filter(LabourLedger.branch_id.in_(bids),
+                 LabourLedger.entry_date >= from_day,
+                 LabourLedger.entry_date <= to_day))
+    if request.args.get("workerId"):
+        q = q.filter(LabourLedger.worker_id == request.args["workerId"])
+    if request.args.get("type") in ("work", "paid", "advance", "tea", "tiffin", "other"):
+        q = q.filter(LabourLedger.kind == request.args["type"])
+
+    rows = (q.order_by(LabourLedger.entry_date.desc(), LabourLedger.created_at.desc())
+            .limit(MAX_PAGE).all())
+
+    kinds = ("work", "paid", "advance", "tea", "tiffin", "other")
+    summary = {k: 0.0 for k in kinds}
+    for r in rows:
+        summary[r.kind] += float(r.amount)
+    for k in kinds:
+        summary[k] = round(summary[k], 2)
+    # "work" is what was earned; everything else is money that left the shop
+    # against a worker's name (a payment, an advance, or a shop-paid extra).
+    summary["deducted"] = round(summary["paid"] + summary["advance"]
+                                + summary["tea"] + summary["tiffin"] + summary["other"], 2)
+    summary["net"] = round(summary["work"] - summary["deducted"], 2)
+    summary["count"] = len(rows)
+
+    return jsonify({
+        "rows": [dict(r.to_dict(), workerName=r.worker.name) for r in rows],
+        "summary": summary,
+        "from": from_day.isoformat(), "to": to_day.isoformat(),
+    })
+
+
 @bp.post("/ledger")
 @login_required
 def add_ledger():

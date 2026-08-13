@@ -230,6 +230,7 @@ def test_rbac():
                   ("PUT", "/api/settings", {"tolerance": 9}),
                   ("GET", "/api/activity", None),
                   ("DELETE", "/api/activity", None),
+                  ("GET", "/api/ledger", None),
                   ("POST", "/api/admin/seed", {})]
     for method, path, body in admin_only:
         case("RBAC", f"Supervisor blocked from {method} {path}",
@@ -2510,6 +2511,63 @@ def test_v14_opening_figures_admin_only():
 
 
 # ===========================================================================
+# 20c. Itemized worker ledger — date range, worker and type filters
+# ===========================================================================
+def test_v15_ledger_filters():
+    print("\n[26] Worker ledger — date range and filter options")
+
+    w1 = ADMIN.post("/api/workers", json={"branch": "B01", "name": "Filter Test Dresser",
+                                          "role": "dresser", "dayWage": 550}).get_json()
+    w2 = ADMIN.post("/api/workers", json={"branch": "B01", "name": "Filter Test Cutter",
+                                          "role": "cutter", "dayWage": 500}).get_json()
+
+    # spread across distinct days so a from/to range can isolate them
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w1["id"], "date": D(520),
+                                    "type": "work", "days": 1})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w1["id"], "date": D(521),
+                                    "type": "advance", "amount": 300})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w2["id"], "date": D(521),
+                                    "type": "work", "days": 1})
+    ADMIN.post("/api/ledger", json={"branch": "B01", "workerId": w2["id"], "date": D(524),
+                                    "type": "paid", "amount": 250})
+
+    full = ADMIN.get(f"/api/ledger?branch=B01&from={D(520)}&to={D(524)}").get_json()
+    case("Ledger filters", "The date range picks up every entry inside it",
+         "4 rows", 4, lambda: len(full["rows"]))
+    case("Ledger filters", "...and none outside it",
+         "D(524) excluded when the range stops at D(521)", 3,
+         lambda: len(ADMIN.get(f"/api/ledger?branch=B01&from={D(520)}&to={D(521)}").get_json()["rows"]))
+    case("Ledger filters", "The summary totals wages separately from money paid out",
+         "550 (w1) + 500 (w2) earned", 1050.0, lambda: full["summary"]["work"])
+    case("Ledger filters", "...advances count toward 'deducted'",
+         "300 advance + 250 paid = 550 deducted", 550.0, lambda: full["summary"]["deducted"])
+    case("Ledger filters", "...net is earned minus deducted",
+         "1050 - 550 = 500", 500.0, lambda: full["summary"]["net"])
+
+    by_worker = ADMIN.get(f"/api/ledger?branch=B01&from={D(520)}&to={D(524)}&workerId={w1['id']}").get_json()
+    case("Ledger filters", "Filtering by worker narrows to just their rows",
+         "2 rows for w1", 2, lambda: len(by_worker["rows"]))
+    case("Ledger filters", "...and every row belongs to that worker",
+         "all workerId==w1", True,
+         lambda: all(r["workerId"] == w1["id"] for r in by_worker["rows"]))
+
+    by_type = ADMIN.get(f"/api/ledger?branch=B01&from={D(520)}&to={D(524)}&type=advance").get_json()
+    case("Ledger filters", "Filtering by type narrows to just that kind",
+         "1 advance row", 1, lambda: len(by_type["rows"]))
+    case("Ledger filters", "Each row carries the worker's name for display",
+         "Filter Test Dresser", "Filter Test Dresser",
+         lambda: by_type["rows"][0]["workerName"])
+
+    case("Ledger filters", "A supervisor cannot reach the itemized ledger at all",
+         "403 — admin only, like the rest of Workers history", 403,
+         lambda: SUP.get(f"/api/ledger?branch=B01&from={D(520)}&to={D(524)}").status_code)
+
+    swapped = ADMIN.get(f"/api/ledger?branch=B01&from={D(524)}&to={D(520)}").get_json()
+    case("Ledger filters", "A backwards range (from after to) is tolerated, not a crash",
+         "still the same 4 rows", 4, lambda: len(swapped["rows"]))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2670,6 +2728,7 @@ if __name__ == "__main__":
     test_v12_supervisor_today_only()
     test_v13_dayclose_lock_and_overhead_edit()
     test_v14_opening_figures_admin_only()
+    test_v15_ledger_filters()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
