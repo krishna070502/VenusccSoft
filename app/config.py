@@ -51,9 +51,11 @@ class Config:
     SESSION_COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "0") == "1"
     PERMANENT_SESSION_LIFETIME = timedelta(hours=12)
 
-    # Idle timeouts, in minutes, enforced on the server as well as in the UI
+    # Idle timeout, in minutes, enforced on the server as well as in the UI.
+    # Admin has no entry here on purpose — idle_limit_minutes() in security.py
+    # hardcodes admin to unlimited (no auto-logout at all), so this dict only
+    # ever needs to cover roles that actually get timed out.
     IDLE_MINUTES = {
-        "admin": int(os.environ.get("IDLE_ADMIN_MIN", 2)),
         "supervisor": int(os.environ.get("IDLE_SUPERVISOR_MIN", 10)),
     }
 

@@ -50,7 +50,10 @@ var LEDGER_TYPES = {
   other:  { t:'Other shop cost',effect:'none',    shop:true  }
 };
 
-var IDLE_MS = { admin: 2*60*1000, supervisor: 10*60*1000 };
+/* Admin has no idle limit at all — Infinity here is just the safe fallback
+   before bootstrap()'s real (server-configured) value arrives; tickSession()
+   also short-circuits for admin so the countdown pill/warning never show. */
+var IDLE_MS = { admin: Infinity, supervisor: 10*60*1000 };
 var IDLE_WARN = 30*1000;
 
 /* Hotels & hostels buy under the counter rate. PRODUCTS keeps the three
@@ -355,6 +358,13 @@ function bumpActivity(){ if(S.user) S.lastAct=Date.now(); }
 
 function tickSession(){
   if(!S.user) return;
+  if(isAdmin()){
+    /* No idle auto-logout for admin at all — no countdown pill, no warning
+       modal, nothing to tick. Server-side idle_limit_minutes() agrees. */
+    $('sessionPill').classList.add('hidden');
+    var idm=$('idleModal'); if(idm && !idm.classList.contains('hidden')) idm.classList.add('hidden');
+    return;
+  }
   var left=idleMs()-(Date.now()-S.lastAct);
   if(left<=0){ autoLogout(); return; }
   var s=Math.ceil(left/1000);
@@ -430,7 +440,9 @@ function applyRbac(){
   qsa('[data-admin]').forEach(function(el){ el.classList.toggle('hidden',!isAdmin()); });
   qsa('[data-sup]').forEach(function(el){ el.classList.toggle('hidden',isAdmin()); });
   $('idleLimitTxt').textContent=(idleMs()/60000);
-  $('sessionPill').classList.remove('hidden');
+  /* No countdown pill for admin — there's nothing counting down (see
+     tickSession(), which also hides it on every tick as a backstop). */
+  $('sessionPill').classList.toggle('hidden', isAdmin());
   $('navRecordsLabel').textContent=isAdmin()?'Approvals':'My Entries';
   $('userName').textContent=S.user.name;
   $('userRole').textContent=S.user.role;
@@ -2544,7 +2556,10 @@ function bootstrap() {
     S.window = d.window ? { from: d.window.from, to: d.window.to } : null;
     S.users = d.users || [];
     S.settings = d.settings || {};
-    IDLE_MS[d.user.role] = (d.idleMinutes || 10) * 60 * 1000;
+    // idleMinutes is null for a role with no idle limit (admin) — Infinity
+    // keeps tickSession()'s math sane even if its early admin return above
+    // is ever bypassed.
+    IDLE_MS[d.user.role] = d.idleMinutes == null ? Infinity : d.idleMinutes * 60 * 1000;
     return d;
   });
 }

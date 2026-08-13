@@ -25,7 +25,8 @@ if os.path.exists(TMP_DB):
     os.remove(TMP_DB)
 os.environ["DATABASE_URL"] = f"sqlite:///{TMP_DB}"
 os.environ["SECRET_KEY"] = "test-suite-only"
-os.environ["IDLE_ADMIN_MIN"] = "2"
+# Admin has no idle limit at all any more (see idle_limit_minutes() in
+# security.py) — only supervisor is configurable.
 os.environ["IDLE_SUPERVISOR_MIN"] = "10"
 
 from app import create_app                                    # noqa: E402
@@ -169,7 +170,8 @@ def test_auth():
          lambda: ANON.get("/api/bootstrap").status_code)
     case("Authentication", "Logout ends the session", "POST /api/logout then /api/me", None,
          lambda: _logout_then_me())
-    case("Session", "Admin idle limit is 2 minutes", "login as admin", 2,
+    case("Session", "Admin has no idle limit — never auto-logged-out",
+         "login as admin", None,
          lambda: app.test_client().post("/api/login",
                                         json={"username": "admin", "password": "admin123"}
                                         ).get_json()["idleMinutes"])
@@ -179,9 +181,12 @@ def test_auth():
                                         ).get_json()["idleMinutes"])
     case("Session", "Heartbeat keeps the session alive", "POST /api/heartbeat", 200,
          lambda: ADMIN.post("/api/heartbeat", json={}).status_code)
-    case("Session", "Expired session is rejected server-side",
-         "last_seen pushed 3 min into the past (admin limit 2)", 401,
+    case("Session", "An admin session survives even after a long idle gap",
+         "last_seen pushed 3 hours into the past, no limit applies", 200,
          lambda: _expire_admin_session())
+    case("Session", "A supervisor's session is rejected once past their 10-minute limit",
+         "last_seen pushed 11 min into the past", 401,
+         lambda: _expire_supervisor_session())
 
 
 def _pw_hashed():
@@ -202,7 +207,16 @@ def _expire_admin_session():
     c = app.test_client()
     c.post("/api/login", json={"username": "admin", "password": "admin123"})
     with c.session_transaction() as s:
-        s["last_seen"] = time.time() - 3 * 60          # 3 minutes ago
+        s["last_seen"] = time.time() - 3 * 60 * 60      # 3 hours ago
+    return c.get("/api/bootstrap").status_code
+
+
+def _expire_supervisor_session():
+    import time
+    c = app.test_client()
+    c.post("/api/login", json={"username": "ravi", "password": "ravi123"})
+    with c.session_transaction() as s:
+        s["last_seen"] = time.time() - 11 * 60          # 11 minutes ago
     return c.get("/api/bootstrap").status_code
 
 
@@ -1988,7 +2002,11 @@ def test_scale():
          lambda: isinstance(ADMIN.get("/api/entries").get_json(), list))
 
     # photos
-    eid = ADMIN.get("/api/entries?page=1&pageSize=1").get_json()["rows"][0]["id"]
+    # Pinned to B01 explicitly — an unfiltered "page=1" tiebreaks same-date
+    # rows by id (a UUID), so without this it occasionally hands back a B02
+    # row instead and the "supervisor cannot read another branch's photos"
+    # check below flakes on whichever branch happened to sort first.
+    eid = ADMIN.get("/api/entries?branch=B01&page=1&pageSize=1").get_json()["rows"][0]["id"]
     blob = "data:image/jpeg;base64," + ("A" * 40_000)
     ADMIN.put(f"/api/entries/{eid}", json={"photos": [blob], "photosLoaded": True})
     listed = [e for e in ADMIN.get("/api/entries?page=1&pageSize=50").get_json()["rows"]

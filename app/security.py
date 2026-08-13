@@ -35,7 +35,15 @@ def log_activity(action: str, detail: str = "", user: User | None = None,
 # --------------------------------------------------------------------------
 # Session
 # --------------------------------------------------------------------------
-def idle_limit_minutes(role: str) -> int:
+def idle_limit_minutes(role: str) -> int | None:
+    """
+    Minutes of no activity before a session is force-ended — or None for a
+    role that is never auto-logged-out. An admin's session now stays open
+    indefinitely (see load_current_user(), which skips the idle check
+    entirely when this returns None); only a supervisor is timed out.
+    """
+    if role == "admin":
+        return None
     return current_app.config["IDLE_MINUTES"].get(role, 10)
 
 
@@ -67,14 +75,15 @@ def load_current_user() -> tuple[User | None, str | None]:
         end_session()
         return None, "account_disabled"
 
-    limit = idle_limit_minutes(user.role) * 60
-    last = session.get("last_seen", 0)
+    limit_min = idle_limit_minutes(user.role)
     now = datetime.now(timezone.utc).timestamp()
-    if now - last > limit:
-        log_activity("Auto logout", f"Idle for {idle_limit_minutes(user.role)} minutes", user=user)
-        db.session.commit()
-        end_session()
-        return None, "idle_timeout"
+    if limit_min is not None:
+        last = session.get("last_seen", 0)
+        if now - last > limit_min * 60:
+            log_activity("Auto logout", f"Idle for {limit_min} minutes", user=user)
+            db.session.commit()
+            end_session()
+            return None, "idle_timeout"
 
     session["last_seen"] = now
     return user, None
