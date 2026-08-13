@@ -230,12 +230,15 @@ def test_rbac():
                   ("PUT", "/api/settings", {"tolerance": 9}),
                   ("GET", "/api/activity", None),
                   ("DELETE", "/api/activity", None),
-                  ("POST", "/api/admin/seed", {}),
-                  ("POST", "/api/admin/wipe", {})]
+                  ("POST", "/api/admin/seed", {})]
     for method, path, body in admin_only:
         case("RBAC", f"Supervisor blocked from {method} {path}",
              "logged in as supervisor", 403,
              lambda m=method, p=path, b=body: getattr(SUP, m.lower())(p, json=b).status_code)
+
+    case("RBAC", "The 'wipe everything' capability is gone entirely, even for an admin",
+         "POST /api/admin/wipe", 404,
+         lambda: ADMIN.post("/api/admin/wipe", json={}).status_code)
 
     case("RBAC", "Supervisor sees only assigned branches",
          "ravi assigned B01 only", ["B01"],

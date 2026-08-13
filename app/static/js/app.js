@@ -2416,8 +2416,6 @@ function wire(){
     if(confirm('Replace all entries, workers and ledger with a 14-day demo dataset?')){
       seedDemo(); logAct('Loaded demo data',''); renderAdmin(); renderActivity(); renderRecords(); renderDashboard(); renderWorkers(); updatePendingBadge(); loadEntry(null); toast('Demo data loaded.'); }
   });
-  $('btnWipe').addEventListener('click',function(){ if(confirm('Permanently delete ALL data?')){ DB.clearAll(); location.reload(); } });
-
   ['reviewModal','genModal','lightbox'].forEach(function(id){
     $(id).addEventListener('click',function(ev){ if(ev.target.closest('[data-close]')) closeModal(id); });
   });
@@ -4054,13 +4052,6 @@ function wire() {
       .then(function () { renderAdmin(); refreshAllViews(); loadEntry(null); toast('Demo data loaded.'); })
       .catch(apiFail);
   });
-  $('btnWipe').addEventListener('click', function () {
-    if (!confirm('Permanently delete ALL operational data on the server?')) return;
-    api('POST', '/admin/wipe', {}).then(function () { return bootstrap(); })
-      .then(function () { renderAdmin(); refreshAllViews(); loadEntry(null); toast('All data cleared.', 'warn'); })
-      .catch(apiFail);
-  });
-
   /* ---- modals ---- */
   ['reviewModal', 'genModal', 'lightbox'].forEach(function (id) {
     $(id).addEventListener('click', function (ev) { if (ev.target.closest('[data-close]')) closeModal(id); });

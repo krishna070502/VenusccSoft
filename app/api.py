@@ -2380,22 +2380,3 @@ def admin_seed():
     return jsonify({"ok": True, **counts})
 
 
-@bp.post("/admin/wipe")
-@admin_required
-def admin_wipe():
-    """Clears operational data. Users and branches survive so you can log back in."""
-    ActivityLog.query.delete()
-    Overhead.query.delete()
-    LabourLedger.query.delete()
-    Worker.query.delete()
-    DayClose.query.delete()
-    CustomerPayment.query.delete()
-    CustomerSale.query.delete()
-    Customer.query.delete()
-    MortalityPhoto.query.delete()
-    Purchase.query.delete()
-    DailyEntry.query.delete()
-    log_activity("Wiped operational data",
-                 "entries, labour, hotels and overheads removed")
-    db.session.commit()
-    return jsonify({"ok": True})

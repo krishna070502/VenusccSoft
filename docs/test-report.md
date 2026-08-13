@@ -89,7 +89,7 @@
 | TC-023 | RBAC | Supervisor blocked from GET /api/activity | logged in as supervisor | 403 | 403 | PASS |
 | TC-024 | RBAC | Supervisor blocked from DELETE /api/activity | logged in as supervisor | 403 | 403 | PASS |
 | TC-025 | RBAC | Supervisor blocked from POST /api/admin/seed | logged in as supervisor | 403 | 403 | PASS |
-| TC-026 | RBAC | Supervisor blocked from POST /api/admin/wipe | logged in as supervisor | 403 | 403 | PASS |
+| TC-026 | RBAC | The 'wipe everything' capability is gone entirely, even for an admin | POST /api/admin/wipe | 404 | 404 | PASS |
 | TC-027 | RBAC | Supervisor sees only assigned branches | ravi assigned B01 only | ['B01'] | ['B01'] | PASS |
 | TC-028 | RBAC | A second supervisor sees a different branch | priya assigned B02 only | ['B02'] | ['B02'] | PASS |
 | TC-029 | RBAC | Admin sees every branch | admin | 2 | 2 | PASS |
