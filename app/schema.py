@@ -21,7 +21,9 @@ drop or alter existing columns: removing data is never something a start-up
 script should decide to do on its own.
 """
 
-from sqlalchemy import inspect, text
+import re
+
+from sqlalchemy import CheckConstraint, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.schema import CreateIndex
 
@@ -85,7 +87,7 @@ def upgrade_schema(verbose: bool = True) -> dict:
     engine = db.engine
     dialect = engine.dialect
     report = {"tablesCreated": [], "columnsAdded": [], "indexesCreated": [],
-              "problems": []}
+              "constraintsSynced": [], "problems": []}
 
     before = set(inspect(engine).get_table_names())
 
@@ -140,10 +142,58 @@ def upgrade_schema(verbose: bool = True) -> dict:
                 if not _already_there(exc):
                     report["problems"].append(f"index {index.name}: {exc}")
 
+    # ---- 4. CHECK constraints out of step with the models ------------------
+    # An allow-list CHECK (an entry's category, a customer sale's product...)
+    # changing in the model — say, a new value added — is not a "missing"
+    # column or table, so nothing above notices it. The live database just
+    # goes on silently enforcing the old, narrower list forever, and the
+    # first save that uses the new value fails with a bare IntegrityError
+    # 409 that gives no hint the schema itself is what's stale. Postgres
+    # only: SQLite has no ALTER TABLE ... DROP/ADD CONSTRAINT.
+    #
+    # Every CHECK in this codebase is a plain `col IN ('a','b',...)` allow
+    # list, so comparing the quoted literals found in the model's text
+    # against the ones Postgres reports back (it rewrites the SQL into its
+    # own `= ANY (ARRAY[...])` form, so the two never match verbatim) is
+    # enough to tell whether it's actually stale — a constraint shaped some
+    # other way just has no literals to compare and is left alone.
+    if dialect.name == "postgresql":
+        literals = lambda sql: set(re.findall(r"'([^']*)'", str(sql)))
+        inspector = inspect(engine)
+        ident = dialect.identifier_preparer
+        for table in db.metadata.sorted_tables:
+            if table.name not in after:
+                continue
+            try:
+                live = {c["name"]: literals(c["sqltext"])
+                       for c in inspector.get_check_constraints(table.name) if c.get("name")}
+            except SQLAlchemyError:                           # pragma: no cover
+                continue
+            for constraint in table.constraints:
+                if not isinstance(constraint, CheckConstraint) or not constraint.name:
+                    continue
+                wanted = literals(constraint.sqltext)
+                if not wanted or live.get(constraint.name) == wanted:
+                    continue                      # not an allow-list, or already matches
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f"ALTER TABLE {ident.quote(table.name)} "
+                            f"DROP CONSTRAINT IF EXISTS {ident.quote(constraint.name)}"))
+                        conn.execute(text(
+                            f"ALTER TABLE {ident.quote(table.name)} ADD CONSTRAINT "
+                            f"{ident.quote(constraint.name)} CHECK ({constraint.sqltext})"))
+                    report["constraintsSynced"].append(constraint.name)
+                    if verbose:
+                        print(f"  ~ constraint {constraint.name}")
+                except SQLAlchemyError as exc:
+                    report["problems"].append(f"constraint {constraint.name}: {exc}")
+
     if verbose:
         if report["tablesCreated"]:
             print("  + tables " + ", ".join(report["tablesCreated"]))
-        if not any(report[k] for k in ("tablesCreated", "columnsAdded", "indexesCreated")):
+        if not any(report[k] for k in
+                  ("tablesCreated", "columnsAdded", "indexesCreated", "constraintsSynced")):
             print("  database is already up to date")
     return report
 
