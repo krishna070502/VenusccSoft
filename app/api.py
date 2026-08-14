@@ -626,6 +626,10 @@ def retime_entry(entry: DailyEntry, raw_stamp):
             DailyEntry.business_date == new_date,
             DailyEntry.id != entry.id).first()
         if clash:
+            log_activity("Blocked duplicate entry",
+                         f"{entry.category} · {entry.business_date} → {new_date} · "
+                         f"existing is {clash.status}", branch_code=entry.branch.code)
+            db.session.commit()
             return jsonify({"error": "duplicate",
                             "message": f"A {clash.status} {entry.category} entry already "
                                        f"exists for {new_date}."}), 409
@@ -2110,7 +2114,8 @@ def delete_overhead(ov_id):
 # ==========================================================================
 # end-of-day cash handover
 # ==========================================================================
-def expected_cash(branch_id: int, day: date) -> dict:
+def expected_cash(branch_id: int, day: date, settings=None, entries=None,
+                  receipts=None, labour=None) -> dict:
     """
     What should be in the supervisor's hands at close.
 
@@ -2125,9 +2130,15 @@ def expected_cash(branch_id: int, day: date) -> dict:
 
     Credit sales are excluded entirely — they land on the customer's ledger
     instead, and turn into cash on the day a receipt is recorded.
+
+    `settings`/`entries`/`receipts`/`labour` let a caller that already has
+    these for a whole date range (see dayclose_history()) pass them straight
+    in instead of this function re-querying per branch+day — the single-day
+    callers below don't have them handy, so they're left to query as before.
     """
-    settings = get_settings()
-    entries = DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).all()
+    settings = get_settings() if settings is None else settings
+    entries = (DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).all()
+              if entries is None else entries)
 
     counter = live = cutting = hotel_cash = 0.0
     hotel_credit = revenue = 0.0
@@ -2141,10 +2152,12 @@ def expected_cash(branch_id: int, day: date) -> dict:
         hotel_credit += c["hotelCredit"]
         revenue += c["revenue"]
 
-    receipts = sum(float(p.amount) for p in CustomerPayment.query.filter_by(
-        branch_id=branch_id, pay_date=day).all())
+    receipts = (CustomerPayment.query.filter_by(branch_id=branch_id, pay_date=day).all()
+               if receipts is None else receipts)
+    receipts = sum(float(p.amount) for p in receipts)
 
-    lab = LabourLedger.query.filter_by(branch_id=branch_id, entry_date=day).all()
+    lab = (LabourLedger.query.filter_by(branch_id=branch_id, entry_date=day).all()
+          if labour is None else labour)
     wages_paid = sum(float(r.amount) for r in lab if r.kind in ("paid", "advance"))
     shop_costs = sum(float(r.amount) for r in lab if r.kind in SHOP_KINDS)
     paid_out = wages_paid + shop_costs
@@ -2342,13 +2355,46 @@ def dayclose_history():
         codes = [request.args["branch"]]
     branches = (Branch.query.filter(Branch.code.in_(codes))
                 .order_by(Branch.code).all()) if codes else []
+    bids = [b.id for b in branches]
+
+    # One query per table for the whole range+branch set, then grouped in
+    # Python by (branch_id, date) below — this used to call expected_cash()
+    # (itself several queries) and a DayClose lookup separately for every
+    # single branch+day pair, which on a 30-day/6-branch view meant hundreds
+    # of round trips to the database on every dashboard load. Same fix as
+    # bootstrap()'s overheads query (see that commit).
+    settings = get_settings()
+
+    def _group(rows, date_attr):
+        g_ = {}
+        for r in rows:
+            g_.setdefault((r.branch_id, getattr(r, date_attr)), []).append(r)
+        return g_
+
+    entries_by = _group(DailyEntry.query.filter(
+        DailyEntry.branch_id.in_(bids), DailyEntry.business_date.between(from_day, to_day)
+    ).all() if bids else [], "business_date")
+    receipts_by = _group(CustomerPayment.query.filter(
+        CustomerPayment.branch_id.in_(bids), CustomerPayment.pay_date.between(from_day, to_day)
+    ).all() if bids else [], "pay_date")
+    labour_by = _group(LabourLedger.query.filter(
+        LabourLedger.branch_id.in_(bids), LabourLedger.entry_date.between(from_day, to_day)
+    ).all() if bids else [], "entry_date")
+    closes_by = {(r.branch_id, r.business_date): r for r in (DayClose.query.options(
+        joinedload(DayClose.declared_by)).filter(
+        DayClose.branch_id.in_(bids), DayClose.business_date.between(from_day, to_day)
+    ).all() if bids else [])}
 
     out = []
     day = to_day
     while day >= from_day:
         for b in branches:
-            exp = expected_cash(b.id, day)
-            row = DayClose.query.filter_by(branch_id=b.id, business_date=day).first()
+            key = (b.id, day)
+            exp = expected_cash(b.id, day, settings=settings,
+                                entries=entries_by.get(key, []),
+                                receipts=receipts_by.get(key, []),
+                                labour=labour_by.get(key, []))
+            row = closes_by.get(key)
             if not row and exp["entries"] == 0 and abs(exp["expected"]) < 0.005:
                 continue                      # nothing traded, nothing to close
             declared = (float(row.cash_amount) + float(row.upi_amount)) if row else None
