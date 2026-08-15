@@ -231,6 +231,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('the tab badge flags days that do not tally',
         !$('closeBadge').classList.contains('hidden'));
 
+  const verifyBtn = q('[data-dcverify]');
+  check('a Verify button is offered for the declared (short) day', !!verifyBtn);
+  click(verifyBtn);
+  check('the verify button disables the instant it is clicked — no double-submit window',
+        verifyBtn.disabled === true);
+  await sleep(1800);
+  const card3 = q('[data-dcbranch]');
+  check('verifying flips the button to Reopen', /reopen/i.test(card3.textContent));
+  check('the tab badge clears once the only off-tally day is verified',
+        $('closeBadge').classList.contains('hidden'), $('closeBadge').textContent);
+
+  click(q('[data-dcverify]'));   // reopening it
+  await sleep(1800);
+  check('the badge reappears once that day is reopened (unverified again)',
+        !$('closeBadge').classList.contains('hidden'));
+
   console.log('\n[10] double-click protection');
   nav('workers'); await sleep(500);
   click($('btnAddWorker')); await sleep(300);

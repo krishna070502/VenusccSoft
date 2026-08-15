@@ -2496,6 +2496,35 @@ function done(key, btnId) {
   if (b) { b.disabled = false; b.classList.remove('opacity-60', 'cursor-not-allowed'); }
 }
 
+/* once()/done() alone still lets a second tap land inside a slow round-trip,
+   since the lock releases the instant the response arrives. spinGuard()/
+   spinRelease() add a visible spinner on the button itself AND hold the lock
+   for at least `minMs` (default 4s) from the click, not just for however
+   long the request takes — used on money-moving actions like Day Close's
+   Save/Verify, where firing the same request twice is expensive to undo. */
+function spinGuard(key, btn) {
+  if (!once(key)) return null;
+  var orig = btn ? btn.innerHTML : null;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('opacity-60', 'cursor-not-allowed');
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>' + btn.textContent.trim();
+  }
+  return { started: Date.now(), btn: btn, orig: orig };
+}
+function spinRelease(key, ctx, minMs) {
+  var restore = function () {
+    if (ctx && ctx.btn && document.contains(ctx.btn)) {
+      ctx.btn.innerHTML = ctx.orig;
+      ctx.btn.disabled = false;
+      ctx.btn.classList.remove('opacity-60', 'cursor-not-allowed');
+    }
+    done(key);
+  };
+  var wait = ctx ? Math.max(0, (minMs || 4000) - (Date.now() - ctx.started)) : 0;
+  if (wait > 0) setTimeout(restore, wait); else restore();
+}
+
 /* The server also refuses an identical amount posted seconds apart. When it
    does, say so plainly and close — the money WAS recorded, once, which is
    what the user wanted. Offer the override for a genuine second payment. */
@@ -3156,8 +3185,14 @@ function renderDayCloseHistory() {
 
       var badge = $('closeBadge');
       if (badge) {
+        // A day counts as "needs attention" if it was never declared, or it
+        // was declared but doesn't tally AND hasn't been verified yet.
+        // Verifying is the admin's way of saying "I've looked at this
+        // discrepancy, it's accounted for" — so it has to clear the flag,
+        // otherwise the badge can never shrink for an off-balance day no
+        // matter how many times someone verifies it.
         var bad = rows.filter(function (r) {
-          return r.missing || (r.difference !== null && Math.abs(r.difference) >= 0.5);
+          return r.missing || (!r.verified && r.difference !== null && Math.abs(r.difference) >= 0.5);
         }).length;
         badge.textContent = bad;
         badge.classList.toggle('hidden', bad === 0);
@@ -3220,22 +3255,17 @@ function saveDayClose(branchCode) {
   if (!card) return;
   var g = function (k) { return card.querySelector('[data-dc="' + k + '"]'); };
   var key = 'dc:' + branchCode;
-  if (!once(key)) return;
   var btn = card.querySelector('[data-dcsave]');
-  if (btn) btn.disabled = true;
+  var ctx = spinGuard(key, btn);
+  if (!ctx) return;
   api('POST', '/dayclose', { branch: branchCode, date: $('dcDate').value || todayISO(),
     cash: num(g('cash').value), upi: num(g('upi').value), note: g('note').value })
     .then(function (r) {
       var d = r.difference;
-      var adj = r.close && r.close.meatAdjustG;
       toast(Math.abs(d) < 0.5 ? 'Handover recorded — it tallies.'
         : d > 0 ? 'Recorded. ' + money0(d) + ' MORE than expected.'
                 : 'Recorded. ' + money0(-d) + ' SHORT of expected.',
         Math.abs(d) < 0.5 ? 'success' : 'warn');
-      // cash+UPI+wages+overheads vs the day's revenue may have just adjusted
-      // a daily entry's meat sales — refresh entries so it shows everywhere,
-      // not just here.
-      return adj ? bootstrap() : null;
     })
     .then(function () {
       renderDayClose();
@@ -3243,7 +3273,7 @@ function saveDayClose(branchCode) {
       if (typeof renderDashboard === 'function') renderDashboard();
     })
     .catch(apiFail)
-    .then(function () { done(key); });
+    .then(function () { spinRelease(key, ctx); });
 }
 
 /* ---------------- overhead ledger ---------------- */
@@ -3926,9 +3956,16 @@ function wire() {
     var ver = ev.target.closest('[data-dcverify]');
     if (ver) {
       var reopen = !!ver.getAttribute('data-reopen');
+      var vkey = 'dcverify:' + ver.getAttribute('data-dcverify') + (reopen ? ':reopen' : ':verify');
+      var vctx = spinGuard(vkey, ver);
+      if (!vctx) return;
       api('POST', '/dayclose/' + ver.getAttribute('data-dcverify') + '/verify', { reopen: reopen })
-        .then(function () { renderDayClose(); toast(reopen ? 'Reopened.' : 'Verified.'); })
-        .catch(apiFail);
+        .then(function () {
+          renderDayClose();          // already refreshes the history table + closeBadge
+          toast(reopen ? 'Reopened.' : 'Verified.');
+        })
+        .catch(apiFail)
+        .then(function () { spinRelease(vkey, vctx); });
     }
   });
   $('dcCards').addEventListener('input', function (ev) {
