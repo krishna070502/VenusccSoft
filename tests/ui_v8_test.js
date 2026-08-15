@@ -36,7 +36,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   };
   w.Chart = function () { return { destroy() {}, update() {} }; };
   w.Chart.register = function () {};
-  w.scrollTo = () => {}; w.print = () => {};
+  let printCalls = 0;
+  w.scrollTo = () => {}; w.print = () => { printCalls++; };
   w.HTMLElement.prototype.scrollIntoView = function () {};
   w.confirm = () => true; w.alert = () => {};
   w.URL.createObjectURL = () => 'blob:x'; w.URL.revokeObjectURL = () => {};
@@ -247,7 +248,89 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('the badge reappears once that day is reopened (unverified again)',
         !$('closeBadge').classList.contains('hidden'));
 
-  console.log('\n[10] double-click protection');
+  console.log('\n[10] print & Excel export buttons — every screen wired, none throw');
+  const printedTitle = () => $('printArea').innerHTML;
+
+  // Records / Approvals — pre-existing buttons, relabeled Excel this round
+  nav('records'); await sleep(400);
+  check('Records Excel button is now labelled Excel, not CSV', /Excel/.test($('btnRecExport').textContent));
+  click($('btnRecPrint')); await sleep(200);
+  check('Records Print still fills #printArea', printedTitle().length > 0);
+
+  // `made` was created with a raw fetch() call, bypassing the app's own
+  // submit flow — S.entries (the client cache Records reads from) never
+  // picked it up. Re-signing in re-runs bootstrap() and reloads everything
+  // from the server, same as a real page refresh would. Records also
+  // defaults to status=pending for an admin, and `made` is already approved,
+  // so widen that filter too once it's back.
+  setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
+  $('loginForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1200);
+  nav('records'); await sleep(400);
+  setVal($('recStatus'), ''); await sleep(400);
+  const revBtn = qa('#recBody button[data-act="review"]').find(b => b.getAttribute('data-id') === made.id);
+  check('the approved test entry is findable in Records once refreshed and the status filter widened', !!revBtn);
+  if (revBtn) {
+    click(revBtn); await sleep(500);
+    check('the review modal opens', !$('reviewModal').classList.contains('hidden'));
+    check('it offers a Print voucher button', !!$('rvPrint'));
+    click($('rvPrint')); await sleep(200);
+    check('the entry voucher print reuses the review body content',
+          printedTitle().includes('Opening stock') || printedTitle().includes('Purchases'));
+    click(q('[data-close="1"]')); await sleep(200);
+  }
+
+  // Workers — balances table, daily sheet
+  nav('workers'); await sleep(500);
+  click($('wbExport')); await sleep(150);
+  click($('wbPrint')); await sleep(150);
+  check('Worker balances Print fills #printArea', /Worker ledger/.test(printedTitle()));
+  click($('shExport')); await sleep(150);
+  click($('shPrint')); await sleep(150);
+  check('Daily workers sheet Print fills #printArea', /Daily workers sheet/.test(printedTitle()));
+  click($('wkExport')); await sleep(150);
+  click($('wkPrint')); await sleep(150);
+  check('Ledger transaction log Print fills #printArea', /transaction log/.test(printedTitle()));
+  click($('dwExport')); await sleep(150);
+  click($('dwPrint')); await sleep(150);
+  check('Day-wise workers Print fills #printArea', /Day-wise workers/.test(printedTitle()));
+
+  // Hotels & Functions
+  nav('customers'); await sleep(500);
+  click($('custExport')); await sleep(150);
+  click($('custPrint')); await sleep(150);
+  check('Customer list Print fills #printArea', /Customers/.test(printedTitle()));
+
+  // Overheads
+  nav('overheads'); await sleep(500);
+  click($('ovhEntExport')); await sleep(150);
+  click($('ovhEntPrint')); await sleep(150);
+  check('Overhead entries Print fills #printArea', /Overhead entries/.test(printedTitle()));
+  click($('ovhExport')); await sleep(150);
+  click($('ovhPrint')); await sleep(150);
+  check('Overhead ledger Print fills #printArea', /Overhead ledger/.test(printedTitle()));
+
+  // Day Close — current-day cards and history
+  nav('dayclose'); await sleep(500);
+  click($('dcCardsExport')); await sleep(150);
+  click($('dcCardsPrint')); await sleep(150);
+  check('Day Close cards Print fills #printArea', /Cash handover/.test(printedTitle()));
+  click($('dcExport')); await sleep(150);
+  click($('dcPrint')); await sleep(150);
+  check('Day Close history Print fills #printArea', /handover history/i.test(printedTitle()));
+
+  // Activity log (Administration)
+  nav('admin'); await sleep(500);
+  if ($('btnActPrint')) {
+    click($('btnActPrint')); await sleep(150);
+    check('Activity log Print fills #printArea', /Activity log/.test(printedTitle()));
+    click($('btnActExport')); await sleep(150);
+    check('Activity log Excel button is labelled Excel', /Excel/.test($('btnActExport').textContent));
+  }
+
+  check('none of the above threw — every Print call reached window.print()', printCalls >= 8, printCalls + ' calls');
+
+  console.log('\n[11] double-click protection');
   nav('workers'); await sleep(500);
   click($('btnAddWorker')); await sleep(300);
   setVal($('wkName'), 'Double Click Sam');

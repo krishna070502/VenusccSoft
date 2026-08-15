@@ -8,6 +8,10 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Real .xlsx workbook generation for every "Export" button — see toXlsx()
+     in app.js. If this fails to load (offline, CDN blocked), toXlsx() falls
+     back to a CSV download so the buttons still work. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script>
   tailwind.config = { theme: { extend: { colors: {
@@ -593,7 +597,7 @@
         <div><label class="lbl" for="recBranch" title="Filter the list to one branch.">Branch</label><select id="recBranch" class="inp"></select></div>
         <div><label class="lbl" for="recCat" title="Filter the list to broiler or parents entries only.">Category</label><select id="recCat" class="inp"><option value="">All</option><option value="broiler">Broiler</option><option value="parents">Parents</option></select></div>
         <div><label class="lbl" for="recStatus" title="Filter the list by approval status.">Status</label><select id="recStatus" class="inp"><option value="">All</option><option value="draft">Draft</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Returned</option></select></div>
-        <button id="btnRecExport" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-file-csv"></i> CSV</button>
+        <button id="btnRecExport" class="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-file-excel"></i> Excel</button>
         <button id="btnRecPrint" class="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-emerald-900 text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-print"></i> Print</button>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -639,6 +643,10 @@
         <i class="fa-solid fa-utensils text-indigo-600"></i>
         <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Customers &amp; agreed prices</h3>
         <span class="text-xs text-slate-400" id="custNote"></span>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="custPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="custExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
@@ -694,6 +702,10 @@
         <i class="fa-solid fa-money-bill-transfer text-amber-600"></i>
         <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Daily workers sheet</h3>
         <span class="text-xs text-slate-400" id="sheetNote"></span>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="shPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="shExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
@@ -720,7 +732,8 @@
           <div><label class="lbl" for="dwFrom" title="Start of the date range for this history table — admin only.">From</label><input type="date" id="dwFrom" class="inp !py-1.5 !text-xs" /></div>
           <div><label class="lbl" for="dwTo" title="End of the date range for this history table — admin only.">To</label><input type="date" id="dwTo" class="inp !py-1.5 !text-xs" /></div>
           <button id="dwMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Jump the date range to this calendar month.">This month</button>
-          <button id="dwExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as a CSV file."><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <button id="dwPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="dwExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
         </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -740,7 +753,13 @@
     </div>
 
     <div class="card overflow-hidden mb-5">
-      <div class="px-5 py-3 bg-slate-100 font-bold text-sm uppercase tracking-wide text-slate-700">Worker ledger &amp; balances</div>
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <span class="font-bold text-sm uppercase tracking-wide text-slate-700">Worker ledger &amp; balances</span>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="wbPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="wbExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
+      </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Worker</th>
@@ -778,7 +797,8 @@
               <option value="other">Other</option>
             </select></div>
           <button id="wkThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Jump the date range to this calendar month.">This month</button>
-          <button id="wkExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as a CSV file."><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <button id="wkPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="wkExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
         </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -805,6 +825,8 @@
       <div class="flex items-end gap-3 flex-wrap">
         <div><label class="lbl" for="dcDate" title="The trading day this cash handover is for — admin only.">Date</label><input type="date" id="dcDate" class="inp" /></div>
         <button id="dcToday" class="text-sm font-bold border border-slate-300 bg-white rounded-lg px-3 py-2.5 hover:bg-slate-50">Today</button>
+        <button id="dcCardsPrint" class="text-sm font-bold border border-slate-300 bg-white rounded-lg px-3 py-2.5 hover:bg-slate-50" title="Print this date's branch cards."><i class="fa-solid fa-print mr-1"></i>Print</button>
+        <button id="dcCardsExport" class="text-sm font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg px-3 py-2.5" title="Download this date's branch cards as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
       </div>
     </div>
 
@@ -820,7 +842,8 @@
         <div class="ml-auto flex items-end gap-2 flex-wrap">
           <div><label class="lbl" for="dcFrom" title="Start of the handover history range — admin only.">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
           <div><label class="lbl" for="dcTo" title="End of the handover history range — admin only.">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
-          <button id="dcExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <button id="dcPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="dcExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-2.5 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
         </div>
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
@@ -918,7 +941,8 @@
           <div><label class="lbl" for="ovhFrom" title="Start of the date range for dated overheads.">From</label><input type="date" id="ovhFrom" class="inp !py-1.5 !text-xs" /></div>
           <div><label class="lbl" for="ovhTo" title="End of the date range for dated overheads.">To</label><input type="date" id="ovhTo" class="inp !py-1.5 !text-xs" /></div>
           <button id="ovhThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">Month</button>
-          <button id="ovhExport" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+          <button id="ovhPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="ovhExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-2.5 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
         </div>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-3">
@@ -949,7 +973,13 @@
     </div>
 
     <div class="card overflow-hidden">
-      <div class="px-5 py-3 bg-slate-100 font-bold text-sm uppercase tracking-wide text-slate-700">Overhead entries</div>
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">
+        <span class="font-bold text-sm uppercase tracking-wide text-slate-700">Overhead entries</span>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="ovhEntPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="ovhEntExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
+      </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
           <th class="px-4 py-2.5 font-bold text-xs uppercase">When</th>
@@ -1013,7 +1043,8 @@
           <div class="ml-auto flex gap-2">
             <select id="actUser" class="inp !py-1.5 !text-xs"><option value="">All users</option></select>
             <select id="actKind" class="inp !py-1.5 !text-xs"><option value="">All actions</option></select>
-            <button id="btnActExport" class="text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-file-csv mr-1"></i>CSV</button>
+            <button id="btnActPrint" class="text-xs font-bold border border-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800"><i class="fa-solid fa-print mr-1"></i>Print</button>
+            <button id="btnActExport" class="text-xs font-bold bg-amber-500 text-emerald-900 px-3 py-1.5 rounded-lg hover:bg-amber-400"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
             <button id="btnActClear" class="text-xs font-bold bg-rose-600 text-white px-3 py-1.5 rounded-lg hover:bg-rose-700"><i class="fa-solid fa-trash mr-1"></i>Clear</button>
           </div>
         </div>

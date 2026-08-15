@@ -78,7 +78,7 @@ function kindDef(v){ return CUSTOMER_KINDS.filter(function(k){ return k.v===v; }
 
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
           customers:[], receipts:[], custTotals:{}, closes:[],
-          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, closeHistory:[],
+          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, dcCurrent:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null };
@@ -1583,9 +1583,11 @@ function openReview(id){
   }
   if(isAdmin()&&e.status==='approved') foot+='<span class="text-xs text-emerald-700 font-semibold self-center"><i class="fa-solid fa-lock mr-1"></i>Approved '+String(e.reviewedAt||'').slice(0,10)+' by '+esc(userName(e.reviewedBy))+'</span>';
   if(canEdit(e)) foot+='<button id="rvEdit" class="inline-flex items-center gap-2 border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-pen-to-square"></i> Edit</button>';
+  foot+='<button id="rvPrint" class="inline-flex items-center gap-2 border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-print"></i> Print voucher</button>';
   foot+='<button data-close="1" class="ml-auto border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg">Close</button>';
   $('reviewFoot').innerHTML=foot;
   bind('rvApprove',function(){ decide(e.id,'approved'); });
+  bind('rvPrint',function(){ printEntryVoucher(e.id); });
   $('reviewBody').addEventListener('input',function(ev){
     var t=ev.target;
     if(t.id==='rvDate'){
@@ -1622,6 +1624,27 @@ function openReview(id){
   bind('rvReject',function(){ closeModal('reviewModal'); askReject(e.id); });
   bind('rvEdit',function(){ closeModal('reviewModal'); showView('entry'); loadEntry(e.id); });
   $('reviewModal').classList.remove('hidden');
+}
+
+/* A one-page printable voucher for a single daily entry — the full breakdown
+   (opening stock, purchases, sales, hotel lines, mortality, closing) someone
+   would file or hand to another branch/office. Reuses exactly what
+   openReview() already rendered into #reviewBody rather than rebuilding the
+   same layout twice, so the voucher always matches what's on screen. */
+function printEntryVoucher(id){
+  var e=S.entries.filter(function(x){return x.id===id;})[0]; if(!e) return;
+  var head='<div style="border-bottom:3px solid #046C4E;padding-bottom:10px;margin-bottom:14px">'+
+    '<h1 style="margin:0;font:700 20px sans-serif;color:#046C4E">Venus Chicken Centers</h1>'+
+    '<p style="margin:3px 0 0;font:400 12px sans-serif;color:#475569">'+
+      esc((e.category==='parents'?'Parents':'Broiler')+' — '+dOf(e.datetime))+' · '+
+      esc(S.branches[e.branch]||e.branch)+' · '+esc(e.status)+' · by '+esc(userName(e.createdBy))+
+      ' · voucher generated '+new Date().toLocaleString()+'</p></div>';
+  var body=$('reviewBody')?$('reviewBody').innerHTML:'<p>Nothing to show.</p>';
+  var sign='<div style="margin-top:34px;font:400 10px sans-serif;display:flex;gap:50px">'+
+    '<div style="border-top:1px solid #475569;padding-top:5px;width:180px">Supervisor</div>'+
+    '<div style="border-top:1px solid #475569;padding-top:5px;width:180px">Admin approval</div></div>';
+  $('printArea').innerHTML=head+'<div style="font:400 11px sans-serif">'+body+'</div>'+sign;
+  window.print();
 }
 
 /* ---------------- labour ---------------- */
@@ -2011,6 +2034,85 @@ function renderAdmin(){
 function download(blob,name){ var u=URL.createObjectURL(blob),a=document.createElement('a'); a.href=u; a.download=name;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){URL.revokeObjectURL(u);},1000); }
 
+/* Every "Export" button in the app funnels through here so the download is a
+   real .xlsx workbook, not a CSV file wearing an Excel icon. `rows` is a
+   plain 2D array (no header row). Falls back to a CSV download if the
+   SheetJS library (loaded from a CDN in index.html) didn't load — offline,
+   blocked, whatever — so a button never just does nothing. */
+function toXlsx(filename, sheetName, headers, rows) {
+  filename = filename.replace(/\.(csv|xlsx)$/i, '');
+  if (typeof XLSX === 'undefined') { toCsvFallback(filename, headers, rows); return; }
+  try {
+    var ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
+    ws['!cols'] = headers.map(function (h, i) {
+      var w = String(h == null ? '' : h).length;
+      for (var r = 0; r < rows.length; r++) {
+        var cell = rows[r][i];
+        var len = String(cell == null ? '' : cell).length;
+        if (len > w) w = len;
+      }
+      return { wch: Math.min(Math.max(w + 2, 8), 40) };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, (sheetName || 'Sheet1').slice(0, 31));
+    XLSX.writeFile(wb, filename + '.xlsx');
+  } catch (e) {
+    toCsvFallback(filename, headers, rows);
+  }
+}
+function toCsvFallback(filename, headers, rows) {
+  var csv = [headers].concat(rows).map(function (r) {
+    return r.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+  }).join('\r\n');
+  download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }), filename + '.csv');
+}
+
+/* Scrapes a rendered <table> into a plain 2D array — headers from <thead th>,
+   rows from <tbody tr><td>, skipping any row whose cell count doesn't match
+   the header count (the "No data yet" placeholder rows use a single colspan
+   cell, so they're naturally excluded). This is the common data source for
+   both Export and Print on any screen that doesn't already have its own
+   S.xxx array to read from — what's on screen is exactly what you get in the
+   file or on paper. `sel` can be the <table> itself, or any element inside
+   it (a <tbody> id is the usual case). A trailing Actions column (blank
+   header, or every cell blank because icon-only buttons have no text) is
+   dropped so the export isn't left with a pointless empty last column. */
+function tableData(sel) {
+  var el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+  var table = el && (el.tagName === 'TABLE' ? el : el.closest('table'));
+  if (!table) return { headers: [], rows: [] };
+  var headers = [].slice.call(table.querySelectorAll('thead th')).map(function (th) { return th.textContent.trim(); });
+  var rows = [].slice.call(table.querySelectorAll('tbody tr')).map(function (tr) {
+    return [].slice.call(tr.children).map(function (td) { return td.textContent.trim().replace(/\s+/g, ' '); });
+  }).filter(function (r) { return r.length === headers.length; });
+  while (headers.length &&
+         (headers[headers.length - 1] === '' || /^actions?$/i.test(headers[headers.length - 1])) &&
+         rows.every(function (r) { return r[r.length - 1] === ''; })) {
+    headers.pop();
+    rows.forEach(function (r) { r.pop(); });
+  }
+  return { headers: headers, rows: rows };
+}
+
+/* Print helper shared by every new "Print" button — same #printArea +
+   window.print() convention printReport() already established, just
+   generalized to take a plain 2D array instead of building its own HTML
+   each time. */
+function printTable(title, subtitle, headers, rows) {
+  var head = '<div style="border-bottom:3px solid #046C4E;padding-bottom:10px;margin-bottom:14px">' +
+    '<h1 style="margin:0;font:700 20px sans-serif;color:#046C4E">Venus Chicken Centers</h1>' +
+    '<p style="margin:3px 0 0;font:400 11px sans-serif;color:#475569">' + esc(title) +
+    (subtitle ? ' · ' + esc(subtitle) : '') + ' · generated ' + new Date().toLocaleString() + '</p></div>';
+  var thead = '<thead><tr style="background:#046C4E;color:#fff">' +
+    headers.map(function (h) { return '<th style="padding:5px;text-align:left;border:1px solid #046C4E">' + esc(h) + '</th>'; }).join('') +
+    '</tr></thead>';
+  var tbody = '<tbody>' + (rows.length ? rows.map(function (r) {
+    return '<tr>' + r.map(function (c) { return '<td style="padding:4px;border:1px solid #cbd5e1">' + esc(String(c == null ? '' : c)) + '</td>'; }).join('') + '</tr>';
+  }).join('') : '<tr><td colspan="' + Math.max(headers.length, 1) + '" style="padding:10px;text-align:center;color:#94a3b8">No rows in this view.</td></tr>') + '</tbody>';
+  $('printArea').innerHTML = head + '<table style="width:100%;border-collapse:collapse;font:400 10px sans-serif">' + thead + tbody + '</table>';
+  window.print();
+}
+
 function exportCsv(){
   var list=filteredEntries(); if(!list.length){ toast('Nothing to export.','warn'); return; }
   var kg=function(g){ return (num(g)/1000).toFixed(3); };
@@ -2039,11 +2141,12 @@ function exportCsv(){
     num(e.closeBirds), kg(e.closeWtG), kg(e.closeMeatG), c.closeValue.toFixed(2),
     e.status, userName(e.createdBy), e.reviewedBy?userName(e.reviewedBy):'', e.rejectReason||'', e.explanation||'', e.notes||''
   ];});
-  var csv=[keep(head)].concat(rows.map(keep)).map(function(r){ return r.map(function(c){ var s=String(c==null?'':c); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }).join(','); }).join('\r\n');
-  download(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}),'VCC_entries_'+todayISO()+'.csv');
-  logAct('Exported CSV',list.length+' record(s)'+(isAdmin()?'':' (cost columns excluded)'));
+  toXlsx('VCC_entries_'+todayISO(), 'Entries', keep(head), rows.map(keep));
+  logAct('Exported Excel',list.length+' record(s)'+(isAdmin()?'':' (cost columns excluded)'));
   toast('Exported '+list.length+' record(s).');
 }
+/* kept as the name bound to btnRecExport — it exports .xlsx now, not CSV;
+   see toXlsx() above. */
 
 function printReport(){
   var list=filteredEntries(), agg=aggregate(list.filter(function(e){return e.status==='approved';}));
@@ -3024,23 +3127,28 @@ function openCustomerLedger(cid) {
       '</tr></thead><tbody class="divide-y divide-slate-100">' + rows + '</tbody></table></div>' +
       '<div class="flex flex-wrap gap-3 mt-4">' +
         '<button id="cuLedPay" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-hand-holding-dollar mr-1"></i> Record a receipt</button>' +
-        '<button id="cuLedCsv" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-file-csv mr-1"></i> CSV</button>' +
+        '<button id="cuLedPrint" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-print mr-1"></i> Print</button>' +
+        '<button id="cuLedCsv" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-file-excel mr-1"></i> Excel</button>' +
       '</div>');
 
-    bind('cuLedPay', function () { receiptModal(cid); });
-    bind('cuLedCsv', function () {
-      var out = [['Date', 'Kind', 'Item', 'Weight kg', 'Market rate', 'Their rate', 'Concession', 'Amount', 'Status', 'Balance']];
-      d.rows.forEach(function (r) {
-        out.push(r.kind === 'receipt'
+    var custLedgerRows = function () {
+      var headers = ['Date', 'Kind', 'Item', 'Weight kg', 'Market rate', 'Their rate', 'Concession', 'Amount', 'Status', 'Balance'];
+      var rows = d.rows.map(function (r) {
+        return r.kind === 'receipt'
           ? [r.date, 'Receipt', r.mode, '', '', '', '', -r.amount, 'received', r.balance]
           : [r.date, 'Sale', r.product, (r.weightG / 1000).toFixed(3), r.marketRate, r.rate,
-             r.concession, r.amount, r.status + (r.settled ? ' / paid' : ' / on account'), r.balance]);
+             r.concession, r.amount, r.status + (r.settled ? ' / paid' : ' / on account'), r.balance];
       });
-      var csv = out.map(function (row) {
-        return row.map(function (x) { var s = String(x == null ? '' : x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
-      }).join('\r\n');
-      download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }),
-        'VCC_ledger_' + c.code + '_' + todayISO() + '.csv');
+      return { headers: headers, rows: rows };
+    };
+    bind('cuLedPay', function () { receiptModal(cid); });
+    bind('cuLedCsv', function () {
+      var x = custLedgerRows();
+      toXlsx('VCC_ledger_' + c.code + '_' + todayISO(), 'Ledger', x.headers, x.rows);
+    });
+    bind('cuLedPrint', function () {
+      var x = custLedgerRows();
+      printTable(c.name + ' — ledger', 'Balance due ' + money0(t.balance), x.headers, x.rows);
     });
   }).catch(apiFail);
 }
@@ -3062,6 +3170,7 @@ function renderDayClose() {
   var day = $('dcDate').value || todayISO();
   api('GET', '/dayclose?date=' + day + (isAdmin() ? '' : '&branch=' + S.branch))
     .then(function (d) {
+      S.dcCurrent = { date: day, branches: d.branches };
       $('dcCards').innerHTML = d.branches.map(function (b) {
         var x = b.expectedBreakdown, c = b.close;
         var line = function (label, value, cls, hint) {
@@ -3803,6 +3912,14 @@ function wire() {
   /* ---- hotels & hostels view ---- */
   $('btnAddCustomer').addEventListener('click', function () { customerModal(null); });
   $('custFilter').addEventListener('change', renderCustomers);
+  $('custExport').addEventListener('click', function () {
+    var d = tableData('#custBody');
+    toXlsx('VCC_customers_' + todayISO(), 'Customers', d.headers, d.rows);
+  });
+  $('custPrint').addEventListener('click', function () {
+    var d = tableData('#custBody');
+    printTable('Customers & agreed prices', S.branches[S.branch] || S.branch, d.headers, d.rows);
+  });
   $('custBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-cact]'); if (!b) return;
     var id = b.getAttribute('data-id'), act = b.getAttribute('data-cact');
@@ -3872,40 +3989,56 @@ function wire() {
 
   /* ---- labour ---- */
   $('wkDate').addEventListener('change', renderWorkers);
+  $('wbExport').addEventListener('click', function () {
+    var d = tableData('#workerBody');
+    toXlsx('VCC_worker_balances_' + todayISO(), 'Worker balances', d.headers, d.rows);
+  });
+  $('wbPrint').addEventListener('click', function () {
+    var d = tableData('#workerBody');
+    printTable('Worker ledger & balances', S.branches[S.branch] || S.branch, d.headers, d.rows);
+  });
+  $('shExport').addEventListener('click', function () {
+    var d = tableData('#sheetBody');
+    toXlsx('VCC_daily_workers_sheet_' + ($('wkDate').value || todayISO()), 'Daily workers sheet', d.headers, d.rows);
+  });
+  $('shPrint').addEventListener('click', function () {
+    var d = tableData('#sheetBody');
+    printTable('Daily workers sheet', (S.branches[S.branch] || S.branch) + ' · ' + ($('wkDate').value || todayISO()), d.headers, d.rows);
+  });
   ['wkFrom', 'wkTo', 'wkWorkerFilter', 'wkTypeFilter'].forEach(function (id) {
     $(id).addEventListener('change', renderLedgerLog);
   });
   $('wkThisMonth').addEventListener('click', function () {
     $('wkFrom').value = monthStart(); $('wkTo').value = todayISO(); renderLedgerLog();
   });
-  $('wkExport').addEventListener('click', function () {
-    var d = S.wkLedger; if (!d || !d.rows.length) return;
-    var out = [['Date', 'Worker', 'Type', 'Note', 'Amount']];
-    d.rows.forEach(function (l) {
+  var wkLedgerRows = function () {
+    var d = S.wkLedger;
+    var headers = ['Date', 'Worker', 'Type', 'Note', 'Amount'];
+    var rows = (d && d.rows || []).map(function (l) {
       var def = LEDGER_TYPES[l.type] || { t: l.type };
-      out.push([l.date, l.workerName || '', def.t, l.note || '', l.amount]);
+      return [l.date, l.workerName || '', def.t, l.note || '', l.amount];
     });
-    var csv = out.map(function (row) {
-      return row.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
-    }).join('\r\n');
-    download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }),
-      'VCC_ledger_' + d.from + '_to_' + d.to + '.csv');
+    return { d: d, headers: headers, rows: rows };
+  };
+  $('wkExport').addEventListener('click', function () {
+    var x = wkLedgerRows(); if (!x.d || !x.rows.length) return;
+    toXlsx('VCC_ledger_' + x.d.from + '_to_' + x.d.to, 'Ledger', x.headers, x.rows);
+  });
+  $('wkPrint').addEventListener('click', function () {
+    var x = wkLedgerRows(); if (!x.d) return;
+    printTable('Worker ledger — transaction log', x.d.from + ' to ' + x.d.to, x.headers, x.rows);
   });
   ['dwFrom', 'dwTo'].forEach(function (id) { $(id).addEventListener('change', renderDayWise); });
   $('dwMonth').addEventListener('click', function () {
     $('dwFrom').value = monthStart(); $('dwTo').value = todayISO(); renderDayWise();
   });
   $('dwExport').addEventListener('click', function () {
-    var rows = [['Date', 'Man-days', 'Wages', 'Advances', 'Tea/tiffin', 'Total deducted', 'Who took an advance']];
-    [...document.querySelectorAll('#dwBody tr')].forEach(function (tr) {
-      if (tr.children.length < 7) return;
-      rows.push([...tr.children].map(function (td) { return td.textContent.trim(); }));
-    });
-    var csv = rows.map(function (r) {
-      return r.map(function (c) { var s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
-    }).join('\r\n');
-    download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }),
-      'VCC_labour_daywise_' + todayISO() + '.csv');
+    var d = tableData('#dwBody');
+    toXlsx('VCC_labour_daywise_' + todayISO(), 'Day-wise workers', d.headers, d.rows);
+  });
+  $('dwPrint').addEventListener('click', function () {
+    var d = tableData('#dwBody');
+    printTable('Day-wise workers & deductions', $('dwFrom').value + ' to ' + $('dwTo').value, d.headers, d.rows);
   });
   $('btnAddWorker').addEventListener('click', function () { workerModal(null); });
   $('btnPayWorker').addEventListener('click', function () { ledgerModal('pay'); });
@@ -3946,6 +4079,29 @@ function wire() {
   $('dcToday').addEventListener('click', function () {
     $('dcDate').value = todayISO(); renderDayClose();
   });
+  var dcCardsRows = function () {
+    var headers = ['Branch', 'Entries', 'Approved', 'Counter sales', 'Live sales', 'Cutting charges',
+                   'Hotel — paid today', 'Receipts vs old bills', 'Wages/advances paid', 'Shop costs',
+                   'Expected handover', 'Cash', 'UPI', 'Handed over', 'Difference', 'Verified'];
+    var cur = S.dcCurrent;
+    var rows = (cur && cur.branches || []).map(function (b) {
+      var x = b.expectedBreakdown, c = b.close;
+      var handed = c ? (num(c.cash) + num(c.upi)) : null;
+      return [b.branchName, x.entries, x.approved, x.counterSales, x.liveSales, x.cuttingCharges,
+              x.hotelCash, x.receipts, x.wagesPaid, x.shopCosts, b.expected,
+              c ? c.cash : '', c ? c.upi : '', handed === null ? '' : handed,
+              b.difference === null ? '' : b.difference, c && c.verifiedAt ? 'yes' : 'no'];
+    });
+    return { cur: cur, headers: headers, rows: rows };
+  };
+  $('dcCardsExport').addEventListener('click', function () {
+    var x = dcCardsRows(); if (!x.cur) return;
+    toXlsx('VCC_dayclose_cards_' + x.cur.date, 'Day Close', x.headers, x.rows);
+  });
+  $('dcCardsPrint').addEventListener('click', function () {
+    var x = dcCardsRows(); if (!x.cur) return;
+    printTable('Cash handover — ' + x.cur.date, '', x.headers, x.rows);
+  });
   ['dcFrom', 'dcTo'].forEach(function (id) {
     $(id).addEventListener('change', renderDayCloseHistory);
   });
@@ -3982,17 +4138,21 @@ function wire() {
       (Math.abs(d) < 0.5 ? 'bg-emerald-50 text-emerald-800'
         : d > 0 ? 'bg-amber-50 text-amber-800' : 'bg-rose-50 text-rose-700');
   });
-  $('dcExport').addEventListener('click', function () {
-    var out = [['Date', 'Branch', 'Revenue', 'Expected in hand', 'Cash', 'UPI', 'Handed over', 'Difference', 'Verified']];
-    (S.closeHistory || []).forEach(function (r) {
-      out.push([r.date, r.branchName, r.revenue, r.expected, r.cash, r.upi, r.declared,
-                r.difference, r.verified ? 'yes' : 'no']);
+  var dcHistRows = function () {
+    var headers = ['Date', 'Branch', 'Revenue', 'Expected in hand', 'Cash', 'UPI', 'Handed over', 'Difference', 'Verified'];
+    var rows = (S.closeHistory || []).map(function (r) {
+      return [r.date, r.branchName, r.revenue, r.expected, r.cash, r.upi, r.declared,
+              r.difference, r.verified ? 'yes' : 'no'];
     });
-    var csv = out.map(function (row) {
-      return row.map(function (x) { var t = String(x == null ? '' : x); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }).join(',');
-    }).join('\r\n');
-    download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }),
-      'VCC_dayclose_' + todayISO() + '.csv');
+    return { headers: headers, rows: rows };
+  };
+  $('dcExport').addEventListener('click', function () {
+    var x = dcHistRows();
+    toXlsx('VCC_dayclose_' + todayISO(), 'Handover history', x.headers, x.rows);
+  });
+  $('dcPrint').addEventListener('click', function () {
+    var x = dcHistRows();
+    printTable('Cash handover history', ($('dcFrom').value || '') + ' to ' + ($('dcTo').value || ''), x.headers, x.rows);
   });
 
   /* ---- overhead ledger ---- */
@@ -4009,20 +4169,35 @@ function wire() {
   $('ovhThisMonth').addEventListener('click', function () {
     $('ovhFrom').value = monthStart(); $('ovhTo').value = todayISO(); renderOverheadLedger();
   });
-  $('ovhExport').addEventListener('click', function () {
-    var d = S.ovhLedger; if (!d) return;
-    var out = [['Date', 'Branch', 'Amount']];
-    d.byDay.forEach(function (r) {
-      Object.keys(r.branches).sort().forEach(function (b) { out.push([r.date, b, r.branches[b]]); });
+  var ovhLedgerRows = function () {
+    var d = S.ovhLedger;
+    var headers = ['Date', 'Branch', 'Amount'];
+    var rows = [];
+    (d && d.byDay || []).forEach(function (r) {
+      Object.keys(r.branches).sort().forEach(function (b) { rows.push([r.date, b, r.branches[b]]); });
     });
-    var csv = out.map(function (row) { return row.join(','); }).join('\r\n');
-    download(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }),
-      'VCC_overheads_' + todayISO() + '.csv');
+    return { d: d, headers: headers, rows: rows };
+  };
+  $('ovhExport').addEventListener('click', function () {
+    var x = ovhLedgerRows(); if (!x.d) return;
+    toXlsx('VCC_overheads_' + todayISO(), 'Overheads', x.headers, x.rows);
+  });
+  $('ovhPrint').addEventListener('click', function () {
+    var x = ovhLedgerRows(); if (!x.d) return;
+    printTable('Overhead ledger', ($('ovhFrom').value || '') + ' to ' + ($('ovhTo').value || ''), x.headers, x.rows);
   });
 
   /* ---- overheads ---- */
   $('ovhMonth').addEventListener('change', function () { renderOverheads(); renderOverheadLedger(); });
   $('btnAddOverhead').addEventListener('click', overheadModal);
+  $('ovhEntExport').addEventListener('click', function () {
+    var d = tableData('#ovhBody');
+    toXlsx('VCC_overhead_entries_' + todayISO(), 'Overhead entries', d.headers, d.rows);
+  });
+  $('ovhEntPrint').addEventListener('click', function () {
+    var d = tableData('#ovhBody');
+    printTable('Overhead entries', $('ovhMonth') ? $('ovhMonth').value : '', d.headers, d.rows);
+  });
   $('ovhBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-ovh]'); if (!b) return;
     var id = b.getAttribute('data-id'), act = b.getAttribute('data-ovh');
@@ -4130,12 +4305,18 @@ function wire() {
     if (!confirm('Clear the entire activity log?')) return;
     api('DELETE', '/activity').then(function () { renderActivity(); toast('Activity log cleared.', 'warn'); }).catch(apiFail);
   });
+  var actRows = function () {
+    var headers = ['When', 'User', 'Role', 'Branch', 'Action', 'Detail'];
+    var rows = (S.activity || []).map(function (a) { return [a.at, a.userName, a.role, a.branch, a.action, a.detail]; });
+    return { headers: headers, rows: rows };
+  };
   $('btnActExport').addEventListener('click', function () {
-    var rows = [['When', 'User', 'Role', 'Branch', 'Action', 'Detail']].concat((S.activity || []).map(function (a) {
-      return [a.at, a.userName, a.role, a.branch, a.action, a.detail];
-    }));
-    var csv = rows.map(function (r) { return r.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\r\n');
-    download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }), 'VCC_activity_' + todayISO() + '.csv');
+    var x = actRows();
+    toXlsx('VCC_activity_' + todayISO(), 'Activity log', x.headers, x.rows);
+  });
+  $('btnActPrint').addEventListener('click', function () {
+    var x = actRows();
+    printTable('Activity log', '', x.headers, x.rows);
   });
 
   /* ---- data tools ---- */

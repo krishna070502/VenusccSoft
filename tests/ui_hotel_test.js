@@ -46,7 +46,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   };
   w.Chart = function () { return { destroy() {}, update() {} }; };
   w.Chart.register = function () {};
-  w.scrollTo = () => {}; w.print = () => {};
+  let printCalls = 0;
+  w.scrollTo = () => {}; w.print = () => { printCalls++; };
   w.HTMLElement.prototype.scrollIntoView = function () {};
   w.confirm = () => true;
   w.alert = () => {};
@@ -225,6 +226,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('it is titled for this customer', /UI Test Hotel/.test($('genTitle').textContent));
   check('it shows a balance-due figure', /Balance due/.test($('genBody').textContent));
   check('it offers a receipt button', !!$('cuLedPay'));
+  check('it offers a Print button', !!$('cuLedPrint'));
+  check('the CSV button is now labelled Excel', !!$('cuLedCsv') && /Excel/.test($('cuLedCsv').textContent));
+  click($('cuLedPrint')); await sleep(200);
+  check('printing the customer ledger fills #printArea and calls window.print()',
+        $('printArea').innerHTML.length > 0 && printCalls > 0);
+  click($('cuLedCsv')); await sleep(200);   // must not throw even without SheetJS loaded
 
   console.log('\n' + '='.repeat(60));
   console.log('UI RESULT: ' + pass + ' passed, ' + fail + ' failed');
