@@ -81,7 +81,8 @@ var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[]
           window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, dcCurrent:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
-          editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null };
+          editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
+          purchaseLedger:null, openPurchases:{} };
 
 /* ---------------- helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -200,9 +201,13 @@ function calc(e){
   var tol=num(S.settings.tolerance);
 
   /* ---- purchases & weighted average cost ---- */
+  /* Birds returned to a supplier (kind==='return') are a supplier-ledger
+     event only — mirrors the same skip in compute_entry() (calc.py) — they
+     never add to this day's available stock. */
   var rows=e.purchases||[];
   var buyBirds=0, buyWtG=0, buyAmt=0;
-  rows.forEach(function(r){ buyBirds+=num(r.birds); buyWtG+=num(r.wtG); buyAmt+=num(r.wtG)/1000*num(r.rate); });
+  rows.forEach(function(r){ if(r.kind==='return') return;
+    buyBirds+=num(r.birds); buyWtG+=num(r.wtG); buyAmt+=num(r.wtG)/1000*num(r.rate); });
 
   var openWtG=num(e.openWtG), openRate=num(e.openRate);
   var openValue=openWtG/1000*openRate;
@@ -476,6 +481,19 @@ function refreshBranchSelects(){
 }
 
 /* ---------------- purchases ---------------- */
+/* Buy-kind purchase lines still open to return against, for the current
+   branch — fetched lazily the first time a row is switched to "Return"
+   and cached until explicitly refreshed. Admin only, like returns
+   themselves (see _replace_purchases() in api.py). */
+function loadOpenPurchases(branch){
+  if(!branch || !isAdmin()) return Promise.resolve([]);
+  if(S.openPurchases[branch]) return Promise.resolve(S.openPurchases[branch]);
+  return api('GET','/purchases/open?branch='+encodeURIComponent(branch)).then(function(d){
+    S.openPurchases[branch]=d.rows||[];
+    return S.openPurchases[branch];
+  }).catch(function(){ return []; });
+}
+
 function renderPurchases(){
   var locked=S.editing?!canEdit(S.editing):false;
   var box=$('purchaseRows');
@@ -483,16 +501,33 @@ function renderPurchases(){
     box.innerHTML='<p class="text-xs text-slate-400 italic">No purchases recorded for this day. Click “Add purchase” when birds are bought in.'+(isAdmin()?'':' Enter birds and weight only — the admin fills the rate when approving.')+'</p>';
     return;
   }
+  var open=S.openPurchases[S.branch]||[];
   box.innerHTML=S.purchases.map(function(p,i){
-    return '<div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end bg-slate-50 border border-slate-200 rounded-lg p-3 pop">'+
-      '<div class="sm:col-span-4"><label class="lbl">Supplier</label><input data-p="supplier" data-i="'+i+'" class="inp" value="'+esc(p.supplier||'')+'" placeholder="Supplier name" '+(locked?'disabled':'')+' /></div>'+
-      '<div class="sm:col-span-2"><label class="lbl">Birds</label><input type="number" min="0" step="1" data-p="birds" data-i="'+i+'" class="inp num" value="'+(p.birds||'')+'" '+(locked?'disabled':'')+' /></div>'+
-      '<div class="sm:col-span-3"><label class="lbl">Weight</label><div class="kgg"><input type="number" min="0" step="1" data-p="kg" data-i="'+i+'" class="inp num" value="'+(p.wtG?Math.floor(p.wtG/1000):'')+'" '+(locked?'disabled':'')+' /><span>kg</span><input type="number" min="0" max="999" step="1" data-p="g" data-i="'+i+'" class="inp num" value="'+(p.wtG?p.wtG%1000:'')+'" '+(locked?'disabled':'')+' /><span>g</span></div></div>'+
-      (isAdmin()
-        ? '<div class="sm:col-span-2"><label class="lbl">Rate ₹/kg</label><input type="number" min="0" step="0.01" data-p="rate" data-i="'+i+'" class="inp num" value="'+(p.rate||'')+'" '+(locked?'disabled':'')+' /></div>'
-        : '<div class="sm:col-span-2"><label class="lbl">Rate</label><p class="inp !bg-slate-100 text-slate-400 text-xs italic">admin only</p></div>')+
+    var isReturn=p.kind==='return';
+    var against=isReturn ? open.filter(function(o){ return o.id===p.returnOf; })[0] : null;
+    return '<div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end '+(isReturn?'bg-rose-50 border-rose-200':'bg-slate-50 border-slate-200')+' border rounded-lg p-3 pop">'+
+      (isAdmin() ? '<div class="sm:col-span-12 flex items-center gap-2">'+
+        '<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(isReturn?'bg-rose-600 text-white':'bg-emerald-100 text-emerald-800')+'">'+(isReturn?'Return to supplier':'Purchase')+'</span>'+
+        (locked?'':'<button type="button" data-pret="'+i+'" class="text-[11px] font-bold text-slate-500 hover:text-emerald-700 underline">'+(isReturn?'Switch to purchase':'Mark as a return')+'</button>')+
+      '</div>' : '')+
+      (isReturn ?
+        ('<div class="sm:col-span-5"><label class="lbl">Return against</label><select data-p="returnOf" data-i="'+i+'" class="inp" '+(locked?'disabled':'')+'>'+
+          '<option value="">Choose the original purchase…</option>'+
+          open.map(function(o){ return '<option value="'+o.id+'" '+(o.id===p.returnOf?'selected':'')+'>'+o.date+' · '+esc(o.supplier||'—')+' · '+o.remainingBirds+' birds / '+fmtW(o.remainingWtG)+' left @ '+money(o.rate)+'/kg</option>'; }).join('')+
+        '</select>'+(open.length?'':'<p class="text-[11px] text-slate-400 mt-1">No open purchases in the last 60 days for this branch.</p>')+'</div>'+
+        '<div class="sm:col-span-2"><label class="lbl">Birds returned</label><input type="number" min="0" step="1" data-p="birds" data-i="'+i+'" class="inp num" value="'+(p.birds||'')+'" '+(locked?'disabled':'')+' /></div>'+
+        '<div class="sm:col-span-3"><label class="lbl">Weight returned</label><div class="kgg"><input type="number" min="0" step="1" data-p="kg" data-i="'+i+'" class="inp num" value="'+(p.wtG?Math.floor(p.wtG/1000):'')+'" '+(locked?'disabled':'')+' /><span>kg</span><input type="number" min="0" max="999" step="1" data-p="g" data-i="'+i+'" class="inp num" value="'+(p.wtG?p.wtG%1000:'')+'" '+(locked?'disabled':'')+' /><span>g</span></div></div>'+
+        '<div class="sm:col-span-1"><label class="lbl">Rate ₹/kg</label><p class="inp !bg-slate-100 text-slate-500 text-xs">'+(against?money(against.rate):(p.rate?money(p.rate):'—'))+'</p></div>')
+      :
+        ('<div class="sm:col-span-4"><label class="lbl">Supplier</label><input data-p="supplier" data-i="'+i+'" class="inp" value="'+esc(p.supplier||'')+'" placeholder="Supplier name" '+(locked?'disabled':'')+' /></div>'+
+        '<div class="sm:col-span-2"><label class="lbl">Birds</label><input type="number" min="0" step="1" data-p="birds" data-i="'+i+'" class="inp num" value="'+(p.birds||'')+'" '+(locked?'disabled':'')+' /></div>'+
+        '<div class="sm:col-span-3"><label class="lbl">Weight</label><div class="kgg"><input type="number" min="0" step="1" data-p="kg" data-i="'+i+'" class="inp num" value="'+(p.wtG?Math.floor(p.wtG/1000):'')+'" '+(locked?'disabled':'')+' /><span>kg</span><input type="number" min="0" max="999" step="1" data-p="g" data-i="'+i+'" class="inp num" value="'+(p.wtG?p.wtG%1000:'')+'" '+(locked?'disabled':'')+' /><span>g</span></div></div>'+
+        (isAdmin()
+          ? '<div class="sm:col-span-2"><label class="lbl">Rate ₹/kg</label><input type="number" min="0" step="0.01" data-p="rate" data-i="'+i+'" class="inp num" value="'+(p.rate||'')+'" '+(locked?'disabled':'')+' /></div>'
+          : '<div class="sm:col-span-2"><label class="lbl">Rate</label><p class="inp !bg-slate-100 text-slate-400 text-xs italic">admin only</p></div>')))+
       '<div class="sm:col-span-1 flex justify-end">'+(locked?'':'<button type="button" data-prm="'+i+'" class="h-9 w-9 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>')+'</div>'+
-      (isAdmin()?'<div class="sm:col-span-12 text-right text-xs font-bold text-emerald-800">Line value: '+money(num(p.wtG)/1000*num(p.rate))+'</div>':'')+
+      (isAdmin() && !isReturn?'<div class="sm:col-span-12 text-right text-xs font-bold text-emerald-800">Line value: '+money(num(p.wtG)/1000*num(p.rate))+'</div>':'')+
+      (isAdmin() && isReturn && against?'<div class="sm:col-span-12 text-right text-xs font-bold text-rose-700">Deducted from ledger: −'+money(num(p.wtG)/1000*against.rate)+'</div>':'')+
     '</div>';
   }).join('');
 }
@@ -1537,7 +1572,11 @@ function openReview(id){
   $('reviewSub').textContent=(S.branches[e.branch]||e.branch)+' · by '+userName(e.createdBy)+' · '+e.status;
   function row(l,val,cls){ return '<div class="flex justify-between py-1.5 border-b border-slate-100 text-sm"><span class="text-slate-500">'+l+'</span><span class="font-semibold num '+(cls||'')+'">'+val+'</span></div>'; }
   function block(t,rows){ return '<div class="card p-4"><h4 class="font-bold text-xs uppercase tracking-wider text-slate-600 mb-2">'+t+'</h4>'+rows+'</div>'; }
-  var purch=(e.purchases||[]).map(function(p){ return row(esc(p.supplier||'Supplier')+' — '+num(p.birds)+' birds', fmtW(p.wtG)+' @ '+money(p.rate)+' = '+money(num(p.wtG)/1000*num(p.rate))); }).join('')||'<p class="text-xs text-slate-400 italic">No purchases.</p>';
+  var purch=(e.purchases||[]).map(function(p){
+    var isRet=p.kind==='return';
+    return row((isRet?'↩ RETURN to ':'')+esc(p.supplier||'Supplier')+' — '+num(p.birds)+' birds',
+      fmtW(p.wtG)+' @ '+money(p.rate)+' = '+(isRet?'−':'')+money(num(p.wtG)/1000*num(p.rate)), isRet?'text-rose-700':'');
+  }).join('')||'<p class="text-xs text-slate-400 italic">No purchases.</p>';
   var photos=(e.photos||[]).map(function(src,i){ return '<img src="'+src+'" data-view="'+i+'" alt="Mortality photo '+(i+1)+'" class="h-28 w-28 object-cover rounded-lg border-2 border-slate-200 cursor-zoom-in" />'; }).join('');
   var hotelBlock=(e.hotelSales||[]).length
     ? (e.hotelSales||[]).map(function(l,i){
@@ -2186,6 +2225,7 @@ function closeModal(id){ $(id).classList.add('hidden'); }
 function showView(name){
   if(name==='dashboard' && !isAdmin()) name='entry';   /* supervisors have no dashboard */
   if(name==='dayclose' && !isAdmin()) name='entry';    /* nor any view onto Day Close */
+  if(name==='purchases' && !isAdmin()) name='entry';   /* nor the supplier purchase ledger */
   runChicken();
   qsa('.view').forEach(function(p){ p.classList.add('hidden'); p.classList.remove('view-enter'); });
   var el=$('view-'+name); el.classList.remove('hidden'); void el.offsetWidth; el.classList.add('view-enter');
@@ -2196,6 +2236,7 @@ function showView(name){
   if(name==='workers') renderWorkers();
   if(name==='dayclose') renderDayClose();
   if(name==='overheads'){ renderOverheads(); renderOverheadLedger(); }
+  if(name==='purchases') renderPurchaseLedger();
   if(name==='admin') renderAdmin();
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -3471,6 +3512,57 @@ function renderLedgerLog() {
   }).catch(apiFail);
 }
 
+/* Per-branch, per-supplier bird-purchase ledger — admin only. Mirrors
+   renderLedgerLog() above: fetch on filter change, keep the raw response on
+   S so Print/Excel can read the exact same rows without re-fetching. */
+function renderPurchaseLedger(){
+  if(!$('plBody') || !isAdmin() || !S.branch) return;
+  $('plBranchLabel').textContent=S.branches[S.branch]||S.branch;
+  var from=$('plFrom').value || monthStart();
+  var to=$('plTo').value || todayISO();
+  api('GET','/purchase-ledger?branch='+encodeURIComponent(S.branch)+'&from='+from+'&to='+to).then(function(d){
+    S.purchaseLedger=d;
+    var sup=d.suppliers||[];
+    $('plBody').innerHTML=sup.length ? sup.map(function(s){
+      return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(s.supplier)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+s.boughtBirds+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+fmtW(s.boughtWtG)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+money0(s.boughtAmt)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num'+(s.returnedBirds?' text-rose-700':'')+'">'+s.returnedBirds+'</td>'+
+        '<td class="px-4 py-2.5 text-right num'+(s.returnedBirds?' text-rose-700':'')+'">'+fmtW(s.returnedWtG)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num'+(s.returnedBirds?' text-rose-700':'')+'">'+money0(s.returnedAmt)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num font-bold">'+s.netBirds+'</td>'+
+        '<td class="px-4 py-2.5 text-right num font-bold">'+fmtW(s.netWtG)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num font-bold">'+money0(s.netAmt)+'</td></tr>';
+    }).join('') : '<tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">No purchases between '+from+' and '+to+'.</td></tr>';
+
+    var tot=sup.reduce(function(a,s){ a.bb+=s.boughtBirds; a.bw+=s.boughtWtG; a.ba+=s.boughtAmt;
+      a.rb+=s.returnedBirds; a.rw+=s.returnedWtG; a.ra+=s.returnedAmt;
+      a.nb+=s.netBirds; a.nw+=s.netWtG; a.na+=s.netAmt; return a; },
+      {bb:0,bw:0,ba:0,rb:0,rw:0,ra:0,nb:0,nw:0,na:0});
+    $('plFoot').innerHTML=sup.length ? '<tr><td class="px-4 py-2.5">Totals · '+sup.length+' supplier(s)</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+tot.bb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.bw)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(tot.ba)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+tot.rb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.rw)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(tot.ra)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+tot.nb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.nw)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(tot.na)+'</td></tr>' : '';
+    $('plNote').textContent=sup.length ? sup.length+' supplier(s) · '+from+' to '+to : 'Pick a date range to see purchases and returns.';
+
+    var txns=d.transactions||[];
+    $('plTxnBody').innerHTML=txns.length ? txns.slice().reverse().map(function(t){
+      var isRet=t.kind==='return';
+      return '<tr class="rowhover'+(isRet?' bg-rose-50':'')+'"><td class="px-4 py-2.5 whitespace-nowrap">'+t.date+'</td>'+
+        '<td class="px-4 py-2.5">'+esc(t.supplier)+'</td>'+
+        '<td class="px-4 py-2.5">'+(isRet?'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-rose-100 text-rose-800">Return</span>':'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Buy</span>')+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+(isRet?'−':'')+t.birds+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+(isRet?'−':'')+fmtW(t.wtG)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+money0(t.rate)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num'+(isRet?' text-rose-700':'')+'">'+(isRet?'−':'')+money0(t.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
+  }).catch(apiFail);
+}
+
 /* ---------------- labour ---------------- */
 function markAttendance(workerId, days) {
   var date = $('wkDate').value || todayISO();
@@ -3741,6 +3833,7 @@ function startApp(user, fresh) {
   $('ovhFrom').value = monthStart(); $('ovhTo').value = todayISO();
   $('dcDate').value = todayISO();
   $('dcFrom').value = addDays(todayISO(), -29); $('dcTo').value = todayISO();
+  $('plFrom').value = monthStart(); $('plTo').value = todayISO();
   renderDayCloseHistory();
   if (isAdmin()) $('recStatus').value = 'pending';
   bumpActivity(); tickSession();
@@ -3856,7 +3949,10 @@ function wire() {
     recalc();
   });
   $('btnAddPurchase').addEventListener('click', function () {
-    S.purchases.push({ supplier: '', birds: 0, wtG: 0, rate: 0 }); renderPurchases(); recalc();
+    // Almost every purchase is from the same trader — default to it so the
+    // common case needs no typing; still free-text for a one-off supplier.
+    S.purchases.push({ supplier: 'Shiva Traders', birds: 0, wtG: 0, rate: 0, kind: 'buy' });
+    renderPurchases(); recalc();
   });
   $('purchaseRows').addEventListener('input', function (ev) {
     var el = ev.target.closest('[data-p]'); if (!el) return;
@@ -3864,16 +3960,33 @@ function wire() {
     if (f === 'supplier') p.supplier = el.value;
     else if (f === 'birds') p.birds = num(el.value);
     else if (f === 'rate') p.rate = num(el.value);
-    else {
+    else if (f === 'kg' || f === 'g') {
       var kgEl = $('purchaseRows').querySelector('[data-p="kg"][data-i="' + i + '"]');
       var gEl = $('purchaseRows').querySelector('[data-p="g"][data-i="' + i + '"]');
       p.wtG = num(kgEl && kgEl.value) * 1000 + num(gEl && gEl.value);
     }
     recalc();
   });
+  $('purchaseRows').addEventListener('change', function (ev) {
+    var el = ev.target.closest('[data-p="returnOf"]'); if (!el) return;
+    var i = +el.getAttribute('data-i'), p = S.purchases[i]; if (!p) return;
+    var orig = (S.openPurchases[S.branch] || []).filter(function (o) { return String(o.id) === el.value; })[0];
+    p.returnOf = orig ? orig.id : null;
+    p.supplier = orig ? orig.supplier : p.supplier;
+    p.rate = orig ? orig.rate : p.rate;
+    renderPurchases(); recalc();
+  });
   $('purchaseRows').addEventListener('click', function (ev) {
-    var b = ev.target.closest('[data-prm]'); if (!b) return;
-    S.purchases.splice(+b.getAttribute('data-prm'), 1); renderPurchases(); recalc();
+    var b = ev.target.closest('[data-prm]');
+    if (b) { S.purchases.splice(+b.getAttribute('data-prm'), 1); renderPurchases(); recalc(); return; }
+    var ret = ev.target.closest('[data-pret]'); if (!ret) return;
+    var i = +ret.getAttribute('data-pret'), p = S.purchases[i]; if (!p) return;
+    if (p.kind === 'return') {
+      p.kind = 'buy'; p.returnOf = null; renderPurchases(); recalc();
+    } else {
+      p.kind = 'return'; p.returnOf = null; p.birds = 0; p.wtG = 0;
+      loadOpenPurchases(S.branch).then(function () { renderPurchases(); recalc(); });
+    }
   });
   /* ---- hotel & hostel sale lines ---- */
   $('btnAddHotelSale').addEventListener('click', function () {
@@ -4034,6 +4147,22 @@ function wire() {
   $('wkPrint').addEventListener('click', function () {
     var x = wkLedgerRows(); if (!x.d) return;
     printTable('Worker ledger — transaction log', x.d.from + ' to ' + x.d.to, x.headers, x.rows);
+  });
+  /* ---- supplier purchase ledger (admin only) ---- */
+  ['plFrom', 'plTo'].forEach(function (id) { $(id).addEventListener('change', renderPurchaseLedger); });
+  $('plThisMonth').addEventListener('click', function () {
+    $('plFrom').value = monthStart(); $('plTo').value = todayISO(); renderPurchaseLedger();
+  });
+  $('plExport').addEventListener('click', function () {
+    var by = tableData('#plBody');
+    var d = S.purchaseLedger;
+    toXlsx('VCC_purchase_ledger_' + (d ? d.from + '_to_' + d.to : todayISO()), 'By supplier', by.headers, by.rows);
+  });
+  $('plPrint').addEventListener('click', function () {
+    var by = tableData('#plBody');
+    var d = S.purchaseLedger;
+    printTable('Purchase ledger — ' + (S.branches[S.branch] || S.branch),
+      d ? d.from + ' to ' + d.to : '', by.headers, by.rows);
   });
   ['dwFrom', 'dwTo'].forEach(function (id) { $(id).addEventListener('change', renderDayWise); });
   $('dwMonth').addEventListener('click', function () {

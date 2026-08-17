@@ -245,7 +245,17 @@ class DailyEntry(db.Model):
 
 
 class Purchase(db.Model):
-    """Birds bought in on a given day. Several suppliers per day are allowed."""
+    """
+    Birds bought in on a given day. Several suppliers per day are allowed.
+
+    A row can also represent birds RETURNED to a supplier (kind='return') —
+    e.g. birds bought yesterday that turned out unfit and were handed back.
+    A return always points back at the original 'buy' row via return_of_id,
+    and is priced at THAT row's rate (never a new one), so the supplier
+    purchase ledger nets out correctly. Returns are excluded from
+    compute_entry()'s bird/weight/cost totals — they only affect the
+    ledger, not the day's own stock or P&L math.
+    """
     __tablename__ = "purchases"
 
     id = Column(Integer, primary_key=True)
@@ -256,13 +266,17 @@ class Purchase(db.Model):
     birds = Column(Integer, nullable=False, default=0)
     weight_g = Column(Integer, nullable=False, default=0)
     rate = Column(Numeric(12, 2), nullable=False, default=0)   # admin fills at approval
+    kind = Column(String(10), nullable=False, default="buy")   # 'buy' | 'return'
+    return_of_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
 
     entry = relationship("DailyEntry", back_populates="purchases")
+    return_of = relationship("Purchase", remote_side=[id])
 
     def to_dict(self, include_costs: bool = True):
-        return {"supplier": self.supplier or "", "batch": self.batch_no or "",
+        return {"id": self.id, "supplier": self.supplier or "", "batch": self.batch_no or "",
                 "birds": self.birds, "wtG": self.weight_g,
-                "rate": float(self.rate) if include_costs else 0}
+                "rate": float(self.rate) if include_costs else 0,
+                "kind": self.kind or "buy", "returnOf": self.return_of_id}
 
 
 class MortalityPhoto(db.Model):

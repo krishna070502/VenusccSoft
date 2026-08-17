@@ -185,6 +185,7 @@
       <button data-view="workers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-people-group text-xs"></i> Workers</button>
       <button data-view="dayclose" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-cash-register text-xs"></i> Day Close <span id="closeBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
+      <button data-view="purchases" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-truck-fast text-xs"></i> Purchases</button>
       <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
     </nav>
   </div>
@@ -906,6 +907,65 @@
           </table></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ================= PURCHASE LEDGER (admin only) ================= -->
+  <section id="view-purchases" class="view hidden">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div>
+        <h2 class="text-xl font-bold text-slate-900">Purchase Ledger — birds bought &amp; returned</h2>
+        <p class="text-sm text-slate-500"><span id="plBranchLabel" class="font-semibold text-emerald-700">&mdash;</span> · one row per supplier · admin only</p>
+      </div>
+    </div>
+
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-2">
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">By supplier</h3>
+        <span class="text-xs text-slate-400" id="plNote"></span>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="plFrom" title="Start of the date range.">From</label><input type="date" id="plFrom" class="inp !py-1.5 !text-xs" /></div>
+          <div><label class="lbl" for="plTo" title="End of the date range.">To</label><input type="date" id="plTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="plThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Jump the date range to this calendar month.">This month</button>
+          <button id="plPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-3 py-2 hover:bg-slate-50" title="Print this table."><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="plExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-3 py-2 hover:bg-emerald-800" title="Download this table as an Excel file."><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Supplier</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Bought (birds)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Bought (kg)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Bought (₹)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Returned (birds)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Returned (kg)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Returned (₹)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Net (birds)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Net (kg)</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Net (₹)</th>
+        </tr></thead>
+        <tbody id="plBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="plFoot" class="bg-slate-50 font-bold text-slate-800"></tfoot>
+      </table></div>
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="px-5 py-3 bg-slate-100 flex items-center gap-2">
+        <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Transactions</h3>
+        <span class="text-xs text-slate-400">Every buy and return line in the range above, most recent last</span>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Supplier</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Type</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Birds</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Weight</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Rate ₹/kg</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Amount</th>
+        </tr></thead>
+        <tbody id="plTxnBody" class="divide-y divide-slate-100"></tbody>
+      </table></div>
     </div>
   </section>
 

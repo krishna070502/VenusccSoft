@@ -2568,6 +2568,76 @@ def test_v15_ledger_filters():
 
 
 # ===========================================================================
+# 20d. Per-branch, per-supplier purchase ledger + bird returns
+# ===========================================================================
+def test_v16_purchase_returns():
+    print("\n[27] Supplier purchase ledger and bird returns")
+
+    bought = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(56),
+        purchases=[{"supplier": "Shiva Traders", "birds": 40, "wtG": 102_000, "rate": 180}],
+    )).get_json()
+    buy_id = bought["purchases"][0]["id"]
+    case("Purchase ledger", "A plain purchase line defaults to kind 'buy'",
+         "buy", "buy", lambda: bought["purchases"][0]["kind"])
+
+    open_before = ADMIN.get("/api/purchases/open?branch=B01&supplier=Shiva%20Traders").get_json()
+    case("Purchase ledger", "The new purchase shows up as returnable",
+         "40 birds remaining", 40,
+         lambda: next(r["remainingBirds"] for r in open_before["rows"] if r["id"] == buy_id))
+
+    # A supervisor's businessDate is forced to today regardless of what's
+    # sent, so whatever slot this lands on has to be clear of other tests'
+    # today-dated fixtures first, or the clash check (409) would fire before
+    # ever reaching the kind=return check this is actually testing for.
+    for stale in ADMIN.get(f"/api/entries?branch=B01&category=parents&from={D(0)}&to={D(0)}").get_json():
+        ADMIN.delete(f"/api/entries/{stale['id']}")
+    case("Purchase ledger", "A supervisor cannot record a return",
+         "422 — admin only", 422,
+         lambda: SUP.post("/api/entries", json=base_entry(
+             branch="B01", category="parents", businessDate=D(55),
+             purchases=[{"kind": "return", "returnOf": buy_id, "birds": 5, "wtG": 12_000}],
+         )).status_code)
+
+    returned = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="parents", businessDate=D(55),
+        purchases=[{"kind": "return", "returnOf": buy_id, "birds": 20, "wtG": 51_000,
+                    "rate": 999}],  # a client-sent rate must be ignored for a return
+    )).get_json()
+    ret_line = returned["purchases"][0]
+    case("Purchase ledger", "The return is priced at the ORIGINAL purchase's rate, not 999",
+         "180", 180.0, lambda: ret_line["rate"])
+    case("Purchase ledger", "...and inherits the original's supplier",
+         "Shiva Traders", "Shiva Traders", lambda: ret_line["supplier"])
+    case("Purchase ledger", "...and links back to the purchase it returns",
+         buy_id, buy_id, lambda: ret_line["returnOf"])
+    case("Purchase ledger", "A return does not count toward that day's own purchases total",
+         "0 birds bought on the return entry itself", 0, lambda: returned["calc"]["buyBirds"])
+
+    open_after = ADMIN.get("/api/purchases/open?branch=B01&supplier=Shiva%20Traders").get_json()
+    case("Purchase ledger", "The returnable balance drops by what was returned",
+         "40 - 20 = 20 remaining", 20,
+         lambda: next(r["remainingBirds"] for r in open_after["rows"] if r["id"] == buy_id))
+
+    ledger = ADMIN.get(f"/api/purchase-ledger?branch=B01&from={D(56)}&to={D(55)}").get_json()
+    shiva = next(s for s in ledger["suppliers"] if s["supplier"] == "Shiva Traders")
+    case("Purchase ledger", "Bought birds/weight/amount are totaled for the supplier",
+         "40 birds, 102kg, Rs 18,360", (40, 102_000, 18_360.0),
+         lambda: (shiva["boughtBirds"], shiva["boughtWtG"], shiva["boughtAmt"]))
+    case("Purchase ledger", "Returned birds/weight/amount are totaled too",
+         "20 birds, 51kg, Rs 9,180", (20, 51_000, 9_180.0),
+         lambda: (shiva["returnedBirds"], shiva["returnedWtG"], shiva["returnedAmt"]))
+    case("Purchase ledger", "Net is bought minus returned",
+         "20 birds, 51kg, Rs 9,180 net", (20, 51_000, 9_180.0),
+         lambda: (shiva["netBirds"], shiva["netWtG"], shiva["netAmt"]))
+
+    case("Purchase ledger", "A supervisor cannot reach the purchase ledger",
+         403, 403, lambda: SUP.get(f"/api/purchase-ledger?branch=B01").status_code)
+    case("Purchase ledger", "...nor the open-purchases picker",
+         403, 403, lambda: SUP.get("/api/purchases/open?branch=B01").status_code)
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2729,6 +2799,7 @@ if __name__ == "__main__":
     test_v13_dayclose_lock_and_overhead_edit()
     test_v14_opening_figures_admin_only()
     test_v15_ledger_filters()
+    test_v16_purchase_returns()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

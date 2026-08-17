@@ -102,6 +102,11 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     buy_wt_g = 0
     buy_amt = D0
     for p in entry.get("purchases", []) or []:
+        # Birds returned to a supplier are a supplier-ledger event only — they
+        # do not add to this day's available stock, so they're skipped here.
+        # See the Purchase model docstring and the /api/purchase-ledger route.
+        if p.get("kind") == "return":
+            continue
         buy_birds += int(p.get("birds") or 0)
         buy_wt_g += int(p.get("wtG") or 0)
         buy_amt += _d(p.get("wtG") or 0) / Decimal(1000) * _d(p.get("rate") or 0)

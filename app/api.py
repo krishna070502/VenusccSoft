@@ -459,17 +459,37 @@ def _replace_purchases(entry: DailyEntry, rows: list) -> None:
     existing_rates = [float(p.rate) for p in entry.purchases]
     entry.purchases.clear()
     for i, r in enumerate(rows or []):
-        # a supervisor cannot set or change a rate; keep whatever the admin had
-        if g.user.is_admin:
-            rate = to_dec(r.get("rate"), f"purchase[{i}].rate")
+        kind = "return" if r.get("kind") == "return" else "buy"
+        return_of_id = None
+        if kind == "return":
+            # Returns are admin-only (they need the rate, which is admin-only
+            # to begin with) and are always priced at the ORIGINAL purchase's
+            # rate — never a rate typed on the return day — so the ledger
+            # nets out to what was actually paid.
+            if not g.user.is_admin:
+                raise FieldError(f"purchase[{i}].kind", "Only an admin can record a return.")
+            orig = db.session.get(Purchase, to_int(r.get("returnOf"), f"purchase[{i}].returnOf"))
+            if not orig or orig.kind != "buy" or orig.entry.branch_id != entry.branch_id:
+                raise FieldError(f"purchase[{i}].returnOf",
+                                  "Pick which purchase this return is against.")
+            return_of_id = orig.id
+            rate = orig.rate
+            supplier = orig.supplier
         else:
-            rate = Decimal(str(existing_rates[i])) if i < len(existing_rates) else Decimal("0")
+            # a supervisor cannot set or change a rate; keep whatever the admin had
+            if g.user.is_admin:
+                rate = to_dec(r.get("rate"), f"purchase[{i}].rate")
+            else:
+                rate = Decimal(str(existing_rates[i])) if i < len(existing_rates) else Decimal("0")
+            supplier = (r.get("supplier") or "")[:160]
         entry.purchases.append(Purchase(
-            supplier=(r.get("supplier") or "")[:160],
+            supplier=supplier,
             batch_no=(r.get("batch") or "")[:64],
             birds=to_int(r.get("birds"), f"purchase[{i}].birds"),
             weight_g=to_int(r.get("wtG"), f"purchase[{i}].wtG"),
             rate=rate,
+            kind=kind,
+            return_of_id=return_of_id,
         ))
 
 
@@ -1695,6 +1715,114 @@ def list_ledger():
         "summary": summary,
         "from": from_day.isoformat(), "to": to_day.isoformat(),
     })
+
+
+@bp.get("/purchases/open")
+@admin_required
+def list_open_purchases():
+    """
+    Buy-kind purchase lines still available to return against, for the
+    "Return against" picker on a purchase row. Only the last 60 days are
+    offered — enough to cover "bought yesterday, returned today" without
+    dragging in the whole purchase history — and any line already fully
+    returned is left out.
+    """
+    err = require_branch(request.args.get("branch"))
+    if err:
+        return err
+    branch = branch_by_code(request.args["branch"])
+    supplier = (request.args.get("supplier") or "").strip().lower()
+    since = date.today() - timedelta(days=60)
+
+    buys = (Purchase.query.join(DailyEntry, Purchase.entry_id == DailyEntry.id)
+            .options(joinedload(Purchase.entry))
+            .filter(DailyEntry.branch_id == branch.id,
+                    DailyEntry.business_date >= since,
+                    Purchase.kind == "buy")
+            .order_by(DailyEntry.business_date.desc()).limit(200).all())
+    returns = (Purchase.query.join(DailyEntry, Purchase.entry_id == DailyEntry.id)
+               .filter(DailyEntry.branch_id == branch.id, Purchase.kind == "return").all())
+
+    returned = {}
+    for r in returns:
+        if r.return_of_id:
+            b, w = returned.get(r.return_of_id, (0, 0))
+            returned[r.return_of_id] = (b + r.birds, w + r.weight_g)
+
+    out = []
+    for p in buys:
+        if supplier and (p.supplier or "").strip().lower() != supplier:
+            continue
+        rb, rw = returned.get(p.id, (0, 0))
+        remaining_birds, remaining_wt = p.birds - rb, p.weight_g - rw
+        if remaining_birds <= 0 and remaining_wt <= 0:
+            continue
+        out.append({"id": p.id, "date": p.entry.business_date.isoformat(),
+                    "supplier": p.supplier or "", "birds": p.birds, "wtG": p.weight_g,
+                    "rate": float(p.rate), "remainingBirds": remaining_birds,
+                    "remainingWtG": remaining_wt})
+    return jsonify({"rows": out})
+
+
+@bp.get("/purchase-ledger")
+@admin_required
+def purchase_ledger():
+    """
+    Per-branch, per-supplier bird-purchase ledger: what was bought, what was
+    returned, and the net. Admin only — this is the "how much have we bought
+    from Shiva Traders" screen. See the Purchase model docstring for how a
+    return row is priced (always the original purchase's rate, never a rate
+    typed on the return day).
+    """
+    err = require_branch(request.args.get("branch"))
+    if err:
+        return err
+    branch = branch_by_code(request.args["branch"])
+
+    to_day = parse_date(request.args.get("to"), date.today(), field="to")
+    from_day = parse_date(request.args.get("from"), to_day - timedelta(days=90), field="from")
+    if from_day > to_day:
+        from_day, to_day = to_day, from_day
+
+    rows = (Purchase.query.join(DailyEntry, Purchase.entry_id == DailyEntry.id)
+            .options(joinedload(Purchase.entry))
+            .filter(DailyEntry.branch_id == branch.id,
+                    DailyEntry.business_date >= from_day,
+                    DailyEntry.business_date <= to_day)
+            .order_by(DailyEntry.business_date.asc()).all())
+
+    by_supplier = {}
+    txns = []
+    for p in rows:
+        name = (p.supplier or "Unknown").strip() or "Unknown"
+        agg = by_supplier.setdefault(name.lower(), {
+            "supplier": name, "boughtBirds": 0, "boughtWtG": 0, "boughtAmt": 0.0,
+            "returnedBirds": 0, "returnedWtG": 0, "returnedAmt": 0.0})
+        amt = float(p.weight_g) / 1000 * float(p.rate)
+        if p.kind == "return":
+            agg["returnedBirds"] += p.birds
+            agg["returnedWtG"] += p.weight_g
+            agg["returnedAmt"] += amt
+        else:
+            agg["boughtBirds"] += p.birds
+            agg["boughtWtG"] += p.weight_g
+            agg["boughtAmt"] += amt
+        txns.append({"id": p.id, "date": p.entry.business_date.isoformat(), "supplier": name,
+                     "kind": p.kind, "birds": p.birds, "wtG": p.weight_g, "rate": float(p.rate),
+                     "amount": round(amt, 2), "returnOf": p.return_of_id})
+
+    suppliers = []
+    for agg in by_supplier.values():
+        agg["boughtAmt"] = round(agg["boughtAmt"], 2)
+        agg["returnedAmt"] = round(agg["returnedAmt"], 2)
+        agg["netBirds"] = agg["boughtBirds"] - agg["returnedBirds"]
+        agg["netWtG"] = agg["boughtWtG"] - agg["returnedWtG"]
+        agg["netAmt"] = round(agg["boughtAmt"] - agg["returnedAmt"], 2)
+        suppliers.append(agg)
+    suppliers.sort(key=lambda a: a["supplier"].lower())
+
+    return jsonify({"branch": branch.code, "from": from_day.isoformat(), "to": to_day.isoformat(),
+                    "suppliers": suppliers, "transactions": txns})
 
 
 @bp.post("/ledger")

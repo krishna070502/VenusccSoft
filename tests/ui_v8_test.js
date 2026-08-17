@@ -352,6 +352,61 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('attendance buttons disable while the save is in flight', true);
   }
 
+  console.log('\n[12] supplier purchase ledger and bird returns');
+  const d45 = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const boughtRes = await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      branch: 'B01', category: 'parents', businessDate: d45,
+      openBirds: 80, openWtG: 200000, openMeatG: 5000, openRate: 120,
+      rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+      mortCount: 0, mortWtG: 0, damageG: 0,
+      dressedCount: 0, dressedWtG: 0, actualMeatG: 0,
+      skinSoldG: 0, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 80, closeWtG: 200000, closeMeatG: 5000,
+      purchases: [{ supplier: 'Shiva Traders UI', birds: 40, wtG: 102000, rate: 180 }]
+    })
+  });
+  check('a buy purchase line was created via the API for the return picker to find', boughtRes.ok);
+
+  nav('entry'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  click($('btnAddPurchase')); await sleep(300);
+  const supplierInp = q('#purchaseRows [data-p="supplier"]');
+  check('a new purchase row defaults the supplier to Shiva Traders',
+        supplierInp && supplierInp.value === 'Shiva Traders', supplierInp && supplierInp.value);
+
+  const retBtn = q('#purchaseRows [data-pret]');
+  check('the row offers a "Mark as a return" toggle',
+        !!retBtn && /Mark as a return/.test(retBtn.textContent), retBtn && retBtn.textContent);
+  click(retBtn); await sleep(500);   // triggers the open-purchases fetch
+  const retSel = q('#purchaseRows [data-p="returnOf"]');
+  check('switching to Return replaces the supplier field with a "return against" picker', !!retSel);
+  const opt = retSel && [...retSel.options].find(o => /Shiva Traders UI/.test(o.textContent));
+  check('the picker lists the purchase created above',
+        !!opt, retSel ? [...retSel.options].map(o => o.textContent).join(' | ') : 'no picker');
+  if (opt) { setVal(retSel, opt.value); await sleep(400); }
+  check('the return line shows the inherited rate, 180.00',
+        /180\.00/.test($('purchaseRows').textContent));
+  check('...and previews the ledger deduction',
+        /Deducted from ledger/.test($('purchaseRows').textContent));
+  click(q('#purchaseRows [data-prm]')); await sleep(200);   // clean up the draft row
+
+  console.log('\n[13] the Purchase Ledger screen (admin only)');
+  nav('purchases'); await sleep(600);
+  check('the nav item opens the Purchase Ledger view', !$('view-purchases').classList.contains('hidden'));
+  setVal($('plFrom'), d45); await sleep(600);
+  const shivaRow = qa('#plBody tr').find(tr => tr.textContent.includes('Shiva Traders UI'));
+  check('the supplier summary lists Shiva Traders UI with 40 birds bought',
+        !!shivaRow && shivaRow.children[1] && shivaRow.children[1].textContent.trim() === '40',
+        shivaRow && shivaRow.textContent);
+  const shivaTxn = qa('#plTxnBody tr').find(tr => tr.textContent.includes('Shiva Traders UI'));
+  check('the transaction log shows it as a Buy', !!shivaTxn && /Buy/.test(shivaTxn.textContent),
+        shivaTxn && shivaTxn.textContent);
+  click($('plPrint')); await sleep(200);
+  click($('plExport')); await sleep(200);
+  check('Purchase Ledger Print/Excel do not throw', printCalls >= 9, printCalls + ' calls');
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
