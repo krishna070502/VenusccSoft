@@ -1111,28 +1111,63 @@ function aggregate(list){
   return a;
 }
 
-/* Labour is tracked in its own ledger, so it is summed over the date range
-   independently of whether a daily entry exists or has been approved.        */
-function labourRange(codes,from,to){
-  var wages=0,other=0,manDays=0,paid=0,advances=0;
+/* Labour is tracked in its own ledger, so for the 'all' scope it is summed
+   over the date range independently of whether a daily entry exists or has
+   been approved — a worker who was paid is a real cost even before the
+   admin gets around to approving that day's entry.
+
+   When the Dashboard is filtered to ONE category (Broiler or Parents),
+   that shortcut breaks: wages aren't tagged by category, so a day where
+   BOTH broiler and parents have an entry would show the WHOLE day's wages
+   under "Broiler" alone, then the WHOLE day's wages again under "Parents"
+   alone — the exact double-deduction this mirrors dayCostsFor() to avoid
+   at the single-entry level. So a category filter walks day by day: a day
+   only counts toward a category if that category actually has an entry
+   that day, and if the OTHER category also has one, each gets half —
+   otherwise the one category that's active gets the whole day, same as
+   dayCostsFor()'s share. */
+function labourRange(codes,from,to,cat){
+  if(!cat || cat==='all'){
+    var wages=0,other=0,manDays=0,paid=0,advances=0;
+    S.ledger.forEach(function(l){
+      if(codes.indexOf(l.branch)<0) return;
+      if(l.date<from||l.date>to) return;
+      var def=LEDGER_TYPES[l.type]||{};
+      if(l.type==='work'){ wages+=num(l.amount); manDays+=num(l.days); }
+      else if(l.type==='advance'){ advances+=num(l.amount); paid+=num(l.amount); }
+      else if(l.type==='paid'){ paid+=num(l.amount); }
+      else if(def.shop) other+=num(l.amount);
+    });
+    return { wages:wages, advances:advances, other:other, manDays:manDays, paid:paid };
+  }
+  var wages=0, other=0, manDays=0, advances=0, paid=0;
+  codes.forEach(function(branch){
+    for(var d=from; d<=to; d=addDays(d,1)){
+      var sameDay=S.entries.filter(function(e){ return e.branch===branch && dOf(e.datetime)===d; });
+      if(!sameDay.some(function(e){ return e.category===cat; })) continue;
+      var share=sameDay.length||1, lab=labourFor(d,branch);
+      wages+=lab.wages/share; other+=lab.other/share;
+      manDays+=lab.manDays/share; advances+=lab.advances/share;
+    }
+  });
+  /* 'paid' is an actual settlement made to a worker, not tied to any one
+     day's entries — stays a flat, category-agnostic cash figure, same as
+     the 'all' scope above (see the "advances are cash, not cost" note in
+     withLabour()). */
   S.ledger.forEach(function(l){
-    if(codes.indexOf(l.branch)<0) return;
-    if(l.date<from||l.date>to) return;
-    var def=LEDGER_TYPES[l.type]||{};
-    if(l.type==='work'){ wages+=num(l.amount); manDays+=num(l.days); }
-    else if(l.type==='advance'){ advances+=num(l.amount); paid+=num(l.amount); }
-    else if(l.type==='paid'){ paid+=num(l.amount); }
-    else if(def.shop) other+=num(l.amount);
+    if(codes.indexOf(l.branch)<0 || l.date<from || l.date>to || l.type!=='paid') return;
+    paid+=num(l.amount);
   });
   return { wages:wages, advances:advances, other:other, manDays:manDays, paid:paid };
 }
 
 /* fold labour into an aggregate for a given scope + range */
 function withLabour(a,codes,from,to){
-  var l=labourRange(codes,from,to);
+  var cat=S.dashCat;
+  var l=labourRange(codes,from,to,cat);
   a.labour=l.wages; a.advances=l.advances; a.other=l.other;
   a.manDays=l.manDays; a.paidOut=l.paid;
-  a.overheads=overheadsFor(codes,monthsInRange(from,to),from,to).total;
+  a.overheads=overheadsFor(codes,monthsInRange(from,to),from,to,cat).total;
   a.beforeOverheads=a.revenue-a.cogs-a.labour-a.other;
   /* advances are cash, not cost; overheads are a real cost */
   a.net=a.beforeOverheads-a.overheads;
@@ -1940,20 +1975,35 @@ function monthsInRange(from,to){
 }
 
 /* Overheads charged inside a date range. Monthly costs are counted whole when
-   their month is in range; a dated one only counts if that exact day is. */
-function overheadsFor(codes,months,from,to){
-  var by={}, total=0, count=0;
-  S.overheads.forEach(function(o){
-    if(o.status!=='approved') return;
-    if(codes.indexOf(o.branch)<0) return;
-    if(o.date){
-      if(from && to && (o.date<from || o.date>to)) return;
-      if(months.indexOf(String(o.date).slice(0,7))<0) return;
-    } else if(months.indexOf(o.month)<0) return;
-    by[o.category]=(by[o.category]||0)+num(o.amount);
-    total+=num(o.amount); count++;
+   their month is in range; a dated one only counts if that exact day is.
+   Same category-filter problem as labourRange() above, and the same fix:
+   walk day by day and only give a category its dayCostsFor()-style share
+   on a day it actually has an entry. */
+function overheadsFor(codes,months,from,to,cat){
+  if(!cat || cat==='all'){
+    var by={}, total=0, count=0;
+    S.overheads.forEach(function(o){
+      if(o.status!=='approved') return;
+      if(codes.indexOf(o.branch)<0) return;
+      if(o.date){
+        if(from && to && (o.date<from || o.date>to)) return;
+        if(months.indexOf(String(o.date).slice(0,7))<0) return;
+      } else if(months.indexOf(o.month)<0) return;
+      by[o.category]=(by[o.category]||0)+num(o.amount);
+      total+=num(o.amount); count++;
+    });
+    return { by:by, total:total, count:count };
+  }
+  var total=0, count=0;
+  codes.forEach(function(branch){
+    for(var d=from; d<=to; d=addDays(d,1)){
+      var sameDay=S.entries.filter(function(e){ return e.branch===branch && dOf(e.datetime)===d; });
+      if(!sameDay.some(function(e){ return e.category===cat; })) continue;
+      var share=sameDay.length||1;
+      total+=overheadDayShare(d,branch)/share; count++;
+    }
   });
-  return { by:by, total:total, count:count };
+  return { by:{}, total:total, count:count };
 }
 
 function visibleOverheads(){

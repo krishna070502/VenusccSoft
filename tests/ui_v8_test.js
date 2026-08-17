@@ -407,6 +407,65 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('plExport')); await sleep(200);
   check('Purchase Ledger Print/Excel do not throw', printCalls >= 9, printCalls + ' calls');
 
+  console.log('\n[14] dashboard category filter does not double the day\'s wages');
+  const d20 = new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 10);
+  const dashWorker = await (await w.fetch('/api/workers', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch: 'B01', name: 'Dash Split Worker', role: 'dresser', dayWage: 2000 })
+  })).json();
+  await w.fetch('/api/ledger', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch: 'B01', workerId: dashWorker.id, date: d20, type: 'work', days: 1 })
+  });
+  const dashBase = {
+    branch: 'B01', businessDate: d20,
+    openBirds: 80, openWtG: 200000, openMeatG: 5000, openRate: 120,
+    rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+    liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+    mortCount: 0, mortWtG: 0, damageG: 0,
+    dressedCount: 10, dressedWtG: 20000, actualMeatG: 14000,
+    skinSoldG: 14000, skinlessSoldG: 0, liverSoldG: 0,
+    closeBirds: 70, closeWtG: 180000, closeMeatG: 0, purchases: []
+  };
+  for (const category of ['broiler', 'parents']) {
+    const e = await (await w.fetch('/api/entries', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({}, dashBase, { category }))
+    })).json();
+    await w.fetch('/api/entries/' + e.id + '/decision', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verdict: 'approved', openRate: 120 })
+    });
+  }
+
+  // The worker, ledger row and both entries above were created with raw
+  // fetch() calls, bypassing the app's own save flow — S.entries/S.ledger
+  // (what the dashboard reads from) never picked them up. Re-signing in
+  // re-runs bootstrap() and reloads everything from the server, same as a
+  // real page refresh would (see the Records section above for the same fix).
+  setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
+  $('loginForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1200);
+
+  nav('dashboard'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  setVal($('dashFrom'), d20); setVal($('dashTo'), d20); await sleep(500);
+  const catBtn = cat => qa('#dashCatSeg button').find(b => b.getAttribute('data-cat') === cat);
+
+  click(catBtn('all')); await sleep(400);
+  check('All-categories dashboard shows the full day\'s wages (2,000)',
+        digits($('plLabour').textContent) === '2000', $('plLabour').textContent);
+
+  click(catBtn('broiler')); await sleep(400);
+  check('Broiler-only dashboard shows its half-share (1,000), not the whole day',
+        digits($('plLabour').textContent) === '1000', $('plLabour').textContent);
+
+  click(catBtn('parents')); await sleep(400);
+  check('Parents-only dashboard shows its half-share too (1,000)',
+        digits($('plLabour').textContent) === '1000', $('plLabour').textContent);
+
+  click(catBtn('all')); await sleep(300);   // leave the dashboard as found
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
