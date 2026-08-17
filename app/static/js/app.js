@@ -1517,6 +1517,21 @@ function statusChip(st){
 function renderRecords(){
   var list=filteredEntries(); $('recCount').textContent=list.length;
   $('recordsTitle').textContent=isAdmin()?'Approvals & Records':'My Entries';
+
+  /* The nav tab's badge counts every pending entry you can see, with no
+     date/branch/category limit — the list below only shows what matches
+     the filters above it. When those disagree (e.g. an old or
+     different-branch entry is still pending), say so plainly and offer a
+     one-click way to see it, instead of leaving the badge's promise
+     looking like a bug. */
+  var allPending=visibleEntries().filter(function(e){return e.status==='pending';}).length;
+  var shownPending=list.filter(function(e){return e.status==='pending';}).length;
+  var hidden=allPending-shownPending;
+  var hint=$('recHiddenHint'), showAllBtn=$('recShowAllPending');
+  if(hint) hint.classList.toggle('hidden',hidden<=0);
+  if(hint && hidden>0) hint.textContent=' — '+hidden+' more pending entr'+(hidden===1?'y':'ies')+' outside these filters';
+  if(showAllBtn) showAllBtn.classList.toggle('hidden',hidden<=0 || !isAdmin());
+
   var body=$('recBody');
   if(!list.length){ body.innerHTML='<tr><td colspan="'+(isAdmin()?11:10)+'" class="px-4 py-12 text-center text-slate-400"><i class="fa-solid fa-inbox text-3xl mb-2 block"></i>No entries match the filters.</td></tr>'; return; }
   body.innerHTML=list.map(function(e){
@@ -4012,6 +4027,14 @@ function wire() {
     S.purchases.push({ supplier: 'Shiva Traders', birds: 0, wtG: 0, rate: 0, kind: 'buy' });
     renderPurchases(); recalc();
   });
+  // Same effect as adding a purchase row and then clicking its "Mark as a
+  // return" link, but a dedicated button so it doesn't have to be found —
+  // straight into return mode, ready for "return against" to be picked.
+  $('btnAddReturn').addEventListener('click', function () {
+    S.purchases.push({ supplier: '', birds: 0, wtG: 0, rate: 0, kind: 'return', returnOf: null });
+    renderPurchases();
+    loadOpenPurchases(S.branch).then(function () { renderPurchases(); recalc(); });
+  });
   $('purchaseRows').addEventListener('input', function (ev) {
     var el = ev.target.closest('[data-p]'); if (!el) return;
     var i = +el.getAttribute('data-i'), f = el.getAttribute('data-p'), p = S.purchases[i]; if (!p) return;
@@ -4148,6 +4171,18 @@ function wire() {
   });
   $('btnRecExport').addEventListener('click', exportCsv);
   $('btnRecPrint').addEventListener('click', printReport);
+  /* the nav badge counts every pending entry with no date/branch/category
+     limit — this clears every Records filter and widens the loaded window
+     all the way back to the oldest pending entry, so nothing the badge
+     promised is still out of view. */
+  $('recShowAllPending').addEventListener('click', function () {
+    $('recFrom').value = ''; $('recTo').value = ''; $('recBranch').value = '';
+    $('recCat').value = ''; $('recStatus').value = 'pending';
+    var oldestPending = visibleEntries()
+      .filter(function (e) { return e.status === 'pending'; })
+      .reduce(function (min, e) { var d = dOf(e.datetime); return (!min || d < min) ? d : min; }, null);
+    ensureRange(oldestPending || monthStart(), todayISO()).then(renderRecords);
+  });
   $('recBody').addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-act]'); if (!b) return;
     var id = b.getAttribute('data-id'), act = b.getAttribute('data-act');

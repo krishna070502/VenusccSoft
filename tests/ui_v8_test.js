@@ -466,6 +466,57 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   click(catBtn('all')); await sleep(300);   // leave the dashboard as found
 
+  console.log('\n[15] a dedicated Return birds button, no hunting for a toggle');
+  nav('entry'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  check('a dedicated "Return birds" button sits next to Add purchase', !!$('btnAddReturn'));
+  const beforeRows = qa('#purchaseRows [data-pret]').length;
+  click($('btnAddReturn')); await sleep(500);
+  check('clicking it drops straight into return mode — no separate toggle needed',
+        qa('#purchaseRows [data-p="returnOf"]').length > 0);
+  const newRows = qa('#purchaseRows [data-pret]');
+  check('the new row is already flagged as a return',
+        newRows.length > beforeRows && /Switch to purchase/.test(newRows[newRows.length - 1].textContent),
+        newRows.length ? newRows[newRows.length - 1].textContent : 'no rows');
+  const cleanupBtns = qa('#purchaseRows [data-prm]');
+  if (cleanupBtns.length) click(cleanupBtns[cleanupBtns.length - 1]);
+  await sleep(200);   // clean up the draft row
+
+  console.log('\n[16] the pending badge and the Records list agree, or say why not');
+  const d50 = new Date(Date.now() - 50 * 86400000).toISOString().slice(0, 10);
+  const pendingBase = {
+    branch: 'B01', category: 'broiler', businessDate: d50, submit: true,
+    openBirds: 80, openWtG: 200000, openMeatG: 5000, openRate: 120,
+    rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+    liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+    mortCount: 0, mortWtG: 0, damageG: 0,
+    dressedCount: 10, dressedWtG: 20000, actualMeatG: 14000,
+    skinSoldG: 14000, skinlessSoldG: 0, liverSoldG: 0,
+    closeBirds: 70, closeWtG: 180000, closeMeatG: 0, purchases: []
+  };
+  const pendingMade = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(pendingBase)
+  })).json();
+  check('the far-dated pending fixture was created (not blocked by validation)',
+        !!pendingMade.id, JSON.stringify(pendingMade));
+
+  setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
+  $('loginForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1200);
+
+  nav('records'); await sleep(500);
+  const stillHidden = !qa('#recBody tr').some(tr => tr.textContent.includes(d50));
+  check('the 50-day-old pending entry is outside the default 30-day filter',
+        stillHidden);
+  check('a hint explains there are more pending entries than shown',
+        !$('recHiddenHint').classList.contains('hidden'), $('recHiddenHint').textContent);
+  check('a "Show all" action is offered to admin',
+        !$('recShowAllPending').classList.contains('hidden'));
+  click($('recShowAllPending')); await sleep(800);
+  check('clicking it reveals the entry the badge already knew about',
+        qa('#recBody tr').some(tr => tr.textContent.includes(d50)));
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
