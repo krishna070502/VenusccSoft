@@ -225,7 +225,18 @@ function calc(e){
 
   /* ---- dressing ---- */
   var dressedWtG=num(e.dressedWtG), actualMeatG=num(e.actualMeatG);
-  var expectedMeatG=dressedWtG*yieldFrac, wasteMeatG=dressedWtG*(wastePct/100);
+  /* Math.floor, not a bare multiply — mirrors int(dressed_wt_g * yield_frac)
+     in compute_entry() (calc.py). Without the floor, a fractional gram
+     (e.g. 14007g * 78% = 10925.46g) left expectedMeatG a hair above the
+     server's truncated 10925g, so an exact-match entry could show a tiny
+     phantom shortfall here (a red "-0.000 kg" bonus/short chip) that the
+     server-side saved figures never had. */
+  var expectedMeatG=Math.floor(dressedWtG*yieldFrac);
+  /* derived from the truncated expectedMeatG, not a fresh dressedWtG*waste%
+     multiply — mirrors waste_meat_g = dressed_wt_g - expected_meat_g in
+     calc.py exactly, so this and "Expected meat" always add up to the
+     dressed weight on the nose, on both client and server. */
+  var wasteMeatG=dressedWtG-expectedMeatG;
   var varianceG=actualMeatG-expectedMeatG;
   var bonusG=Math.max(varianceG,0), shortG=Math.max(-varianceG,0);
   var yieldPct=dressedWtG>0?(actualMeatG/dressedWtG)*100:0;

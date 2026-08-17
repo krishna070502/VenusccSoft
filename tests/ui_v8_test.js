@@ -517,6 +517,40 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('clicking it reveals the entry the badge already knew about',
         qa('#recBody tr').some(tr => tr.textContent.includes(d50)));
 
+  console.log('\n[17] parents 22% waste math matches to the gram (support report regression)');
+  // Exact figures from the user's screenshot: 14kg 7g dressed, 22% waste
+  // setting, 10kg 925g actually obtained — expected to land on EXACTLY
+  // zero variance, not a tiny phantom shortfall from an unrounded
+  // expectedMeatG disagreeing with the server's truncated one.
+  nav('admin'); await sleep(500);
+  const originalWaste = $('setWasteParents').value;
+  setVal($('setWasteParents'), '22');
+  click($('btnSaveSettings')); await sleep(1000);
+
+  // B02 — untouched by every other section in this file, so there is no
+  // risk of loading an existing today-dated entry (locked/approved) here
+  // instead of a fresh blank form.
+  nav('entry'); await sleep(400);
+  setVal($('branchSelect'), 'B02'); await sleep(300);
+  click(qa('#entryCatSeg button').find(b => b.getAttribute('data-cat') === 'parents')); await sleep(400);
+  setVal($('f_dressedWt_kg'), '14'); setVal($('f_dressedWt_g'), '7');
+  setVal($('f_actualMeat_kg'), '10'); setVal($('f_actualMeat_g'), '925');
+  await sleep(400);
+
+  check('waste % shown matches the 22% setting', $('o_wastePct').textContent.trim() === '22',
+        $('o_wastePct').textContent);
+  check('expected meat is 10.925 kg (14.007 kg × 78%, truncated like the server)',
+        $('o_expMeat').textContent.trim() === '10.925 kg', $('o_expMeat').textContent);
+  check('waste meat is 3.082 kg (14.007 − 10.925)',
+        $('o_wasteMeat').textContent.trim() === '3.082 kg', $('o_wasteMeat').textContent);
+  check('bonus/short meat reads a clean 0.000 kg — no "-0.000" phantom variance',
+        $('o_bonusMeat').textContent.trim() === '0.000 kg', $('o_bonusMeat').textContent);
+
+  // restore the setting so it doesn't leak into any section that runs after this one
+  nav('admin'); await sleep(400);
+  setVal($('setWasteParents'), originalWaste || '21');
+  click($('btnSaveSettings')); await sleep(800);
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
