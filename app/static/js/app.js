@@ -155,22 +155,30 @@ function overheadDayShare(date,branch){
   return (dim ? spread/dim : 0) + dated;
 }
 
-/* Costs for one branch-day, divided between the entries that share that day,
-   so broiler and parents are not each charged the whole day.
+/* Costs for one branch-day. Mirrors day_costs_for() in api.py.
    selfId is the id of the entry this call is being made for (may be a
-   brand-new, not-yet-saved draft). We always count that entry itself once,
-   then add any OTHER saved entries for the same branch+date — this way a
-   draft second entry (e.g. parents, when broiler is already saved) sees the
-   same share (2) that Approval will show once it's saved too, instead of
-   under-counting to 1 just because it isn't in S.entries yet. */
-function dayCostsFor(date,branch,selfId){
+   brand-new, not-yet-saved draft — always counted as present for its own
+   category, so a draft second entry sees the same picture Approval will
+   show once it's saved, instead of looking like it's the only one there).
+
+   When only one category has an entry that day, it carries the whole
+   day's wages/overheads, same as ever. When BOTH broiler and parents have
+   an entry the same day, they're worked by the same crew — the whole
+   day's cost is charged to broiler, and parents carries none of it that
+   day, rather than splitting it evenly. */
+function dayCostsFor(date,branch,selfId,category){
   var lab=labourFor(date,branch);
-  var siblings=S.entries.filter(function(e){
-    return e.branch===branch && dOf(e.datetime)===date && e.id!==selfId; }).length;
-  var share=siblings+1;
-  return { wages:lab.wages/share, advances:lab.advances/share, other:lab.other/share,
-           manDays:lab.manDays/share, overheads:overheadDayShare(date,branch)/share,
-           shared:share };
+  var categories={}; categories[category]=1;
+  S.entries.forEach(function(e){
+    if(e.branch===branch && dOf(e.datetime)===date && e.id!==selfId) categories[e.category]=1;
+  });
+  var shared=Object.keys(categories).length||1;
+  if(category==='parents' && categories.broiler && categories.parents){
+    return { wages:0, advances:0, other:0, manDays:0, overheads:0, shared:shared };
+  }
+  return { wages:lab.wages, advances:lab.advances, other:lab.other,
+           manDays:lab.manDays, overheads:overheadDayShare(date,branch),
+           shared:shared };
 }
 
 /* What one hotel/hostel line is worth. Mirrors price_hotel_line() in calc.py —
@@ -267,7 +275,7 @@ function calc(e){
   var cogs=(availValue+openMeatValue)-closeValue;
   var grossProfit=revenue-cogs;
 
-  var lab=dayCostsFor(dOf(e.datetime), e.branch, e.id);
+  var lab=dayCostsFor(dOf(e.datetime), e.branch, e.id, e.category);
   var advances=lab.advances;   /* shown, never deducted: it settles wages already counted */
   var overheads=lab.overheads; /* this day's share of rent, power, salary */
   var netProfit=grossProfit-lab.wages-lab.other-overheads;
@@ -1123,9 +1131,9 @@ function aggregate(list){
    alone — the exact double-deduction this mirrors dayCostsFor() to avoid
    at the single-entry level. So a category filter walks day by day: a day
    only counts toward a category if that category actually has an entry
-   that day, and if the OTHER category also has one, each gets half —
-   otherwise the one category that's active gets the whole day, same as
-   dayCostsFor()'s share. */
+   that day. If the OTHER category also has one, they were worked by the
+   same crew — broiler carries that whole day's wages, parents carries
+   none of it, same rule as dayCostsFor(). */
 function labourRange(codes,from,to,cat){
   if(!cat || cat==='all'){
     var wages=0,other=0,manDays=0,paid=0,advances=0;
@@ -1145,9 +1153,9 @@ function labourRange(codes,from,to,cat){
     for(var d=from; d<=to; d=addDays(d,1)){
       var sameDay=S.entries.filter(function(e){ return e.branch===branch && dOf(e.datetime)===d; });
       if(!sameDay.some(function(e){ return e.category===cat; })) continue;
-      var share=sameDay.length||1, lab=labourFor(d,branch);
-      wages+=lab.wages/share; other+=lab.other/share;
-      manDays+=lab.manDays/share; advances+=lab.advances/share;
+      if(cat==='parents' && sameDay.some(function(e){ return e.category==='broiler'; })) continue;
+      var lab=labourFor(d,branch);
+      wages+=lab.wages; other+=lab.other; manDays+=lab.manDays; advances+=lab.advances;
     }
   });
   /* 'paid' is an actual settlement made to a worker, not tied to any one
@@ -1977,8 +1985,8 @@ function monthsInRange(from,to){
 /* Overheads charged inside a date range. Monthly costs are counted whole when
    their month is in range; a dated one only counts if that exact day is.
    Same category-filter problem as labourRange() above, and the same fix:
-   walk day by day and only give a category its dayCostsFor()-style share
-   on a day it actually has an entry. */
+   walk day by day, and when both categories share a day, broiler carries
+   the whole day's overhead share and parents carries none. */
 function overheadsFor(codes,months,from,to,cat){
   if(!cat || cat==='all'){
     var by={}, total=0, count=0;
@@ -1999,8 +2007,8 @@ function overheadsFor(codes,months,from,to,cat){
     for(var d=from; d<=to; d=addDays(d,1)){
       var sameDay=S.entries.filter(function(e){ return e.branch===branch && dOf(e.datetime)===d; });
       if(!sameDay.some(function(e){ return e.category===cat; })) continue;
-      var share=sameDay.length||1;
-      total+=overheadDayShare(d,branch)/share; count++;
+      if(cat==='parents' && sameDay.some(function(e){ return e.category==='broiler'; })) continue;
+      total+=overheadDayShare(d,branch); count++;
     }
   });
   return { by:{}, total:total, count:count };

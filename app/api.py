@@ -150,24 +150,35 @@ def overhead_day_share(branch_id: int, day: date) -> float:
     return total
 
 
-def day_costs_for(branch_id: int, day: date) -> dict:
+def day_costs_for(branch_id: int, day: date, category: str = None) -> dict:
     """
-    Labour and overheads for one branch-day, divided between the entries that
-    share that day. Without the split, broiler and parents on the same day
-    would each be charged the whole day's wages.
+    Labour and overheads for one branch-day.
+
+    When only one category has an entry that day, it carries the whole
+    day's wages/overheads, same as ever. When BOTH broiler and parents
+    have an entry the same day, they're worked by the same crew — rather
+    than splitting the day's cost evenly (which could put half a day's
+    wages against a parents batch a tenth the size of that day's broiler
+    run), the whole day's cost is charged to broiler and parents carries
+    none of it that day.
 
     Single-day use only — for a list of entries use DayCostIndex, which does
     the same arithmetic in three queries instead of three per entry.
     """
-    share = DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).count() or 1
+    categories = {c for (c,) in DailyEntry.query.filter_by(branch_id=branch_id, business_date=day)
+                  .with_entities(DailyEntry.category).all()}
+    shared = len(categories) or 1
+    if category == "parents" and {"broiler", "parents"} <= categories:
+        return {"wages": 0.0, "advances": 0.0, "other": 0.0, "manDays": 0.0,
+                "overheads": 0.0, "shared": shared}
     lab = labour_for(branch_id, day)
     return {
-        "wages": lab["wages"] / share,
-        "advances": lab["advances"] / share,
-        "other": lab["other"] / share,
-        "manDays": lab["manDays"] / share,
-        "overheads": overhead_day_share(branch_id, day) / share,
-        "shared": share,
+        "wages": lab["wages"],
+        "advances": lab["advances"],
+        "other": lab["other"],
+        "manDays": lab["manDays"],
+        "overheads": overhead_day_share(branch_id, day),
+        "shared": shared,
     }
 
 
@@ -218,13 +229,15 @@ class DayCostIndex:
             elif kind in SHOP_KINDS:
                 slot["other"] += amount
 
-        # 2) how many entries share each branch-day
-        for bid, day, n in (db.session.query(
-                DailyEntry.branch_id, DailyEntry.business_date, func.count(DailyEntry.id))
+        # 2) which categories are active on each branch-day (not just a count —
+        #    for_entry() needs to know whether BOTH broiler and parents are
+        #    present, not just how many entries there are)
+        for bid, day, cat in (db.session.query(
+                DailyEntry.branch_id, DailyEntry.business_date, DailyEntry.category)
                 .filter(DailyEntry.branch_id.in_(branch_ids),
                         DailyEntry.business_date >= lo, DailyEntry.business_date <= hi)
-                .group_by(DailyEntry.branch_id, DailyEntry.business_date).all()):
-            self.counts[(bid, day)] = int(n or 1)
+                .distinct().all()):
+            self.counts.setdefault((bid, day), set()).add(cat)
 
         # 3) overheads for every month the range touches
         months = sorted({d.strftime("%Y-%m") for d in days})
@@ -247,14 +260,21 @@ class DayCostIndex:
 
     def for_entry(self, entry) -> dict:
         key = (entry.branch_id, entry.business_date)
+        categories = self.counts.get(key) or {entry.category}
+        shared = len(categories) or 1
+        # same rule as day_costs_for(): both categories present the same day
+        # means the same crew worked both — broiler carries the whole day's
+        # cost, parents carries none of it.
+        if entry.category == "parents" and {"broiler", "parents"} <= categories:
+            return {"wages": 0.0, "advances": 0.0, "other": 0.0, "manDays": 0.0,
+                    "overheads": 0.0, "shared": shared}
         lab = self.labour.get(key)
-        share = self.counts.get(key, 1) or 1
         overheads = self.overheads.get(key, 0.0)
         if not lab:
-            return {**self.EMPTY, "overheads": overheads / share, "shared": share}
-        return {"wages": lab["wages"] / share, "advances": lab["advances"] / share,
-                "other": lab["other"] / share, "manDays": lab["manDays"] / share,
-                "overheads": overheads / share, "shared": share}
+            return {**self.EMPTY, "overheads": overheads, "shared": shared}
+        return {"wages": lab["wages"], "advances": lab["advances"],
+                "other": lab["other"], "manDays": lab["manDays"],
+                "overheads": overheads, "shared": shared}
 
 
 SUPERVISOR_HIDDEN = ("buyAmt", "openValue", "availValue", "avgRate", "meatCostKg",
@@ -277,7 +297,7 @@ def entry_payload(entry: DailyEntry, settings: dict, costs=None,
     # only what leaves the server is trimmed
     data = entry.to_dict(include_costs=True, include_photos=include_photos)
     if costs is None:
-        costs = day_costs_for(entry.branch_id, entry.business_date)
+        costs = day_costs_for(entry.branch_id, entry.business_date, entry.category)
     calc = compute_entry(data, settings, costs)
     if not show_costs:
         data["openRate"] = 0

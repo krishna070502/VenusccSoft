@@ -407,7 +407,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('plExport')); await sleep(200);
   check('Purchase Ledger Print/Excel do not throw', printCalls >= 9, printCalls + ' calls');
 
-  console.log('\n[14] dashboard category filter does not double the day\'s wages');
+  console.log('\n[14] dashboard category filter: same-day broiler+parents, broiler carries the cost');
   const d20 = new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 10);
   const dashWorker = await (await w.fetch('/api/workers', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -457,12 +457,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         digits($('plLabour').textContent) === '2000', $('plLabour').textContent);
 
   click(catBtn('broiler')); await sleep(400);
-  check('Broiler-only dashboard shows its half-share (1,000), not the whole day',
-        digits($('plLabour').textContent) === '1000', $('plLabour').textContent);
+  check('Broiler-only dashboard shows the whole day\'s wages (2,000) — same crew, broiler absorbs it',
+        digits($('plLabour').textContent) === '2000', $('plLabour').textContent);
 
   click(catBtn('parents')); await sleep(400);
-  check('Parents-only dashboard shows its half-share too (1,000)',
-        digits($('plLabour').textContent) === '1000', $('plLabour').textContent);
+  check('Parents-only dashboard shows zero — it does not also carry the day\'s wages',
+        digits($('plLabour').textContent) === '0', $('plLabour').textContent);
 
   click(catBtn('all')); await sleep(300);   // leave the dashboard as found
 

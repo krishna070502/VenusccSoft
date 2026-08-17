@@ -981,8 +981,8 @@ def test_overheads():
     case("Overheads", "A day carries its share of the month's overheads",
          "monthly total ÷ days in month", True,
          lambda: _overhead_day_share_applied())
-    case("Overheads", "Two categories on one day split the day's costs",
-         "broiler + parents on the same date", True,
+    case("Overheads", "Same-day broiler+parents: broiler carries the whole day's cost",
+         "broiler + parents on the same date, worked by the same crew", True,
          lambda: _day_costs_split())
 
 
@@ -1005,7 +1005,13 @@ def _overhead_day_share_applied():
 
 
 def _day_costs_split():
-    """Costs belong to the branch-day, so entries on one day share them."""
+    """
+    Costs belong to the branch-day. When broiler and parents both have an
+    entry the same day, they were worked by the same crew — broiler
+    carries the whole day's wages, parents carries none of it (not an
+    even split, which would put an unfair share on whichever entry is
+    the smaller of the two that day).
+    """
     from app.api import day_costs_for, labour_for
     day = TODAY - timedelta(days=19)
     w = ADMIN.post("/api/workers", json={"branch": "B01", "name": "SplitTest",
@@ -1021,9 +1027,11 @@ def _day_costs_split():
     with app.app_context():
         b = Branch.query.filter_by(code="B01").first()
         full = labour_for(b.id, day)["wages"]
-        per = day_costs_for(b.id, day)
-    # two entries share the day, so each carries half the wage
-    return per["shared"] == 2 and abs(per["wages"] * 2 - full) < 0.01
+        broiler_share = day_costs_for(b.id, day, "broiler")
+        parents_share = day_costs_for(b.id, day, "parents")
+    return (broiler_share["shared"] == 2 and parents_share["shared"] == 2
+            and abs(broiler_share["wages"] - full) < 0.01
+            and parents_share["wages"] == 0)
 
 
 # ===========================================================================

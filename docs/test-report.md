@@ -223,7 +223,7 @@
 | TC-155 | Overheads | Supervisor cannot delete an approved overhead | DELETE | 403 | 403 | PASS |
 | TC-156 | Overheads | Admin can delete | DELETE as admin | 200 | 200 | PASS |
 | TC-157 | Overheads | A day carries its share of the month's overheads | monthly total ÷ days in month | True | as expected | PASS |
-| TC-158 | Overheads | Two categories on one day split the day's costs | broiler + parents on the same date | True | as expected | PASS |
+| TC-158 | Overheads | Same-day broiler+parents: broiler carries the whole day's cost | broiler + parents on the same date, worked by the same crew | True | as expected | PASS |
 | TC-159 | Hotel pricing | Market 250 less 50 bills at 200 | skin, less=50 | 200.0 | 200.0 | PASS |
 | TC-160 | Hotel pricing | 20 kg at 200 is ₹4,000 | 20 kg skin | 4000.0 | 4000.0 | PASS |
 | TC-161 | Hotel pricing | Concession is the gap against market | 50/kg over 20 kg | 1000.0 | 1000.0 | PASS |
