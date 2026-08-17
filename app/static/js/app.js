@@ -155,11 +155,18 @@ function overheadDayShare(date,branch){
 }
 
 /* Costs for one branch-day, divided between the entries that share that day,
-   so broiler and parents are not each charged the whole day. */
-function dayCostsFor(date,branch){
+   so broiler and parents are not each charged the whole day.
+   selfId is the id of the entry this call is being made for (may be a
+   brand-new, not-yet-saved draft). We always count that entry itself once,
+   then add any OTHER saved entries for the same branch+date — this way a
+   draft second entry (e.g. parents, when broiler is already saved) sees the
+   same share (2) that Approval will show once it's saved too, instead of
+   under-counting to 1 just because it isn't in S.entries yet. */
+function dayCostsFor(date,branch,selfId){
   var lab=labourFor(date,branch);
-  var share=S.entries.filter(function(e){
-    return e.branch===branch && dOf(e.datetime)===date; }).length || 1;
+  var siblings=S.entries.filter(function(e){
+    return e.branch===branch && dOf(e.datetime)===date && e.id!==selfId; }).length;
+  var share=siblings+1;
   return { wages:lab.wages/share, advances:lab.advances/share, other:lab.other/share,
            manDays:lab.manDays/share, overheads:overheadDayShare(date,branch)/share,
            shared:share };
@@ -255,7 +262,7 @@ function calc(e){
   var cogs=(availValue+openMeatValue)-closeValue;
   var grossProfit=revenue-cogs;
 
-  var lab=dayCostsFor(dOf(e.datetime), e.branch);
+  var lab=dayCostsFor(dOf(e.datetime), e.branch, e.id);
   var advances=lab.advances;   /* shown, never deducted: it settles wages already counted */
   var overheads=lab.overheads; /* this day's share of rent, power, salary */
   var netProfit=grossProfit-lab.wages-lab.other-overheads;
