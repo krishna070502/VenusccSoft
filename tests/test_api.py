@@ -2730,6 +2730,53 @@ def test_v17_customer_adjustments():
 
 
 # ===========================================================================
+def test_v18_receipt_edit():
+    print("\n[29] Editing an already-recorded receipt")
+
+    cust = ADMIN.post("/api/customers", json={
+        "branch": "B01", "name": "Receipt Edit Test Hotel"}).get_json()
+    cid = cust["id"]
+    pay_day = D(85)
+
+    pay = ADMIN.post(f"/api/customers/{cid}/payments", json={
+        "date": pay_day, "amount": 500, "mode": "cash", "note": "First take"}).get_json()
+    pid = pay["id"]
+
+    case("Receipt edit", "A supervisor cannot edit one",
+         403, 403,
+         lambda: SUP.put(f"/api/payments/{pid}",
+                         json={"date": pay_day, "amount": 600, "mode": "cash"}).status_code)
+    case("Receipt edit", "A zero/negative amount is refused",
+         422, 422,
+         lambda: ADMIN.put(f"/api/payments/{pid}",
+                           json={"date": pay_day, "amount": 0, "mode": "cash"}).status_code)
+
+    fixed = ADMIN.put(f"/api/payments/{pid}", json={
+        "date": pay_day, "amount": 650, "mode": "upi", "note": "Corrected — was cash, actually UPI"
+    }).get_json()
+    case("Receipt edit", "The amount, mode and note all update",
+         (650.0, "upi", "Corrected — was cash, actually UPI"),
+         (fixed["amount"], fixed["mode"], fixed["note"]),
+         lambda: (fixed["amount"], fixed["mode"], fixed["note"]))
+
+    totals = ADMIN.get("/api/customers").get_json()["totals"][cid]
+    case("Receipt edit", "The customer's 'received' total reflects the corrected amount, not the original",
+         650.0, 650.0, lambda: totals["receipts"])
+
+    ledger = ADMIN.get(f"/api/customers/{cid}/ledger").get_json()
+    row = next(r for r in ledger["rows"] if r["kind"] == "receipt")
+    case("Receipt edit", "...and so does the ledger row itself",
+         650.0, 650.0, lambda: row["amount"])
+
+    case("Receipt edit", "An admin can still delete a receipt outright",
+         200, 200,
+         lambda: ADMIN.delete(f"/api/payments/{pid}").status_code)
+    totals_after = ADMIN.get("/api/customers").get_json()["totals"][cid]
+    case("Receipt edit", "Deleting it removes it from 'received' too",
+         0.0, totals_after["receipts"], lambda: totals_after["receipts"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2893,6 +2940,7 @@ if __name__ == "__main__":
     test_v15_ledger_filters()
     test_v16_purchase_returns()
     test_v17_customer_adjustments()
+    test_v18_receipt_edit()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

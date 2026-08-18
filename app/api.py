@@ -1619,6 +1619,39 @@ def add_payment(cid):
     return jsonify(p.to_dict()), 201
 
 
+@bp.put("/payments/<pid>")
+@admin_required
+def update_payment(pid):
+    """
+    Admin-only correction of an already-recorded receipt — a typo in the
+    amount, the wrong date, or the wrong mode. Only add_payment()/
+    delete_payment() existed before this; a supervisor who mis-typed a
+    receipt had no way to fix it short of an admin deleting and re-adding
+    it by hand.
+    """
+    p = db.session.get(CustomerPayment, pid)
+    if not p:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(p.branch.code)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    amount = to_dec(d.get("amount"), "amount")
+    if amount <= 0:
+        return jsonify({"error": "validation", "message": "Enter an amount."}), 422
+    mode = d.get("mode") if d.get("mode") in ("cash", "upi", "bank", "cheque") else p.mode
+
+    before = f"₹{p.amount} {p.mode} · {p.pay_date.isoformat()}"
+    p.amount = amount
+    p.pay_date = parse_date(d.get("date"), p.pay_date, field="date")
+    p.mode = mode
+    p.note = (d.get("note") or "")[:500]
+    log_activity("Edited receipt", f"{p.customer.name} · {before} → ₹{p.amount} {p.mode} "
+                 f"· {p.pay_date.isoformat()}", branch_code=p.branch.code)
+    db.session.commit()
+    return jsonify(p.to_dict())
+
+
 @bp.post("/customers/<cid>/adjustments")
 @admin_required
 def add_customer_adjustment(cid):

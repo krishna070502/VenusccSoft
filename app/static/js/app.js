@@ -3247,6 +3247,40 @@ function receiptModal(cid) {
   });
 }
 
+/* Admin-only: fix a receipt that was recorded wrong — a typo'd amount, the
+   wrong date, or the wrong mode — instead of deleting and re-adding it by
+   hand. `r` is the ledger row for this receipt (has .id/.date/.amount/
+   .mode/.note already). Reopens the ledger underneath so the correction
+   shows immediately. */
+function editReceiptModal(cid, r) {
+  var c = customerById(cid); if (!c) return;
+  openGen('Edit receipt — ' + c.name,
+    '<div class="space-y-3">' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="rcEDate">Date received</label><input type="date" id="rcEDate" class="inp" value="' + esc(r.date) + '" /></div>' +
+      '<div><label class="lbl" for="rcEAmt">Amount (₹)</label><input type="number" min="0" step="1" id="rcEAmt" class="inp num" value="' + r.amount + '" /></div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="rcEMode">Mode</label><select id="rcEMode" class="inp">' +
+        [['cash', 'Cash'], ['upi', 'UPI'], ['bank', 'Bank transfer'], ['cheque', 'Cheque']]
+          .map(function (m) { return '<option value="' + m[0] + '"' + (r.mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label class="lbl" for="rcENote">Reference</label><input id="rcENote" class="inp" value="' + esc(r.note || '') + '" placeholder="Optional" /></div>' +
+    '</div>' +
+    '<button id="rcESave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Save changes</button></div>');
+  bind('rcESave', function () {
+    if (v('rcEAmt') <= 0) { toast('Enter an amount.', 'error'); return; }
+    if (!once('rcESave')) return;
+    api('PUT', '/payments/' + r.id, { date: tv('rcEDate'), amount: v('rcEAmt'),
+      mode: tv('rcEMode'), note: tv('rcENote') })
+      .then(function () { return bootstrap(); })
+      .then(function () {
+        renderCustomers(); renderDashboard();
+        openCustomerLedger(cid);
+        toast('Receipt updated.');
+      }).catch(apiFail).then(function () { done('rcESave'); });
+  });
+}
+
 /* Admin-only: add to or reduce what a hotel/hostel/function customer has
    been billed, without it being tied to any sale line — e.g. a mischarge
    found after the day was already approved. The date + cash/credit choice
@@ -3305,7 +3339,9 @@ function openCustomerLedger(cid) {
         return '<tr class="rowhover bg-emerald-50/40"><td class="px-3 py-2 whitespace-nowrap">' + r.date + '</td>' +
           '<td class="px-3 py-2" colspan="4"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Receipt</span> ' +
           esc(r.mode) + (r.note ? ' · ' + esc(r.note) : '') + '</td>' +
-          '<td class="px-3 py-2 text-right num text-emerald-700 font-bold">−' + money0(r.amount) + '</td>' +
+          '<td class="px-3 py-2 text-right num text-emerald-700 font-bold">−' + money0(r.amount) +
+          (isAdmin() ? ' <button id="rcEdit_' + r.id + '" title="Edit this receipt" class="h-6 w-6 rounded text-slate-500 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>' +
+            '<button id="rcDel_' + r.id + '" title="Delete this receipt" class="h-6 w-6 rounded text-rose-500 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>' : '') + '</td>' +
           '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
       }
       if (r.kind === 'adjustment') {
@@ -3363,6 +3399,20 @@ function openCustomerLedger(cid) {
     };
     bind('cuLedPay', function () { receiptModal(cid); });
     bind('cuLedAdjust', function () { closeModal('genModal'); adjustBillModal(cid); });
+    if (isAdmin()) {
+      d.rows.filter(function (r) { return r.kind === 'receipt'; }).forEach(function (r) {
+        bind('rcEdit_' + r.id, function () { editReceiptModal(cid, r); });
+        bind('rcDel_' + r.id, function () {
+          if (!confirm('Delete this ' + money0(r.amount) + ' receipt (' + r.date + ')?')) return;
+          api('DELETE', '/payments/' + r.id).then(function () { return bootstrap(); })
+            .then(function () {
+              renderCustomers(); renderDashboard();
+              openCustomerLedger(cid);
+              toast('Receipt deleted.', 'warn');
+            }).catch(apiFail);
+        });
+      });
+    }
     bind('cuLedCsv', function () {
       var x = custLedgerRows();
       toXlsx('VCC_ledger_' + c.code + '_' + todayISO(), 'Ledger', x.headers, x.rows);

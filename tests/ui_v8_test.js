@@ -603,6 +603,44 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('...and the breakdown explains it as a billing adjustment',
         !!b01Card && /billing adjustment/i.test(b01Card.textContent), b01Card && b01Card.textContent.slice(0, 400));
 
+  console.log('\n[19] editing and deleting an already-recorded receipt');
+  nav('customers'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  click($('btnAddCustomer')); await sleep(250);
+  setVal($('cuName'), 'Receipt Edit UI Hotel');
+  click($('cuSave')); await sleep(1200);
+  const recRow = () => qa('#custBody tr').find(tr => tr.textContent.includes('Receipt Edit UI Hotel'));
+  check('the test customer was created', !!recRow());
+
+  click(recRow().querySelector('button[data-cact="pay"]')); await sleep(300);
+  setVal($('rcAmt'), '500');
+  setVal($('rcMode'), 'cash');
+  click($('rcSave')); await sleep(1200);
+  check('the receipt shows up in Received',
+        recRow() && recRow().textContent.includes('500'), recRow() && recRow().textContent);
+
+  click(recRow().querySelector('button[data-cact="ledger"]')); await sleep(500);
+  const editBtn = () => q('#genBody button[id^="rcEdit_"]');
+  check('the receipt row offers an edit icon (admin only)', !!editBtn());
+  click(editBtn()); await sleep(300);
+  check('the edit modal pre-fills the existing amount',
+        !!$('rcEAmt') && $('rcEAmt').value === '500', $('rcEAmt') && $('rcEAmt').value);
+  setVal($('rcEAmt'), '650');
+  setVal($('rcEMode'), 'upi');
+  click($('rcESave')); await sleep(1200);
+  check('the ledger re-opens showing the corrected amount', /650/.test($('genModal').textContent));
+
+  const delBtn = () => q('#genBody button[id^="rcDel_"]');
+  check('a delete icon is offered too', !!delBtn());
+  click(delBtn()); await sleep(1200);
+  check('deleting it removes the receipt row from the ledger', !/650/.test($('genModal').textContent));
+  click(q('[data-close="1"]')); await sleep(300);
+
+  const recRow2 = () => qa('#custBody tr').find(tr => tr.textContent.includes('Receipt Edit UI Hotel'));
+  check('the customer\'s Received total drops back to 0 after the delete',
+        !!recRow2() && digits(recRow2().children[8].textContent) === '0',
+        recRow2() && recRow2().textContent);
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
