@@ -351,6 +351,8 @@ class Customer(db.Model):
                          cascade="all, delete-orphan")
     payments = relationship("CustomerPayment", back_populates="customer",
                             cascade="all, delete-orphan")
+    adjustments = relationship("CustomerAdjustment", back_populates="customer",
+                               cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("branch_id", "code", name="uq_customer_branch_code"),
@@ -480,6 +482,50 @@ class CustomerPayment(db.Model):
                 "branch": self.branch.code if self.branch else "",
                 "date": self.pay_date.isoformat(), "amount": float(self.amount),
                 "mode": self.mode, "note": self.note or ""}
+
+
+class CustomerAdjustment(db.Model):
+    """
+    An admin-only manual correction to what a hotel/hostel/function customer
+    has been billed — not tied to any sale line. Positive raises the bill,
+    negative lowers it (e.g. a mischarge found after the day was approved, or
+    a goodwill write-off).
+
+    Unlike Worker.balance_adjustment (a dateless running-total correction),
+    this carries a `business_date` and a `settled` flag, the same two things
+    a CustomerSale line has, because the request was for this to also move
+    that specific day's Day Close and Dashboard profit — not just the
+    customer's ledger balance. `settled=True` behaves like a cash hotel sale
+    (moves that day's expected cash); `settled=False` behaves like an
+    on-account sale (only changes the running balance).
+    """
+    __tablename__ = "customer_adjustments"
+
+    id = Column(String(32), primary_key=True, default=_uuid)
+    customer_id = Column(String(32), ForeignKey("customers.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id", ondelete="CASCADE"), nullable=False)
+    business_date = Column(Date, nullable=False, index=True)
+    amount = Column(Numeric(14, 2), nullable=False, default=0)   # signed
+    settled = Column(Boolean, nullable=False, default=False)
+    note = Column(Text)
+    created_by_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    customer = relationship("Customer", back_populates="adjustments")
+    branch = relationship("Branch")
+
+    __table_args__ = (
+        Index("ix_adjustment_customer_date", "customer_id", "business_date"),
+        Index("ix_adjustment_branch_date", "branch_id", "business_date"),
+    )
+
+    def to_dict(self):
+        return {"id": self.id, "customerId": self.customer_id,
+                "customerName": self.customer.name if self.customer else "",
+                "branch": self.branch.code if self.branch else "",
+                "date": self.business_date.isoformat(), "amount": float(self.amount),
+                "settled": self.settled, "note": self.note or ""}
 
 
 # --------------------------------------------------------------------------

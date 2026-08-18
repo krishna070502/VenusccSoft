@@ -551,6 +551,58 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   setVal($('setWasteParents'), originalWaste || '21');
   click($('btnSaveSettings')); await sleep(800);
 
+  console.log('\n[18] admin billing adjustment: add/reduce a hotel bill, reflected in ledger, Day Close and Dashboard');
+  const d65 = new Date(Date.now() - 65 * 86400000).toISOString().slice(0, 10);   // untouched by every other section
+
+  nav('customers'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  click($('btnAddCustomer')); await sleep(250);
+  setVal($('cuName'), 'Adjust Test Inn');
+  click($('cuSave')); await sleep(1200);
+  const custRow = () => qa('#custBody tr').find(tr => tr.textContent.includes('Adjust Test Inn'));
+  check('the test customer was created', !!custRow());
+  const adjBtn = () => custRow() && custRow().querySelector('button[data-cact="adjust"]');
+  check('an admin-only Adjust button is offered on its row', !!adjBtn());
+
+  click(adjBtn()); await sleep(300);
+  check('the Adjust modal opens with today pre-filled and a cash/credit choice',
+        !!$('adjAmt') && !!$('adjSettled') && !!$('adjDate').value);
+  setVal($('adjDate'), d65);
+  setVal($('adjAmt'), '450');
+  setVal($('adjSettled'), '1');   // cash
+  setVal($('adjNote'), 'UI test correction');
+  click($('adjSave')); await sleep(1200);
+
+  check('the customer\'s Billed total now includes the +450 adjustment',
+        custRow() && custRow().textContent.includes('450'),
+        custRow() && custRow().textContent);
+
+  click(custRow().querySelector('button[data-cact="ledger"]')); await sleep(500);
+  check('the ledger shows an Adjustment line', /Adjustment/.test($('genModal').textContent));
+  check('...with the note recorded', /UI test correction/.test($('genModal').textContent));
+  check('...and the ledger itself offers its own Adjust button (admin only)', !!$('cuLedAdjust'));
+  click(q('[data-close="1"]')); await sleep(300);
+
+  nav('dashboard'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  const dashScopeBranch = qa('[data-scope]').find(b => b.getAttribute('data-scope') === 'branch');
+  if (dashScopeBranch) { click(dashScopeBranch); await sleep(200); }
+  const catAllBtn = qa('#dashCatSeg button').find(b => b.getAttribute('data-cat') === 'all');
+  if (catAllBtn) { click(catAllBtn); await sleep(200); }
+  setVal($('dashFrom'), d65); setVal($('dashTo'), d65); await sleep(600);
+  check('the dashboard P&L for that single day shows the +450 adjustment as revenue ' +
+        '(no daily entry exists that day — the adjustment is the only thing in it)',
+        digits($('plRevenue').textContent) === '450', $('plRevenue').textContent);
+
+  nav('dayclose'); await sleep(400);
+  setVal($('dcDate'), d65); await sleep(700);
+  const b01Card = qa('#dcCards .card').find(c => c.getAttribute('data-dcbranch') === 'B01');
+  check('Day Close for that date shows the expected handover raised by the cash adjustment',
+        !!b01Card && digits(b01Card.getAttribute('data-dcexpected')) === '450',
+        b01Card && b01Card.getAttribute('data-dcexpected'));
+  check('...and the breakdown explains it as a billing adjustment',
+        !!b01Card && /billing adjustment/i.test(b01Card.textContent), b01Card && b01Card.textContent.slice(0, 400));
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));

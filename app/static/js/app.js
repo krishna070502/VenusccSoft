@@ -77,7 +77,7 @@ var CUSTOMER_KINDS = [
 function kindDef(v){ return CUSTOMER_KINDS.filter(function(k){ return k.v===v; })[0] || CUSTOMER_KINDS[0]; }
 
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
-          customers:[], receipts:[], custTotals:{}, closes:[],
+          customers:[], receipts:[], customerAdjustments:[], custTotals:{}, closes:[],
           window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, dcCurrent:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
@@ -1194,6 +1194,41 @@ function withLabour(a,codes,from,to){
   return a;
 }
 
+/* An admin billing adjustment (add/reduce a hotel or hostel's billed amount)
+   is not tied to any DailyEntry, so aggregate() — which only ever walks
+   entries — can never see it. Folded in here the same way labourRange()
+   folds in wages: for the 'all' scope every adjustment in the branch+range
+   counts; for a single-category filter, only on a day that category
+   actually has an entry, and if both categories share the day, broiler
+   carries it — same rule as dayCostsFor()/labourRange(), since it's the
+   same crew/shop either way. */
+function customerAdjRange(codes,from,to,cat){
+  var cash=0, credit=0;
+  (S.customerAdjustments||[]).forEach(function(x){
+    if(codes.indexOf(x.branch)<0) return;
+    if(x.date<from||x.date>to) return;
+    if(cat && cat!=='all'){
+      var sameDay=S.entries.filter(function(e){ return e.branch===x.branch && dOf(e.datetime)===x.date; });
+      if(!sameDay.some(function(e){ return e.category===cat; })) return;
+      if(cat==='parents' && sameDay.some(function(e){ return e.category==='broiler'; })) return;
+    }
+    if(x.settled) cash+=num(x.amount); else credit+=num(x.amount);
+  });
+  return { cash:cash, credit:credit, total:cash+credit };
+}
+
+/* fold billing adjustments into an aggregate for a given scope + range —
+   call this before withLabour() so its net/margin recompute sees the
+   adjusted revenue. */
+function withAdjustments(a,codes,from,to){
+  var adj=customerAdjRange(codes,from,to,S.dashCat);
+  a.revenue+=adj.total; a.hotelAmt+=adj.total;
+  a.hotelCash+=adj.cash; a.hotelCredit+=adj.credit;
+  a.net=a.revenue-a.cogs;
+  a.margin=a.revenue>0?(a.net/a.revenue)*100:0;
+  return a;
+}
+
 /* Closing stock is a point-in-time balance, not a sum: take the latest approved
    day inside the range for each branch + category and add those together.     */
 function closingStock(codes,from,to,cat){
@@ -1288,7 +1323,9 @@ function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
   var r=dashRange();
-  var list=dashEntries(), a=withLabour(aggregate(list), scopeCodes(), r.from, r.to);
+  var list=dashEntries();
+  var a=withLabour(withAdjustments(aggregate(list), scopeCodes(), r.from, r.to),
+                   scopeCodes(), r.from, r.to);
   $('dashScopeLabel').textContent=(S.dashScope==='all'?'All branches':S.branches[S.branch])+
     ' · '+(S.dashCat==='all'?'broiler + parents':S.dashCat)+' · '+dashRange().from+' → '+dashRange().to;
 
@@ -2813,6 +2850,7 @@ function bootstrap() {
     S.customers = d.customers || [];
     S.custTotals = d.customerTotals || {};
     S.receipts = d.receipts || [];
+    S.customerAdjustments = d.customerAdjustments || [];
     S.closes = d.closes || [];
     S.window = d.window ? { from: d.window.from, to: d.window.to } : null;
     S.users = d.users || [];
@@ -3077,6 +3115,7 @@ function renderCustomers() {
       '<td class="px-4 py-2.5 text-right whitespace-nowrap">' +
         '<button data-cact="ledger" data-id="' + c.id + '" title="Ledger" class="h-8 w-8 rounded-lg text-slate-700 hover:bg-slate-100"><i class="fa-solid fa-book-open"></i></button>' +
         '<button data-cact="pay" data-id="' + c.id + '" title="Record a receipt" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-hand-holding-dollar"></i></button>' +
+        (isAdmin() ? '<button data-cact="adjust" data-id="' + c.id + '" title="Add or reduce billed amount" class="h-8 w-8 rounded-lg text-amber-700 hover:bg-amber-100"><i class="fa-solid fa-sliders"></i></button>' : '') +
         '<button data-cact="edit" data-id="' + c.id + '" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>' +
         (isAdmin() ? '<button data-cact="del" data-id="' + c.id + '" title="Remove" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>' : '') +
       '</td></tr>';
@@ -3208,6 +3247,45 @@ function receiptModal(cid) {
   });
 }
 
+/* Admin-only: add to or reduce what a hotel/hostel/function customer has
+   been billed, without it being tied to any sale line — e.g. a mischarge
+   found after the day was already approved. The date + cash/credit choice
+   decide whether it also moves that day's Day Close cash (cash) or only the
+   running balance (credit), exactly like a hotel sale line would. */
+function adjustBillModal(cid) {
+  var c = customerById(cid); if (!c) return;
+  var t = S.custTotals[cid] || {};
+  openGen('Adjust billed amount — ' + c.name,
+    '<div class="space-y-3">' +
+    '<div class="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">' +
+      '<b>' + esc(c.name) + '</b> · ' + esc(c.kind) + '<br>' +
+      'Billed to date ' + money0(num(t.credit) + num(t.cash)) +
+      ' · <b>balance due ' + money0(num(t.balance)) + '</b></div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div><label class="lbl" for="adjDate">Date</label><input type="date" id="adjDate" class="inp" value="' + todayISO() + '" /></div>' +
+      '<div><label class="lbl" for="adjAmt">Amount (₹)</label><input type="number" step="1" id="adjAmt" class="inp num" placeholder="e.g. 200 or -200" /></div>' +
+    '</div>' +
+    '<p class="text-[11px] text-slate-400 -mt-2">Positive raises the bill, negative lowers it.</p>' +
+    '<div><label class="lbl" for="adjSettled">Effect</label><select id="adjSettled" class="inp">' +
+      '<option value="0">On account — changes the balance only</option>' +
+      '<option value="1">Cash — also moves today\'s Day Close and dashboard P&amp;L for that date</option>' +
+    '</select></div>' +
+    '<div><label class="lbl" for="adjNote">Reason (recommended)</label><input id="adjNote" class="inp" placeholder="e.g. Corrected a mischarge on the 12th" /></div>' +
+    '<button id="adjSave" class="w-full bg-amber-700 hover:bg-amber-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Save adjustment</button></div>');
+  bind('adjSave', function () {
+    var amt = v('adjAmt');
+    if (!amt) { toast('Enter an amount to add or reduce.', 'error'); return; }
+    if (!once('adjSave')) return;
+    api('POST', '/customers/' + cid + '/adjustments', { date: tv('adjDate'), amount: amt,
+      settled: tv('adjSettled') === '1', note: tv('adjNote') })
+      .then(function () { return bootstrap(); })
+      .then(function () {
+        closeModal('genModal'); renderCustomers(); renderDashboard();
+        toast((amt > 0 ? 'Added ' : 'Reduced by ') + money0(Math.abs(amt)) + ' for ' + c.name + '.');
+      }).catch(apiFail).then(function () { done('adjSave'); });
+  });
+}
+
 function openCustomerLedger(cid) {
   api('GET', '/customers/' + cid + '/ledger').then(function (d) {
     var c = d.customer, t = d.totals;
@@ -3228,6 +3306,14 @@ function openCustomerLedger(cid) {
           '<td class="px-3 py-2" colspan="4"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Receipt</span> ' +
           esc(r.mode) + (r.note ? ' · ' + esc(r.note) : '') + '</td>' +
           '<td class="px-3 py-2 text-right num text-emerald-700 font-bold">−' + money0(r.amount) + '</td>' +
+          '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
+      }
+      if (r.kind === 'adjustment') {
+        return '<tr class="rowhover bg-amber-50/40"><td class="px-3 py-2 whitespace-nowrap">' + r.date + '</td>' +
+          '<td class="px-3 py-2" colspan="4"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-800">Adjustment</span> ' +
+          (r.settled ? 'cash' : 'on account') + (r.note ? ' · ' + esc(r.note) : '') + '</td>' +
+          '<td class="px-3 py-2 text-right num font-bold ' + (r.amount >= 0 ? 'text-slate-700' : 'text-emerald-700') + '">' +
+            (r.amount >= 0 ? '+' : '−') + money0(Math.abs(r.amount)) + '</td>' +
           '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
       }
       var chip = r.status !== 'approved'
@@ -3259,6 +3345,7 @@ function openCustomerLedger(cid) {
       '</tr></thead><tbody class="divide-y divide-slate-100">' + rows + '</tbody></table></div>' +
       '<div class="flex flex-wrap gap-3 mt-4">' +
         '<button id="cuLedPay" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-hand-holding-dollar mr-1"></i> Record a receipt</button>' +
+        (isAdmin() ? '<button id="cuLedAdjust" class="bg-amber-700 hover:bg-amber-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-sliders mr-1"></i> Adjust billed amount</button>' : '') +
         '<button id="cuLedPrint" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-print mr-1"></i> Print</button>' +
         '<button id="cuLedCsv" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg"><i class="fa-solid fa-file-excel mr-1"></i> Excel</button>' +
       '</div>');
@@ -3266,14 +3353,16 @@ function openCustomerLedger(cid) {
     var custLedgerRows = function () {
       var headers = ['Date', 'Kind', 'Item', 'Weight kg', 'Market rate', 'Their rate', 'Concession', 'Amount', 'Status', 'Balance'];
       var rows = d.rows.map(function (r) {
-        return r.kind === 'receipt'
-          ? [r.date, 'Receipt', r.mode, '', '', '', '', -r.amount, 'received', r.balance]
-          : [r.date, 'Sale', r.product, (r.weightG / 1000).toFixed(3), r.marketRate, r.rate,
+        if (r.kind === 'receipt') return [r.date, 'Receipt', r.mode, '', '', '', '', -r.amount, 'received', r.balance];
+        if (r.kind === 'adjustment') return [r.date, 'Adjustment', r.note || '', '', '', '', '', r.amount,
+          r.settled ? 'cash' : 'on account', r.balance];
+        return [r.date, 'Sale', r.product, (r.weightG / 1000).toFixed(3), r.marketRate, r.rate,
              r.concession, r.amount, r.status + (r.settled ? ' / paid' : ' / on account'), r.balance];
       });
       return { headers: headers, rows: rows };
     };
     bind('cuLedPay', function () { receiptModal(cid); });
+    bind('cuLedAdjust', function () { closeModal('genModal'); adjustBillModal(cid); });
     bind('cuLedCsv', function () {
       var x = custLedgerRows();
       toXlsx('VCC_ledger_' + c.code + '_' + todayISO(), 'Ledger', x.headers, x.rows);
@@ -3324,6 +3413,9 @@ function renderDayClose() {
               line('Live bird sales', money(x.liveSales)) +
               line('Cutting charges', money(x.cuttingCharges)) +
               line('Hotel / function — paid today', money(x.hotelCash), 'text-indigo-700') +
+              (Math.abs(x.adjusted || 0) > 0.005 ? line('Admin billing adjustment for this day (net)',
+                (x.adjusted >= 0 ? '+' : '−') + money(Math.abs(x.adjusted)), 'text-amber-700',
+                'included above') : '') +
               line('Receipts against old bills', money(x.receipts), 'text-emerald-700') +
               line('Wages &amp; advances paid out', '−' + money(x.wagesPaid), 'text-rose-600') +
               line('Tea, tiffin &amp; shop costs', '−' + money(x.shopCosts), 'text-rose-600') +
@@ -4138,6 +4230,7 @@ function wire() {
     var c = customerById(id); if (!c) return;
     if (act === 'ledger') openCustomerLedger(id);
     else if (act === 'pay') receiptModal(id);
+    else if (act === 'adjust') adjustBillModal(id);
     else if (act === 'edit') customerModal(c);
     else if (act === 'del') {
       if (!confirm('Remove "' + c.name + '"?')) return;

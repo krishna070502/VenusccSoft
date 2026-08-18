@@ -126,7 +126,7 @@ def test_infrastructure():
          "GET /healthz", "ok",
          lambda: ADMIN.get("/healthz").get_json()["status"])
     case("Infrastructure", "All tables created",
-         "db.create_all()", 15,
+         "db.create_all()", 16,
          lambda: len(db.metadata.tables))
     case("Infrastructure", "SPA shell is served",
          "GET /", True,
@@ -2646,6 +2646,90 @@ def test_v16_purchase_returns():
 
 
 # ===========================================================================
+def test_v17_customer_adjustments():
+    print("\n[28] Admin billing adjustments for hotel/hostel customers")
+
+    cust = ADMIN.post("/api/customers", json={
+        "branch": "B01", "name": "Adjustment Test Hotel"}).get_json()
+    cid = cust["id"]
+    cash_day, credit_day = D(80), D(81)   # far from every other fixture's dates
+
+    case("Billing adjustment", "A supervisor cannot create one",
+         403, 403,
+         lambda: SUP.post(f"/api/customers/{cid}/adjustments",
+                          json={"date": cash_day, "amount": 100, "settled": True}).status_code)
+    case("Billing adjustment", "A zero amount is refused",
+         422, 422,
+         lambda: ADMIN.post(f"/api/customers/{cid}/adjustments",
+                            json={"date": cash_day, "amount": 0}).status_code)
+
+    cash_adj = ADMIN.post(f"/api/customers/{cid}/adjustments", json={
+        "date": cash_day, "amount": 300, "settled": True,
+        "note": "Corrected a mischarge"}).get_json()
+    case("Billing adjustment", "A cash adjustment saves with the fields sent",
+         (300.0, True, cash_day), (cash_adj["amount"], cash_adj["settled"], cash_adj["date"]),
+         lambda: (cash_adj["amount"], cash_adj["settled"], cash_adj["date"]))
+
+    credit_adj = ADMIN.post(f"/api/customers/{cid}/adjustments", json={
+        "date": credit_day, "amount": -150, "settled": False,
+        "note": "Goodwill write-off"}).get_json()
+    case("Billing adjustment", "A negative, on-account adjustment saves too",
+         (-150.0, False), (credit_adj["amount"], credit_adj["settled"]),
+         lambda: (credit_adj["amount"], credit_adj["settled"]))
+
+    totals = ADMIN.get("/api/customers").get_json()["totals"][cid]
+    case("Billing adjustment", "A cash adjustment lands in the 'cash' bucket",
+         300.0, 300.0, lambda: totals["cash"])
+    case("Billing adjustment", "A credit adjustment lands in the 'credit' bucket",
+         -150.0, -150.0, lambda: totals["credit"])
+    case("Billing adjustment", "Both are also reported as 'adjusted'",
+         150.0, 150.0, lambda: totals["adjusted"])
+    case("Billing adjustment", "Billed = credit + cash, so it moves too",
+         150.0, 150.0, lambda: totals["credit"] + totals["cash"])
+
+    ledger = ADMIN.get(f"/api/customers/{cid}/ledger").get_json()
+    adj_rows = [r for r in ledger["rows"] if r["kind"] == "adjustment"]
+    case("Billing adjustment", "Both adjustments show up on the customer's ledger",
+         2, len(adj_rows), lambda: len(adj_rows))
+    cash_row = next(r for r in adj_rows if r["date"] == cash_day)
+    credit_row = next(r for r in adj_rows if r["date"] == credit_day)
+    case("Billing adjustment", "A settled (cash) adjustment does not move the balance",
+         0.0, 0.0, lambda: cash_row["effect"])
+    case("Billing adjustment", "An on-account adjustment moves the balance by its amount",
+         -150.0, -150.0, lambda: credit_row["effect"])
+
+    cash_close = ADMIN.get(f"/api/dayclose?branch=B01&date={cash_day}").get_json()["branches"][0]
+    case("Billing adjustment", "A cash adjustment raises that day's expected handover",
+         300.0, 300.0, lambda: cash_close["expected"])
+    case("Billing adjustment", "...and shows inside hotelCash on that day's breakdown",
+         300.0, 300.0, lambda: cash_close["expectedBreakdown"]["hotelCash"])
+    case("Billing adjustment", "...and inside that day's revenue",
+         300.0, 300.0, lambda: cash_close["expectedBreakdown"]["revenue"])
+
+    credit_close = ADMIN.get(f"/api/dayclose?branch=B01&date={credit_day}").get_json()["branches"][0]
+    case("Billing adjustment", "A credit adjustment does NOT move expected cash",
+         0.0, 0.0, lambda: credit_close["expected"])
+    case("Billing adjustment", "...but does move that day's revenue",
+         -150.0, -150.0, lambda: credit_close["expectedBreakdown"]["revenue"])
+
+    hist = ADMIN.get(f"/api/dayclose/history?branch=B01&from={credit_day}&to={credit_day}").get_json()
+    case("Billing adjustment", "A credit-only day still surfaces in Day Close history "
+                              "(revenue moved even though cash did not)",
+         True, any(r["date"] == credit_day for r in hist["rows"]),
+         lambda: any(r["date"] == credit_day for r in hist["rows"]))
+
+    case("Billing adjustment", "A supervisor cannot delete one",
+         403, 403, lambda: SUP.delete(f"/api/customers/adjustments/{credit_adj['id']}").status_code)
+    del_resp = ADMIN.delete(f"/api/customers/adjustments/{credit_adj['id']}")
+    case("Billing adjustment", "An admin can delete one",
+         200, del_resp.status_code, lambda: del_resp.status_code)
+    totals_after = ADMIN.get("/api/customers").get_json()["totals"][cid]
+    case("Billing adjustment", "Deleting it removes its effect on the totals",
+         300.0, totals_after["cash"] + totals_after["credit"],
+         lambda: totals_after["cash"] + totals_after["credit"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -2808,6 +2892,7 @@ if __name__ == "__main__":
     test_v14_opening_figures_admin_only()
     test_v15_ledger_filters()
     test_v16_purchase_returns()
+    test_v17_customer_adjustments()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

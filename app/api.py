@@ -18,9 +18,9 @@ from sqlalchemy.orm import joinedload, selectinload, undefer
 from .calc import (PRODUCTS, compute_entry, costing_gaps, months_in_range,
                    price_hotel_line, validate_for_submission)
 from .extensions import db
-from .models import (ActivityLog, Branch, Customer, CustomerPayment, CustomerSale,
-                     DailyEntry, DayClose, LabourLedger, MortalityPhoto, Overhead,
-                     Purchase, Setting, User, Worker, utcnow)
+from .models import (ActivityLog, Branch, Customer, CustomerAdjustment, CustomerPayment,
+                     CustomerSale, DailyEntry, DayClose, LabourLedger, MortalityPhoto,
+                     Overhead, Purchase, Setting, User, Worker, utcnow)
 from .security import (admin_required, branch_by_code, log_activity,
                        login_required, require_branch, idle_limit_minutes,
                        start_session, end_session)
@@ -584,8 +584,13 @@ def customer_totals(customer_ids: list) -> dict:
       credit   — approved, unpaid: this is what makes up the balance
       cash     — approved and settled on the day
       pending  — sold but the day is not approved yet, so it does not count
+
+    Admin adjustments (CustomerAdjustment) land in the same two buckets as a
+    sale would — settled=True is cash, settled=False is credit — since to the
+    customer's bill they are indistinguishable from a sale line. There is no
+    "pending" state for an adjustment; it takes effect the moment it is made.
     """
-    blank = {"credit": 0.0, "cash": 0.0, "pending": 0.0, "receipts": 0.0}
+    blank = {"credit": 0.0, "cash": 0.0, "pending": 0.0, "receipts": 0.0, "adjusted": 0.0}
     out = {cid: dict(blank) for cid in customer_ids}
     if not customer_ids:
         return out
@@ -603,6 +608,21 @@ def customer_totals(customer_ids: list) -> dict:
         if status != "approved":
             out[cid]["pending"] += total
         elif settled:
+            out[cid]["cash"] += total
+        else:
+            out[cid]["credit"] += total
+
+    adjs = (db.session.query(CustomerAdjustment.customer_id, CustomerAdjustment.settled,
+                             func.sum(CustomerAdjustment.amount))
+            .filter(CustomerAdjustment.customer_id.in_(customer_ids))
+            .group_by(CustomerAdjustment.customer_id, CustomerAdjustment.settled)
+            .all())
+    for cid, settled, total in adjs:
+        if cid not in out:
+            continue
+        total = float(total or 0)
+        out[cid]["adjusted"] += total
+        if settled:
             out[cid]["cash"] += total
         else:
             out[cid]["credit"] += total
@@ -799,6 +819,14 @@ def bootstrap():
     receipts = (CustomerPayment.query.options(joinedload(CustomerPayment.branch))
                 .filter(CustomerPayment.branch_id.in_(bids))
                 .order_by(CustomerPayment.pay_date.desc()).limit(2000).all()) if bids else []
+    # Admin billing adjustments, windowed the same as entries/ledger — the
+    # Dashboard needs these per business_date to fold into that day's revenue
+    # and P&L (see aggregate() in app.js), the same way it already folds in
+    # wages/overheads day by day.
+    adjustments = (CustomerAdjustment.query.options(joinedload(CustomerAdjustment.branch))
+                  .filter(CustomerAdjustment.branch_id.in_(bids),
+                          CustomerAdjustment.business_date >= win_from)
+                  .order_by(CustomerAdjustment.business_date.desc()).all()) if bids else []
     closes = (DayClose.query.options(joinedload(DayClose.branch), joinedload(DayClose.declared_by),
                                      joinedload(DayClose.verified_by))
               .filter(DayClose.branch_id.in_(bids),
@@ -841,6 +869,7 @@ def bootstrap():
         "customers": customers,
         "customerTotals": cust_totals,
         "receipts": [p.to_dict() for p in receipts],
+        "customerAdjustments": [a.to_dict() for a in adjustments],
         "closes": [c.to_dict() for c in closes],
         "users": [u.to_dict() for u in User.query.order_by(User.id).all()] if g.user.is_admin else [],
     }
@@ -1531,15 +1560,26 @@ def customer_ledger(cid):
                      "status": "approved", "amount": float(p.amount),
                      "mode": p.mode, "note": p.note or ""})
 
-    rows.sort(key=lambda r: (r["date"], 0 if r["kind"] == "sale" else 1))
+    for a in CustomerAdjustment.query.filter_by(customer_id=c.id).all():
+        rows.append({"kind": "adjustment", "id": a.id, "date": a.business_date.isoformat(),
+                     "status": "approved", "amount": float(a.amount),
+                     "settled": a.settled, "note": a.note or ""})
+
+    rows.sort(key=lambda r: (r["date"], 0 if r["kind"] == "sale" else
+                             1 if r["kind"] == "adjustment" else 2))
 
     # Only an approved, unsettled sale moves the balance. A cash sale is square
-    # on the day, and an unapproved one is not a real sale yet.
+    # on the day, and an unapproved one is not a real sale yet. An adjustment
+    # is always "approved" the moment it is made — it has no draft state — so
+    # it follows the same settled/unsettled rule as a sale.
     balance = float(c.opening_balance)
     for r in rows:
         if r["kind"] == "receipt":
             balance -= r["amount"]
             r["effect"] = -r["amount"]
+        elif r["kind"] == "adjustment":
+            r["effect"] = r["amount"] if not r["settled"] else 0.0
+            balance += r["effect"]
         elif r["status"] == "approved" and not r["settled"]:
             balance += r["amount"]
             r["effect"] = r["amount"]
@@ -1577,6 +1617,52 @@ def add_payment(cid):
                  branch_code=c.branch.code)
     db.session.commit()
     return jsonify(p.to_dict()), 201
+
+
+@bp.post("/customers/<cid>/adjustments")
+@admin_required
+def add_customer_adjustment(cid):
+    """
+    Admin-only manual correction to a hotel/hostel/function customer's bill —
+    not tied to any sale line. Positive amount raises what they owe, negative
+    lowers it. `settled` decides whether it also moves that day's Day Close
+    cash (True) or only the running balance (False), exactly like a hotel
+    sale line's cash/on-account flag.
+    """
+    c = db.session.get(Customer, cid)
+    if not c:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(c.branch.code)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    amount = to_dec(d.get("amount"), "amount")
+    if amount == 0:
+        return jsonify({"error": "validation",
+                        "message": "Enter an amount to add or reduce (not zero)."}), 422
+    a = CustomerAdjustment(customer_id=c.id, branch_id=c.branch_id,
+                          business_date=parse_date(d.get("date"), date.today(), field="date"),
+                          amount=amount, settled=bool(d.get("settled")),
+                          note=(d.get("note") or "")[:500], created_by_id=g.user.id)
+    db.session.add(a)
+    log_activity("Billed amount adjusted", f"{c.name} · {'+' if amount >= 0 else ''}₹{amount} "
+                 f"({'cash' if a.settled else 'credit'}) · {a.note or 'no note'}",
+                 branch_code=c.branch.code)
+    db.session.commit()
+    return jsonify(a.to_dict()), 201
+
+
+@bp.delete("/customers/adjustments/<aid>")
+@admin_required
+def delete_customer_adjustment(aid):
+    a = db.session.get(CustomerAdjustment, aid)
+    if not a:
+        return jsonify({"error": "not_found"}), 404
+    log_activity("Removed billing adjustment", f"₹{a.amount} · {a.customer.name}",
+                 branch_code=a.branch.code)
+    db.session.delete(a)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @bp.delete("/payments/<pid>")
@@ -2263,7 +2349,7 @@ def delete_overhead(ov_id):
 # end-of-day cash handover
 # ==========================================================================
 def expected_cash(branch_id: int, day: date, settings=None, entries=None,
-                  receipts=None, labour=None) -> dict:
+                  receipts=None, labour=None, adjustments=None) -> dict:
     """
     What should be in the supervisor's hands at close.
 
@@ -2272,17 +2358,22 @@ def expected_cash(branch_id: int, day: date, settings=None, entries=None,
 
         counter meat + live sales + cutting charges     sold over the counter
       + hotel/function sales marked PAID on the day
+      + admin billing adjustments marked cash for the day
       + receipts collected against old hotel bills
       − wages, advances, tea, tiffin and shop costs paid out
       = what should be handed over
 
     Credit sales are excluded entirely — they land on the customer's ledger
-    instead, and turn into cash on the day a receipt is recorded.
+    instead, and turn into cash on the day a receipt is recorded. An admin's
+    billing adjustment (CustomerAdjustment) is not tied to any DailyEntry, so
+    it folds straight into the same hotelCash/hotelCredit/revenue buckets a
+    sale line would, by whichever branch+day the admin picked for it.
 
-    `settings`/`entries`/`receipts`/`labour` let a caller that already has
-    these for a whole date range (see dayclose_history()) pass them straight
-    in instead of this function re-querying per branch+day — the single-day
-    callers below don't have them handy, so they're left to query as before.
+    `settings`/`entries`/`receipts`/`labour`/`adjustments` let a caller that
+    already has these for a whole date range (see dayclose_history()) pass
+    them straight in instead of this function re-querying per branch+day —
+    the single-day callers below don't have them handy, so they're left to
+    query as before.
     """
     settings = get_settings() if settings is None else settings
     entries = (DailyEntry.query.filter_by(branch_id=branch_id, business_date=day).all()
@@ -2300,6 +2391,18 @@ def expected_cash(branch_id: int, day: date, settings=None, entries=None,
         hotel_credit += c["hotelCredit"]
         revenue += c["revenue"]
 
+    adjustments = (CustomerAdjustment.query.filter_by(branch_id=branch_id, business_date=day).all()
+                  if adjustments is None else adjustments)
+    adjusted = 0.0
+    for a in adjustments:
+        amt = float(a.amount)
+        revenue += amt
+        adjusted += amt
+        if a.settled:
+            hotel_cash += amt
+        else:
+            hotel_credit += amt
+
     receipts = (CustomerPayment.query.filter_by(branch_id=branch_id, pay_date=day).all()
                if receipts is None else receipts)
     receipts = sum(float(p.amount) for p in receipts)
@@ -2316,6 +2419,7 @@ def expected_cash(branch_id: int, day: date, settings=None, entries=None,
         "counterSales": round(counter, 2), "liveSales": round(live, 2),
         "cuttingCharges": round(cutting, 2), "hotelCash": round(hotel_cash, 2),
         "hotelCredit": round(hotel_credit, 2), "receipts": round(receipts, 2),
+        "adjusted": round(adjusted, 2),
         "wagesPaid": round(wages_paid, 2), "shopCosts": round(shop_costs, 2),
         "paidOut": round(paid_out, 2),
         "revenue": round(revenue, 2),
@@ -2525,6 +2629,10 @@ def dayclose_history():
     receipts_by = _group(CustomerPayment.query.filter(
         CustomerPayment.branch_id.in_(bids), CustomerPayment.pay_date.between(from_day, to_day)
     ).all() if bids else [], "pay_date")
+    adjustments_by = _group(CustomerAdjustment.query.filter(
+        CustomerAdjustment.branch_id.in_(bids),
+        CustomerAdjustment.business_date.between(from_day, to_day)
+    ).all() if bids else [], "business_date")
     labour_by = _group(LabourLedger.query.filter(
         LabourLedger.branch_id.in_(bids), LabourLedger.entry_date.between(from_day, to_day)
     ).all() if bids else [], "entry_date")
@@ -2541,10 +2649,15 @@ def dayclose_history():
             exp = expected_cash(b.id, day, settings=settings,
                                 entries=entries_by.get(key, []),
                                 receipts=receipts_by.get(key, []),
-                                labour=labour_by.get(key, []))
+                                labour=labour_by.get(key, []),
+                                adjustments=adjustments_by.get(key, []))
             row = closes_by.get(key)
-            if not row and exp["entries"] == 0 and abs(exp["expected"]) < 0.005:
+            if (not row and exp["entries"] == 0 and abs(exp["expected"]) < 0.005
+                    and abs(exp["revenue"]) < 0.005):
                 continue                      # nothing traded, nothing to close
+                # (a credit-only billing adjustment moves revenue but not cash,
+                # so it is checked here too — otherwise it would silently
+                # never show up in this history at all)
             declared = (float(row.cash_amount) + float(row.upi_amount)) if row else None
             out.append({
                 "date": day.isoformat(), "branch": b.code, "branchName": b.name,
