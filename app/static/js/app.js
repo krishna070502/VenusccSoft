@@ -3560,8 +3560,12 @@ function renderDayCloseHistory() {
       $('dcHistNote').textContent = rows.length
         ? rows.length + ' day(s)' + (missing ? ' · ' + missing + ' not yet declared' : ' · all declared')
         : '';
+      var tCash = 0, tUpi = 0;
+      rows.forEach(function (r) { if (r.cash !== null) tCash += r.cash; if (r.upi !== null) tUpi += r.upi; });
       $('dcHistFoot').innerHTML = rows.length ? '<tr><td class="px-4 py-2.5" colspan="3">Totals</td>' +
-        '<td class="px-4 py-2.5 text-right num">' + money0(t.expected) + '</td><td colspan="2"></td>' +
+        '<td class="px-4 py-2.5 text-right num">' + money0(t.expected) + '</td>' +
+        '<td class="px-4 py-2.5 text-right num">' + money0(tCash) + '</td>' +
+        '<td class="px-4 py-2.5 text-right num">' + money0(tUpi) + '</td>' +
         '<td class="px-4 py-2.5 text-right num">' + money0(t.declared) + '</td>' +
         '<td class="px-4 py-2.5 text-right num ' + (Math.abs(t.diff) < 0.5 ? 'text-emerald-700' : t.diff > 0 ? 'text-amber-700' : 'text-rose-600') + '">' +
         (t.diff > 0 ? '+' : '') + money0(t.diff) + '</td><td></td></tr>' : '';
@@ -3581,8 +3585,43 @@ function renderDayCloseHistory() {
         badge.classList.toggle('hidden', bad === 0);
       }
       S.closeHistory = rows;
+      renderDayCloseBranchTotals(from, to);
       renderDayCloseGaps();
     }).catch(apiFail);
+}
+
+/* Cash handed over + PhonePe/UPI received, totalled per branch over
+   whatever range dcFrom/dcTo (week, month, or a custom span) is showing —
+   built from the same S.closeHistory renderDayCloseHistory() already
+   fetched, no extra request. Only declared days count; a day nobody has
+   declared yet has nothing to add. */
+function renderDayCloseBranchTotals(from, to) {
+  if (!$('dcBranchBody')) return;
+  var by = {};
+  (S.closeHistory || []).forEach(function (r) {
+    if (r.declared === null) return;
+    var b = by[r.branch] || (by[r.branch] = { name: r.branchName, days: 0, cash: 0, upi: 0 });
+    b.days++; b.cash += num(r.cash); b.upi += num(r.upi);
+  });
+  var list = Object.keys(by).map(function (k) { return by[k]; })
+    .sort(function (a, b) { return b.cash + b.upi - (a.cash + a.upi); });
+
+  $('dcBranchNote').textContent = from && to ? from + ' → ' + to : '';
+  $('dcBranchBody').innerHTML = list.length ? list.map(function (b) {
+    return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">' + esc(b.name) + '</td>' +
+      '<td class="px-4 py-2.5 text-right num text-slate-500">' + b.days + '</td>' +
+      '<td class="px-4 py-2.5 text-right num">' + money0(b.cash) + '</td>' +
+      '<td class="px-4 py-2.5 text-right num">' + money0(b.upi) + '</td>' +
+      '<td class="px-4 py-2.5 text-right num font-bold">' + money0(b.cash + b.upi) + '</td></tr>';
+  }).join('') : '<tr><td colspan="5" class="px-4 py-10 text-center text-slate-400">Nothing declared in this range.</td></tr>';
+
+  var t = { days: 0, cash: 0, upi: 0 };
+  list.forEach(function (b) { t.days += b.days; t.cash += b.cash; t.upi += b.upi; });
+  $('dcBranchFoot').innerHTML = list.length ? '<tr><td class="px-4 py-2.5">Totals</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + t.days + '</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(t.cash) + '</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(t.upi) + '</td>' +
+    '<td class="px-4 py-2.5 text-right num">' + money0(t.cash + t.upi) + '</td></tr>' : '';
 }
 
 /* Two separate tables — days over, days short — built from the same history
@@ -4488,6 +4527,14 @@ function wire() {
   ['dcFrom', 'dcTo'].forEach(function (id) {
     $(id).addEventListener('change', renderDayCloseHistory);
   });
+  $('dcThisWeek').addEventListener('click', function () {
+    $('dcFrom').value = addDays(todayISO(), -6); $('dcTo').value = todayISO();
+    renderDayCloseHistory();
+  });
+  $('dcThisMonth').addEventListener('click', function () {
+    $('dcFrom').value = monthStart(); $('dcTo').value = todayISO();
+    renderDayCloseHistory();
+  });
   if ($('dcGapBranch')) $('dcGapBranch').addEventListener('change', renderDayCloseGaps);
   $('dcCards').addEventListener('click', function (ev) {
     var save = ev.target.closest('[data-dcsave]');
@@ -4536,6 +4583,14 @@ function wire() {
   $('dcPrint').addEventListener('click', function () {
     var x = dcHistRows();
     printTable('Cash handover history', ($('dcFrom').value || '') + ' to ' + ($('dcTo').value || ''), x.headers, x.rows);
+  });
+  $('dcBranchExport').addEventListener('click', function () {
+    var d = tableData('#dcBranchBody');
+    toXlsx('VCC_dayclose_by_branch_' + todayISO(), 'Cash & PhonePe by branch', d.headers, d.rows);
+  });
+  $('dcBranchPrint').addEventListener('click', function () {
+    var d = tableData('#dcBranchBody');
+    printTable('Cash & PhonePe by branch', ($('dcFrom').value || '') + ' to ' + ($('dcTo').value || ''), d.headers, d.rows);
   });
 
   /* ---- overhead ledger ---- */

@@ -844,6 +844,8 @@
         <div class="ml-auto flex items-end gap-2 flex-wrap">
           <div><label class="lbl" for="dcFrom" title="Start of the handover history range — admin only.">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
           <div><label class="lbl" for="dcTo" title="End of the handover history range — admin only.">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
+          <button id="dcThisWeek" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">This week</button>
+          <button id="dcThisMonth" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">This month</button>
           <button id="dcPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-print mr-1"></i>Print</button>
           <button id="dcExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-2.5 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
         </div>
@@ -862,6 +864,31 @@
         </tr></thead>
         <tbody id="dcHistBody" class="divide-y divide-slate-100"></tbody>
         <tfoot id="dcHistFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+      </table></div>
+    </div>
+
+    <div class="card overflow-hidden mt-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-building-columns text-indigo-600"></i>
+          <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">Cash &amp; PhonePe by branch</h3>
+          <span class="text-xs text-slate-400" id="dcBranchNote">for the range above</span>
+        </div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <button id="dcBranchPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="dcBranchExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-2.5 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Days declared</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Cash</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">PhonePe / UPI</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Total handed over</th>
+        </tr></thead>
+        <tbody id="dcBranchBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="dcBranchFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
       </table></div>
     </div>
 

@@ -641,6 +641,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         !!recRow2() && digits(recRow2().children[8].textContent) === '0',
         recRow2() && recRow2().textContent);
 
+  console.log('\n[20] cash + PhonePe handed over, totalled by branch, for a chosen range');
+  nav('dayclose'); await sleep(500);
+  click($('dcThisMonth')); await sleep(700);
+  // Section [9] declared B01's only handover this run: cash 5,800 (expected
+  // 6,300 minus the 500 short), UPI 0 — still "declared" even though it was
+  // reopened afterward (reopening only clears verification, not the figures).
+  const branchRow = () => qa('#dcBranchBody tr').find(tr => tr.textContent.includes('Yarrakatta'));
+  check('the per-branch summary lists the branch with a handover this month', !!branchRow());
+  check('...cash matches what was declared (5,800)',
+        !!branchRow() && digits(branchRow().children[2].textContent) === '5800',
+        branchRow() && branchRow().textContent);
+  check('...PhonePe/UPI matches too (0)',
+        !!branchRow() && digits(branchRow().children[3].textContent) === '0',
+        branchRow() && branchRow().textContent);
+  check('...and totals the two',
+        !!branchRow() && digits(branchRow().children[4].textContent) === '5800',
+        branchRow() && branchRow().textContent);
+
+  const histFootRow = q('#dcHistFoot tr');
+  check('the day-by-day history footer also totals cash and PhonePe, not just expected/handed over',
+        !!histFootRow && /5,800/.test(histFootRow.textContent), histFootRow && histFootRow.textContent);
+
+  click($('dcThisWeek')); await sleep(700);
+  check('"This week" narrows the range and still finds today\'s handover',
+        !!qa('#dcBranchBody tr').find(tr => tr.textContent.includes('Yarrakatta')));
+
+  click($('dcBranchPrint')); await sleep(200);
+  click($('dcBranchExport')); await sleep(200);
+  check('the by-branch table\'s Print/Excel buttons do not throw', printCalls >= 10, printCalls + ' calls');
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
