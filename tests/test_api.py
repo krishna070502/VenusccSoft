@@ -10,6 +10,7 @@ and docs/test-results.csv, then deletes the temporary data.
 
 import csv
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -131,6 +132,10 @@ def test_infrastructure():
     case("Infrastructure", "SPA shell is served",
          "GET /", True,
          lambda: b"Venus Chicken Centers" in ADMIN.get("/").data)
+    case("Infrastructure", "The JS bundle URL carries a cache-busting version "
+                          "(so a stale browser/CDN cache can't silently keep serving old app.js after a deploy)",
+         "app.js?v=<digits>", True,
+         lambda: re.search(rb'app\.js\?v=\d+', ADMIN.get("/").data) is not None)
     case("Infrastructure", "Unknown API path returns JSON not HTML",
          "GET /api/nope", "not_found",
          lambda: ADMIN.get("/api/nope").get_json()["error"])

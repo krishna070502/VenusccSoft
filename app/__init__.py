@@ -1,6 +1,7 @@
 """Application factory."""
 
 import os
+import time
 
 from flask import Flask, g, jsonify, render_template, request, session
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
@@ -62,6 +63,25 @@ def create_app(config_object=Config) -> Flask:
         user, reason = load_current_user()
         g.user = user
         g.session_expired = reason
+
+    # ---- cache-busting for the JS bundle ---------------------------------
+    # {{ url_for('static', filename='js/app.js') }} is the same URL on every
+    # deploy, so a browser (or a CDN/reverse proxy sitting in front of the
+    # app) that already cached app.js can keep serving that STALE script
+    # indefinitely after a new deploy. The page's HTML updates straight
+    # away, but the JS behind it silently doesn't — which looks exactly
+    # like "the new button just isn't there," when really the button IS
+    # there and the code to make it work is what's missing. Tying the
+    # query string to the file's own mtime changes it the moment the file
+    # does, so every browser is forced to fetch the new one on next load.
+    @app.context_processor
+    def _asset_version():
+        try:
+            path = os.path.join(app.static_folder, "js", "app.js")
+            v = int(os.path.getmtime(path))
+        except OSError:
+            v = int(time.time())
+        return {"asset_version": v}
 
     # ---- the single-page UI ---------------------------------------------
     @app.get("/")
