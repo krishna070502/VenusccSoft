@@ -1319,6 +1319,44 @@ function renderHotelPanel(a){
     : 'Concession (or premium) is the gap between the counter rate and what these customers actually pay. Nothing sold to them in this period.';
 }
 
+/* Bonus meat, branch and day wise — admin only (the whole dashboard already
+   is). Walks the same `list` (dashEntries()) the rest of the dashboard uses,
+   so it respects whatever branch/category/date-range is currently selected,
+   and lists every day actual meat obtained came in above the expected
+   yield. Purely informational: it does NOT change closing/opening meat —
+   see the note printed on the card itself. Carrying forward less than the
+   real physical remainder just to "book" the bonus separately would create
+   the exact same kind of drift a stale opening-meat figure already can. */
+function renderBonusMeatReport(list){
+  if(!$('bmBody')) return;
+  var rows=list.map(function(e){
+    var c=calc(e);
+    return { date:dOf(e.datetime), branch:e.branch, category:e.category,
+             dressedWtG:num(e.dressedWtG), expectedMeatG:c.expectedMeatG,
+             actualMeatG:num(e.actualMeatG), bonusG:c.bonusG, bonusValue:c.bonusValue };
+  }).filter(function(r){ return r.bonusG>0; })
+    .sort(function(a,b){ return a.date<b.date?1:-1; });
+
+  $('bmNote').textContent = rows.length ? rows.length+' day(s) with bonus meat' : 'no bonus meat in this range';
+
+  $('bmBody').innerHTML = rows.length ? rows.map(function(r){
+    return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+r.date+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500">'+esc(S.branches[r.branch]||r.branch)+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500 capitalize">'+esc(r.category)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.dressedWtG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.expectedMeatG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.actualMeatG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">+'+fmtW(r.bonusG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">'+money0(r.bonusValue)+'</td></tr>';
+  }).join('') : '<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">No day in this range obtained more meat than the expected yield.</td></tr>';
+
+  var t={ bonusG:0, bonusValue:0 };
+  rows.forEach(function(r){ t.bonusG+=r.bonusG; t.bonusValue+=r.bonusValue; });
+  $('bmFoot').innerHTML = rows.length ? '<tr><td class="px-4 py-2.5" colspan="6">Totals</td>'+
+    '<td class="px-4 py-2.5 text-right num">+'+fmtW(t.bonusG)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.bonusValue)+'</td></tr>' : '';
+}
+
 function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
@@ -1373,6 +1411,7 @@ function renderDashboard(){
   $('kExpYield').textContent=S.dashCat==='parents'?(100-num(S.settings.wasteParents)):(100-num(S.settings.wasteBroiler));
   $('kWaste').textContent=fmtW(a.wasteG);
   renderHotelPanel(a);
+  renderBonusMeatReport(list);
 
   var net=a.bonusG-a.shortG;
   var bEl=$('kBonus'), bd=$('kBonusBadge');
@@ -4198,6 +4237,14 @@ function wire() {
       var r = dashRange();
       ensureRange(r.from, r.to).then(renderDashboard);
     });
+  });
+  $('bmExport').addEventListener('click', function () {
+    var d = tableData('#bmBody');
+    toXlsx('VCC_bonus_meat_' + todayISO(), 'Bonus meat', d.headers, d.rows);
+  });
+  $('bmPrint').addEventListener('click', function () {
+    var d = tableData('#bmBody');
+    printTable('Bonus meat — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
   });
 
   /* ---- daily entry ---- */

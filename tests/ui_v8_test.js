@@ -671,6 +671,61 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('dcBranchExport')); await sleep(200);
   check('the by-branch table\'s Print/Excel buttons do not throw', printCalls >= 10, printCalls + ' calls');
 
+  console.log('\n[21] bonus meat, branch and day wise (admin only, does not touch closing stock)');
+  const d75 = new Date(Date.now() - 75 * 86400000).toISOString().slice(0, 10);   // untouched by every other section
+  // Default waste_broiler is 31% (yield 69%): 10,000g dressed -> 6,900g
+  // expected. Recording 7,500g actually obtained is a deliberate 600g bonus.
+  const bonusEntry = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'B01', category: 'broiler', businessDate: d75,
+      openBirds: 0, openWtG: 0, openMeatG: 0, openRate: 120,
+      rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+      mortCount: 0, mortWtG: 0, damageG: 0,
+      dressedCount: 5, dressedWtG: 10000, actualMeatG: 7500,
+      skinSoldG: 7500, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 0, closeWtG: 0, closeMeatG: 0, purchases: [{ supplier: 'Shiva Traders', birds: 5, wtG: 10000, rate: 120 }]
+    })
+  })).json();
+  await w.fetch('/api/entries/' + bonusEntry.id + '/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict: 'approved', openRate: 120 })
+  });
+
+  // Raw-fetch-created data never appears in S.entries until a fresh
+  // bootstrap — same re-sign-in pattern used everywhere else in this file.
+  setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
+  $('loginForm').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1200);
+
+  nav('dashboard'); await sleep(400);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  const bmScopeBranch = qa('[data-scope]').find(b => b.getAttribute('data-scope') === 'branch');
+  if (bmScopeBranch) { click(bmScopeBranch); await sleep(200); }
+  const bmCatAll = qa('#dashCatSeg button').find(b => b.getAttribute('data-cat') === 'all');
+  if (bmCatAll) { click(bmCatAll); await sleep(200); }
+  setVal($('dashFrom'), d75); setVal($('dashTo'), d75); await sleep(700);
+
+  const bmRow = () => qa('#bmBody tr').find(tr => tr.textContent.includes(d75));
+  check('the bonus meat table lists the day with above-expected yield', !!bmRow(), bmRow() && bmRow().textContent);
+  // 10,000g x 69% floors to 6,899g in plain JS floating point (10000*0.69
+  // lands a hair under 6900) — same truncate-like-the-server intent as
+  // expectedMeatG everywhere else in this app, just 1g off a clean round
+  // number here. Bonus is actual(7,500) minus THIS expected, so 601g.
+  check('...expected meat shows 6.899 kg (10,000g x 69%, floored)',
+        !!bmRow() && /6\.899/.test(bmRow().textContent), bmRow() && bmRow().textContent);
+  check('...actual meat shows 7.500 kg', !!bmRow() && /7\.500/.test(bmRow().textContent));
+  check('...bonus meat shows +0.601 kg', !!bmRow() && /\+0\.601/.test(bmRow().textContent));
+
+  const bmFootRow = q('#bmFoot tr');
+  check('the totals footer adds up the bonus grams', !!bmFootRow && /0\.601/.test(bmFootRow.textContent),
+        bmFootRow && bmFootRow.textContent);
+
+  click($('bmPrint')); await sleep(200);
+  click($('bmExport')); await sleep(200);
+  check('the bonus meat table\'s Print/Excel buttons do not throw', printCalls >= 11, printCalls + ' calls');
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
