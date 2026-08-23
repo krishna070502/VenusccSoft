@@ -4841,6 +4841,19 @@ function wire() {
   });
   window.addEventListener('online', net);
   window.addEventListener('offline', net);
+  /* A number input that happens to be focused when the page is scrolled
+     picks up the wheel as +/- steps in every browser — easy to trigger by
+     accident while scrolling past a weight or rate box on the entry form.
+     Block the browser's default only when a number input actually has
+     focus (so the page still scrolls normally everywhere else), then blur
+     it so the rest of that same scroll gesture passes through untouched. */
+  document.addEventListener('wheel', function (ev) {
+    var el = document.activeElement;
+    if (el && el.tagName === 'INPUT' && el.type === 'number') {
+      ev.preventDefault();
+      el.blur();
+    }
+  }, { passive: false });
 }
 
 

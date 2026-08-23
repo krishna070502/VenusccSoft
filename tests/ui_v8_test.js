@@ -726,6 +726,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('bmExport')); await sleep(200);
   check('the bonus meat table\'s Print/Excel buttons do not throw', printCalls >= 11, printCalls + ' calls');
 
+  console.log('\n[22] scrolling the mouse wheel over a focused number box does not change it');
+  nav('entry'); await sleep(300);
+  const wheelBox = $('f_openBirds');
+  wheelBox.value = '42'; wheelBox.focus();
+  const wheelEv = new w.Event('wheel', { bubbles: true, cancelable: true });
+  wheelBox.dispatchEvent(wheelEv);
+  check('the wheel event is blocked (preventDefault called) while the box has focus',
+        wheelEv.defaultPrevented);
+  check('the box loses focus so the rest of the scroll gesture passes through',
+        w.document.activeElement !== wheelBox);
+  check('the value itself is untouched', wheelBox.value === '42');
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
