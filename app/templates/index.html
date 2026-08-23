@@ -340,6 +340,35 @@
       </table></div>
     </div>
 
+    <!-- MEAT SHORTFALL (admin only) -->
+    <div class="card overflow-hidden mb-5">
+      <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-triangle-exclamation text-rose-600"></i>
+          <h3 class="font-bold text-slate-700 text-sm uppercase tracking-wide">Meat shortfall — by branch &amp; day</h3>
+          <span class="text-xs text-slate-400" id="msNote"></span>
+        </div>
+        <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <button id="msPrint" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50"><i class="fa-solid fa-print mr-1"></i>Print</button>
+          <button id="msExport" class="text-xs font-bold bg-emerald-700 text-white rounded-lg px-2.5 py-2 hover:bg-emerald-800"><i class="fa-solid fa-file-excel mr-1"></i>Excel</button>
+        </div>
+      </div>
+      <p class="px-5 pt-3 text-[11px] text-slate-500 leading-snug">When more meat is recorded sold (counter + hotel) or damaged on a day than was actually obtained from dressing that day, the gap is a shortfall — a data-entry slip or a genuine oversell. This is informational only: closing meat is already floored at zero regardless, so the shortfall never goes on to compound into tomorrow's opening meat.</p>
+      <div class="overflow-x-auto"><table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Category</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Actual meat</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Sold + damaged</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Shortfall</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Shortfall value</th>
+        </tr></thead>
+        <tbody id="msBody" class="divide-y divide-slate-100"></tbody>
+        <tfoot id="msFoot" class="bg-slate-100 font-bold text-slate-800"></tfoot>
+      </table></div>
+    </div>
+
     <!-- MONTHLY OVERHEADS -->
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-center gap-2">

@@ -693,6 +693,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     body: JSON.stringify({ verdict: 'approved', openRate: 120 })
   });
 
+  // Same date, 'parents' instead of 'broiler' (the unique constraint is
+  // branch+category+date, so this coexists with the bonus entry above) —
+  // 4,500g recorded sold against only 4,000g actually obtained is a 500g
+  // shortfall, regardless of what the formula expected that day.
+  const shortEntry = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'B01', category: 'parents', businessDate: d75,
+      openBirds: 0, openWtG: 0, openMeatG: 0, openRate: 120,
+      rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+      mortCount: 0, mortWtG: 0, damageG: 0,
+      dressedCount: 3, dressedWtG: 6000, actualMeatG: 4000,
+      skinSoldG: 4500, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 0, closeWtG: 0, closeMeatG: 0, purchases: [{ supplier: 'Shiva Traders', birds: 3, wtG: 6000, rate: 120 }]
+    })
+  })).json();
+  await w.fetch('/api/entries/' + shortEntry.id + '/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict: 'approved', openRate: 120 })
+  });
+
   // Raw-fetch-created data never appears in S.entries until a fresh
   // bootstrap — same re-sign-in pattern used everywhere else in this file.
   setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
@@ -725,6 +747,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('bmPrint')); await sleep(200);
   click($('bmExport')); await sleep(200);
   check('the bonus meat table\'s Print/Excel buttons do not throw', printCalls >= 11, printCalls + ' calls');
+
+  const msRow = () => qa('#msBody tr').find(tr => tr.textContent.includes(d75));
+  check('the meat shortfall table lists the day sold exceeded actual', !!msRow(), msRow() && msRow().textContent);
+  check('...actual meat shows 4.000 kg', !!msRow() && /4\.000/.test(msRow().textContent));
+  check('...sold + damaged shows 4.500 kg', !!msRow() && /4\.500/.test(msRow().textContent));
+  check('...shortfall shows −0.500 kg', !!msRow() && /[−-]0\.500/.test(msRow().textContent));
+
+  const msFootRow = q('#msFoot tr');
+  check('the totals footer adds up the shortfall grams', !!msFootRow && /0\.500/.test(msFootRow.textContent),
+        msFootRow && msFootRow.textContent);
+
+  click($('msPrint')); await sleep(200);
+  click($('msExport')); await sleep(200);
+  check('the meat shortfall table\'s Print/Excel buttons do not throw', printCalls >= 13, printCalls + ' calls');
 
   console.log('\n[22] scrolling the mouse wheel over a focused number box does not change it');
   nav('entry'); await sleep(300);

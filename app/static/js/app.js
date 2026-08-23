@@ -1379,6 +1379,42 @@ function renderBonusMeatReport(list){
     '<td class="px-4 py-2.5 text-right num">'+money0(t.bonusValue)+'</td></tr>' : '';
 }
 
+/* Meat shortfall, branch and day wise — the mirror image of the bonus meat
+   report above. Lists every day more meat was recorded sold/gone (counter +
+   hotel + damage) than was actually obtained from dressing that day —
+   calc()'s meatDeficitG, the amount that gets floored away rather than
+   left negative. Also purely informational: it does NOT change closing/
+   opening meat, which is already floored at zero regardless of whether
+   this card is ever opened. */
+function renderMeatShortfallReport(list){
+  if(!$('msBody')) return;
+  var rows=list.map(function(e){
+    var c=calc(e);
+    return { date:dOf(e.datetime), branch:e.branch, category:e.category,
+             actualMeatG:num(e.actualMeatG), soldOutG:num(e.skinSoldG)+num(e.skinlessSoldG)+num(e.liverSoldG)+c.hotelMeatG+num(e.damageG),
+             deficitG:c.meatDeficitG, deficitValue:c.meatDeficitValue };
+  }).filter(function(r){ return r.deficitG>0; })
+    .sort(function(a,b){ return a.date<b.date?1:-1; });
+
+  $('msNote').textContent = rows.length ? rows.length+' day(s) with a meat shortfall' : 'no meat shortfall in this range';
+
+  $('msBody').innerHTML = rows.length ? rows.map(function(r){
+    return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+r.date+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500">'+esc(S.branches[r.branch]||r.branch)+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500 capitalize">'+esc(r.category)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.actualMeatG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+fmtW(r.soldOutG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-rose-600">−'+fmtW(r.deficitG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-rose-600">'+money0(r.deficitValue)+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No day in this range sold/lost more meat than it actually obtained.</td></tr>';
+
+  var t={ deficitG:0, deficitValue:0 };
+  rows.forEach(function(r){ t.deficitG+=r.deficitG; t.deficitValue+=r.deficitValue; });
+  $('msFoot').innerHTML = rows.length ? '<tr><td class="px-4 py-2.5" colspan="5">Totals</td>'+
+    '<td class="px-4 py-2.5 text-right num">−'+fmtW(t.deficitG)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.deficitValue)+'</td></tr>' : '';
+}
+
 function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
@@ -1434,6 +1470,7 @@ function renderDashboard(){
   $('kWaste').textContent=fmtW(a.wasteG);
   renderHotelPanel(a);
   renderBonusMeatReport(list);
+  renderMeatShortfallReport(list);
 
   var net=a.bonusG-a.shortG;
   var bEl=$('kBonus'), bd=$('kBonusBadge');
@@ -4267,6 +4304,14 @@ function wire() {
   $('bmPrint').addEventListener('click', function () {
     var d = tableData('#bmBody');
     printTable('Bonus meat — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
+  });
+  $('msExport').addEventListener('click', function () {
+    var d = tableData('#msBody');
+    toXlsx('VCC_meat_shortfall_' + todayISO(), 'Meat shortfall', d.headers, d.rows);
+  });
+  $('msPrint').addEventListener('click', function () {
+    var d = tableData('#msBody');
+    printTable('Meat shortfall — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
   });
 
   /* ---- daily entry ---- */
