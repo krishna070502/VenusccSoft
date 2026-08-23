@@ -714,7 +714,13 @@ class DayClose(db.Model):
 
     def to_dict(self):
         cash, upi = float(self.cash_amount), float(self.upi_amount)
-        return {"id": self.id, "branch": self.branch.code,
+        # self.branch can be gone if the branch itself was later deleted —
+        # Branch has no ORM-level cascade onto DayClose (unlike DailyEntry/
+        # Worker/Overhead/Customer, which all are), so on a database that
+        # doesn't enforce the FK's own ON DELETE CASCADE (SQLite in dev/test;
+        # Postgres in production does) a handover can outlive its branch.
+        # Guarded the same way CustomerPayment/CustomerAdjustment already are.
+        return {"id": self.id, "branch": self.branch.code if self.branch else "",
                 "date": self.business_date.isoformat(),
                 "cash": cash, "upi": upi, "declared": cash + upi,
                 "expectedAtDeclaration": float(self.expected_amount),

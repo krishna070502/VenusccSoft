@@ -2792,3 +2792,115 @@ def admin_seed():
     return jsonify({"ok": True, **counts})
 
 
+# Every day-to-day transaction table the wipe below touches, and exactly what
+# it does NOT touch — branches, user accounts, worker profiles and customer
+# (hotel/hostel/function) master records survive untouched, same as a fresh
+# install with the same people and price books but no trading history yet.
+WIPE_CONFIRM_PHRASE = "DELETE ALL DATA"
+
+
+def _wipe_counts() -> dict:
+    return {
+        "entries": DailyEntry.query.count(),
+        "purchases": Purchase.query.count(),
+        "hotelSales": CustomerSale.query.count(),
+        "payments": CustomerPayment.query.count(),
+        "adjustments": CustomerAdjustment.query.count(),
+        "overheads": Overhead.query.count(),
+        "dayCloses": DayClose.query.count(),
+        "labourLedger": LabourLedger.query.count(),
+        "mortalityPhotos": MortalityPhoto.query.count(),
+    }
+
+
+@bp.get("/admin/wipe-preview")
+@admin_required
+def admin_wipe_preview():
+    """Counts for the confirmation dialog before admin_wipe() below deletes
+    anything — so an admin sees exactly what they are about to lose, not a
+    generic warning, and exactly what stays behind."""
+    return jsonify({
+        "delete": _wipe_counts(),
+        "keep": {
+            "branches": Branch.query.count(),
+            "users": User.query.count(),
+            "workers": Worker.query.count(),
+            "customers": Customer.query.count(),
+        },
+    })
+
+
+@bp.get("/admin/wipe-backup")
+@admin_required
+def admin_wipe_backup():
+    """
+    Every row admin_wipe() below is about to delete, as plain data — the
+    browser turns this straight into an Excel workbook and downloads it
+    before the delete button's confirmation even appears, so there is a
+    saved copy on the admin's own machine before anything is lost for good.
+    Photo binaries are left out (a photoCount is enough for an audit trail;
+    the images themselves don't belong in a spreadsheet) — everything else
+    that admin_wipe() removes is here in full, unpaginated.
+    """
+    entries = (DailyEntry.query
+              .options(selectinload(DailyEntry.purchases),
+                       selectinload(DailyEntry.hotel_sales),
+                       selectinload(DailyEntry.photos))
+              .order_by(DailyEntry.business_date.desc()).all())
+    return jsonify({
+        "entries": [e.to_dict(include_costs=True, include_photos=False) for e in entries],
+        "payments": [p.to_dict() for p in
+                    CustomerPayment.query.order_by(CustomerPayment.pay_date.desc()).all()],
+        "adjustments": [a.to_dict() for a in
+                        CustomerAdjustment.query.order_by(CustomerAdjustment.business_date.desc()).all()],
+        "overheads": [o.to_dict() for o in
+                     Overhead.query.order_by(Overhead.period_month.desc()).all()],
+        "dayCloses": [c.to_dict() for c in
+                     DayClose.query.order_by(DayClose.business_date.desc()).all()],
+        "labourLedger": [l.to_dict() for l in
+                        LabourLedger.query.order_by(LabourLedger.entry_date.desc()).all()],
+    })
+
+
+@bp.post("/admin/wipe")
+@admin_required
+def admin_wipe():
+    """
+    Erase every day-to-day transaction across every branch — daily entries
+    and everything hung off them (purchases, mortality photos, hotel sale
+    lines), standalone hotel/hostel receipts and billing adjustments, the
+    labour ledger, overheads, and cash handovers. Branches, user accounts,
+    worker profiles and customer master records are left exactly as they are.
+
+    Gated behind an exact typed confirmation phrase rather than just the
+    browser's confirm() dialog — this is the single most destructive
+    endpoint in the app, there is no undo short of restoring a backup, and a
+    stray click must not be enough to trigger it.
+    """
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm") or "").strip() != WIPE_CONFIRM_PHRASE:
+        return jsonify({"error": "confirmation_required",
+                        "message": f'Type "{WIPE_CONFIRM_PHRASE}" exactly to confirm.'}), 422
+
+    counts = _wipe_counts()
+
+    # Children before parents, deleted explicitly in this order regardless of
+    # what the database's own FK cascade would do on its own — SQLite in
+    # development does not enforce foreign keys at all, so nothing here can
+    # be left to an ON DELETE CASCADE that might not actually be active.
+    CustomerSale.query.delete(synchronize_session=False)
+    Purchase.query.delete(synchronize_session=False)
+    MortalityPhoto.query.delete(synchronize_session=False)
+    CustomerPayment.query.delete(synchronize_session=False)
+    CustomerAdjustment.query.delete(synchronize_session=False)
+    DayClose.query.delete(synchronize_session=False)
+    LabourLedger.query.delete(synchronize_session=False)
+    Overhead.query.delete(synchronize_session=False)
+    DailyEntry.query.delete(synchronize_session=False)
+
+    log_activity("Wiped all trading data",
+                 ", ".join(f"{v} {k}" for k, v in counts.items() if v) or "nothing to delete")
+    db.session.commit()
+    return jsonify({"ok": True, "deleted": counts})
+
+

@@ -34,9 +34,10 @@ from app import create_app                                    # noqa: E402
 from app.extensions import db                                 # noqa: E402
 from app.calc import (compute_entry, costing_gaps, months_in_range,          # noqa: E402
                       price_hotel_line, validate_for_submission)
-from app.models import (ActivityLog, Branch, Customer, CustomerPayment,      # noqa: E402
-                        CustomerSale, DailyEntry, DayClose, LabourLedger,
-                        MortalityPhoto, Overhead, Setting, User, Worker)
+from app.models import (ActivityLog, Branch, Customer, CustomerAdjustment,   # noqa: E402
+                        CustomerPayment, CustomerSale, DailyEntry, DayClose,
+                        LabourLedger, MortalityPhoto, Overhead, Purchase,
+                        Setting, User, Worker)
 
 app = create_app()
 RESULTS = []
@@ -236,14 +237,26 @@ def test_rbac():
                   ("GET", "/api/activity", None),
                   ("DELETE", "/api/activity", None),
                   ("GET", "/api/ledger", None),
-                  ("POST", "/api/admin/seed", {})]
+                  ("POST", "/api/admin/seed", {}),
+                  ("GET", "/api/admin/wipe-preview", None),
+                  ("GET", "/api/admin/wipe-backup", None),
+                  ("POST", "/api/admin/wipe", {"confirm": "DELETE ALL DATA"})]
     for method, path, body in admin_only:
         case("RBAC", f"Supervisor blocked from {method} {path}",
              "logged in as supervisor", 403,
              lambda m=method, p=path, b=body: getattr(SUP, m.lower())(p, json=b).status_code)
 
-    case("RBAC", "The 'wipe everything' capability is gone entirely, even for an admin",
-         "POST /api/admin/wipe", 404,
+    # "Wipe everything" was removed outright on 2026-08-13 (commit 2893c0e) and
+    # this test used to pin it at a flat 404, even for an admin. It has since
+    # been reintroduced deliberately, in a far more guarded form: scoped to
+    # only the day-to-day transaction tables (branches/users/workers/customers
+    # are never touched), gated behind an exact typed confirmation phrase, and
+    # always preceded by a full Excel backup download — see admin_wipe() in
+    # api.py and test_admin_wipe() near the end of this file for the real
+    # coverage. This case now just confirms the route exists and the phrase
+    # gate actually gates it; it is intentionally NOT a 404 any more.
+    case("RBAC", "Wiping data without the exact confirmation phrase is refused",
+         "POST /api/admin/wipe, no confirm", 422,
          lambda: ADMIN.post("/api/admin/wipe", json={}).status_code)
 
     case("RBAC", "Supervisor sees only assigned branches",
@@ -1241,6 +1254,69 @@ def test_robustness():
                                                    "businessDate": D(25)}),
                   ADMIN.post("/api/entries", json={"branch": "B01", "category": "broiler",
                                                    "businessDate": D(25)}))[1].status_code)
+
+
+# ===========================================================================
+# 13. Admin data wipe — MUST run last: it deletes every daily entry, purchase,
+# hotel sale, receipt, adjustment, overhead, day close and labour ledger row
+# built up by every test module before it.
+# ===========================================================================
+def test_admin_wipe():
+    print("\n[13] Admin: delete all data")
+    before = {"branches": _count(Branch), "users": _count(User),
+              "workers": _count(Worker), "customers": _count(Customer)}
+    case("Data wipe", "There is real data to delete after the whole suite",
+         "entries > 0", True, lambda: _count(DailyEntry) > 0)
+
+    case("Data wipe", "A supervisor cannot see the preview", "GET wipe-preview", 403,
+         lambda: SUP.get("/api/admin/wipe-preview").status_code)
+    case("Data wipe", "A supervisor cannot fetch the backup", "GET wipe-backup", 403,
+         lambda: SUP.get("/api/admin/wipe-backup").status_code)
+    case("Data wipe", "A supervisor cannot wipe", "POST wipe", 403,
+         lambda: SUP.post("/api/admin/wipe", json={"confirm": "DELETE ALL DATA"}).status_code)
+
+    prev = ADMIN.get("/api/admin/wipe-preview").get_json()
+    case("Data wipe", "Preview reports what would be deleted", "delete.entries", True,
+         lambda: prev["delete"]["entries"] == _count(DailyEntry) and prev["delete"]["entries"] > 0)
+
+    backup = ADMIN.get("/api/admin/wipe-backup").get_json()
+    case("Data wipe", "The backup carries every entry the preview counted",
+         "len(backup.entries)", prev["delete"]["entries"], lambda: len(backup["entries"]))
+    case("Data wipe", "Backed-up entries carry no photo data, just a count",
+         "photos empty, photoCount present", True,
+         lambda: all(e["photos"] == [] and "photoCount" in e for e in backup["entries"]))
+    case("Data wipe", "Preview reports what would be kept", "keep.branches", before["branches"],
+         lambda: prev["keep"]["branches"])
+
+    case("Data wipe", "No confirmation phrase is refused", "POST with no body", 422,
+         lambda: ADMIN.post("/api/admin/wipe", json={}).status_code)
+    case("Data wipe", "A wrong confirmation phrase is refused", "confirm='yes'", 422,
+         lambda: ADMIN.post("/api/admin/wipe", json={"confirm": "yes"}).status_code)
+    case("Data wipe", "Nothing was deleted by the failed attempts",
+         "entries unchanged", prev["delete"]["entries"], lambda: _count(DailyEntry))
+
+    result = ADMIN.post("/api/admin/wipe", json={"confirm": "DELETE ALL DATA"}).get_json()
+    case("Data wipe", "The real wipe reports ok", "ok", True, lambda: result["ok"])
+
+    for model, key in [(DailyEntry, "entries"), (Purchase, "purchases"),
+                       (CustomerSale, "hotelSales"), (CustomerPayment, "payments"),
+                       (CustomerAdjustment, "adjustments"), (Overhead, "overheads"),
+                       (DayClose, "dayCloses"), (LabourLedger, "labourLedger"),
+                       (MortalityPhoto, "mortalityPhotos")]:
+        case("Data wipe", f"{key} table is empty", f"{model.__tablename__}", 0,
+             lambda m=model: _count(m))
+
+    case("Data wipe", "Branches are untouched", "same count", before["branches"],
+         lambda: _count(Branch))
+    case("Data wipe", "User accounts are untouched", "same count", before["users"],
+         lambda: _count(User))
+    case("Data wipe", "Worker profiles are untouched", "same count", before["workers"],
+         lambda: _count(Worker))
+    case("Data wipe", "Customer master records are untouched", "same count", before["customers"],
+         lambda: _count(Customer))
+
+    case("Data wipe", "A second wipe finds nothing left to delete", "delete.entries", 0,
+         lambda: ADMIN.get("/api/admin/wipe-preview").get_json()["delete"]["entries"])
 
 
 # ===========================================================================
@@ -2981,6 +3057,7 @@ if __name__ == "__main__":
     test_admin_modules()
     test_activity()
     test_robustness()
+    test_admin_wipe()
 
     total, passed, failed = write_report()
     removed = cleanup()

@@ -2341,6 +2341,128 @@ function toXlsx(filename, sheetName, headers, rows) {
     toCsvFallback(filename, headers, rows);
   }
 }
+/* Same idea as toXlsx() above but one workbook, several sheets — used for
+   the pre-wipe backup, where "Entries", "Purchases", "Hotel sales" etc. each
+   need their own tab rather than being squashed into one. `sheets` is
+   [{name, headers, rows}, ...]; a sheet with no rows is still written (with
+   just its header row) so the workbook always has every tab, even if a
+   table happened to be empty. Falls back to one CSV per sheet if SheetJS
+   isn't available, same reasoning as toXlsx(). */
+function toXlsxMulti(filename, sheets) {
+  filename = filename.replace(/\.(csv|xlsx)$/i, '');
+  if (typeof XLSX === 'undefined') {
+    sheets.forEach(function (s) { toCsvFallback(filename + '_' + s.name, s.headers, s.rows); });
+    return;
+  }
+  try {
+    var wb = XLSX.utils.book_new();
+    sheets.forEach(function (s) {
+      var ws = XLSX.utils.aoa_to_sheet([s.headers].concat(s.rows));
+      ws['!cols'] = s.headers.map(function (h, i) {
+        var w = String(h == null ? '' : h).length;
+        for (var r = 0; r < s.rows.length; r++) {
+          var cell = s.rows[r][i];
+          var len = String(cell == null ? '' : cell).length;
+          if (len > w) w = len;
+        }
+        return { wch: Math.min(Math.max(w + 2, 8), 40) };
+      });
+      XLSX.utils.book_append_sheet(wb, ws, (s.name || 'Sheet1').slice(0, 31));
+    });
+    XLSX.writeFile(wb, filename + '.xlsx');
+  } catch (e) {
+    sheets.forEach(function (s) { toCsvFallback(filename + '_' + s.name, s.headers, s.rows); });
+  }
+}
+/* Turns the /admin/wipe-backup payload into a multi-sheet Excel workbook and
+   triggers the download — called right before the "Delete all data" button's
+   final typed confirmation, so there is always a saved copy on the admin's
+   own machine before anything is actually removed. Weights come back in
+   grams from the API; every sheet here converts to kg to match what an
+   admin actually reads on screen elsewhere in the app. */
+function downloadWipeBackup(b) {
+  var workerName = {}; (S.workers || []).forEach(function (w) { workerName[w.id] = w.name; });
+  var customerName = {}; (S.customers || []).forEach(function (c) { customerName[c.id] = c.name; });
+  var entries = b.entries || [];
+
+  var entrySheet = { name: 'Entries',
+    headers: ['Date', 'Branch', 'Category', 'Status', 'Open birds', 'Open wt (kg)', 'Open meat (kg)',
+      'Dressed count', 'Dressed wt (kg)', 'Actual meat (kg)', 'Skin sold (kg)', 'Skinless sold (kg)',
+      'Liver sold (kg)', 'Live sold count', 'Live sold wt (kg)', 'Cutting charges', 'Mortality count',
+      'Mortality wt (kg)', 'Damage (kg)', 'Close birds', 'Close wt (kg)', 'Close meat (kg)',
+      'Rate skin', 'Rate skinless', 'Rate liver', 'Rate live', 'Open rate', 'Photo count',
+      'Created by', 'Reviewed by', 'Notes', 'Explanation'],
+    rows: entries.map(function (e) {
+      return [e.businessDate, e.branch, e.category, e.status,
+        e.openBirds, e.openWtG / 1000, e.openMeatG / 1000,
+        e.dressedCount, e.dressedWtG / 1000, e.actualMeatG / 1000,
+        e.skinSoldG / 1000, e.skinlessSoldG / 1000, e.liverSoldG / 1000,
+        e.liveSoldCount, e.liveSoldWtG / 1000, e.cutCharges,
+        e.mortCount, e.mortWtG / 1000, e.damageG / 1000,
+        e.closeBirds, e.closeWtG / 1000, e.closeMeatG / 1000,
+        e.rateSkin, e.rateSkinless, e.rateLiver, e.rateLive, e.openRate, e.photoCount,
+        e.createdByName, e.reviewedByName, e.notes, e.explanation];
+    }) };
+
+  var purchaseRows = [];
+  entries.forEach(function (e) {
+    (e.purchases || []).forEach(function (p) {
+      purchaseRows.push([e.businessDate, e.branch, e.category, p.supplier, p.batch,
+        p.kind, p.birds, p.wtG / 1000, p.rate]);
+    });
+  });
+  var purchaseSheet = { name: 'Purchases',
+    headers: ['Date', 'Branch', 'Category', 'Supplier', 'Batch', 'Kind', 'Birds', 'Weight (kg)', 'Rate'],
+    rows: purchaseRows };
+
+  var hotelRows = [];
+  entries.forEach(function (e) {
+    (e.hotelSales || []).forEach(function (h) {
+      hotelRows.push([e.businessDate, e.branch, h.customerName, h.customerCode, h.kind, h.product,
+        h.weightG / 1000, h.birds, h.marketRate, h.rate, h.amount, h.settled ? 'Yes' : 'No', h.note]);
+    });
+  });
+  var hotelSheet = { name: 'Hotel sales',
+    headers: ['Date', 'Branch', 'Customer', 'Code', 'Kind', 'Product', 'Weight (kg)', 'Birds',
+      'Market rate', 'Rate charged', 'Amount', 'Settled', 'Note'],
+    rows: hotelRows };
+
+  var paymentSheet = { name: 'Receipts',
+    headers: ['Date', 'Branch', 'Customer', 'Amount', 'Mode', 'Note'],
+    rows: (b.payments || []).map(function (p) {
+      return [p.date, p.branch, customerName[p.customerId] || p.customerId, p.amount, p.mode, p.note];
+    }) };
+
+  var adjustmentSheet = { name: 'Billing adjustments',
+    headers: ['Date', 'Branch', 'Customer', 'Amount', 'Settled', 'Note'],
+    rows: (b.adjustments || []).map(function (a) {
+      return [a.date, a.branch, a.customerName, a.amount, a.settled ? 'Yes' : 'No', a.note];
+    }) };
+
+  var overheadSheet = { name: 'Overheads',
+    headers: ['Month', 'Date', 'Branch', 'Category', 'Amount', 'Status', 'Note'],
+    rows: (b.overheads || []).map(function (o) {
+      return [o.month, o.date, o.branch, o.category, o.amount, o.status, o.note];
+    }) };
+
+  var dayCloseSheet = { name: 'Day Close',
+    headers: ['Date', 'Branch', 'Cash', 'UPI', 'Declared', 'Expected at declaration',
+      'Declared by', 'Verified by', 'Note'],
+    rows: (b.dayCloses || []).map(function (c) {
+      return [c.date, c.branch, c.cash, c.upi, c.declared, c.expectedAtDeclaration,
+        c.declaredByName, c.verifiedByName, c.note];
+    }) };
+
+  var ledgerSheet = { name: 'Labour ledger',
+    headers: ['Date', 'Branch', 'Worker', 'Type', 'Days', 'Amount', 'Note'],
+    rows: (b.labourLedger || []).map(function (l) {
+      return [l.date, l.branch, workerName[l.workerId] || l.workerId, l.type, l.days, l.amount, l.note];
+    }) };
+
+  toXlsxMulti('VCC_pre_wipe_backup_' + todayISO(),
+    [entrySheet, purchaseSheet, hotelSheet, paymentSheet, adjustmentSheet,
+     overheadSheet, dayCloseSheet, ledgerSheet]);
+}
 function toCsvFallback(filename, headers, rows) {
   var csv = [headers].concat(rows).map(function (r) {
     return r.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
@@ -4936,6 +5058,44 @@ function wire() {
     api('POST', '/admin/seed', {}).then(function () { return bootstrap(); })
       .then(function () { renderAdmin(); refreshAllViews(); loadEntry(null); toast('Demo data loaded.'); })
       .catch(apiFail);
+  });
+  $('btnWipeAll').addEventListener('click', function () {
+    api('GET', '/admin/wipe-preview').then(function (p) {
+      var label = { entries: 'Daily entries', purchases: 'Purchase lines',
+        hotelSales: 'Hotel/hostel sale lines', payments: 'Customer receipts',
+        adjustments: 'Billing adjustments', overheads: 'Overhead entries',
+        dayCloses: 'Cash handovers (Day Close)', labourLedger: 'Labour ledger rows',
+        mortalityPhotos: 'Mortality photos' };
+      var lines = Object.keys(p.delete)
+        .filter(function (k) { return p.delete[k] > 0; })
+        .map(function (k) { return '  • ' + p.delete[k] + ' ' + label[k]; });
+      var total = Object.keys(p.delete).reduce(function (s, k) { return s + p.delete[k]; }, 0);
+      if (!total) { toast('There is nothing to delete — no trading data recorded yet.'); return; }
+      var msg = 'This will permanently delete:\n\n' + lines.join('\n') +
+        '\n\nKept untouched: ' + p.keep.branches + ' branch(es), ' + p.keep.users +
+        ' user account(s), ' + p.keep.workers + ' worker(s), ' + p.keep.customers +
+        ' customer(s).\n\nAn Excel backup of everything above will be downloaded to ' +
+        'this computer first, before anything is deleted.\n\nContinue?';
+      if (!confirm(msg)) return;
+
+      api('GET', '/admin/wipe-backup').then(function (b) {
+        downloadWipeBackup(b);
+        toast('Backup downloaded — check it before continuing.', 'warn');
+        var typed = prompt('Backup saved. Now type ' + JSON.stringify('DELETE ALL DATA') +
+          ' exactly to permanently delete the data above:');
+        if (typed === null) return;
+        if (typed.trim() !== 'DELETE ALL DATA') { toast('Text did not match — nothing deleted.', 'warn'); return; }
+        api('POST', '/admin/wipe', { confirm: 'DELETE ALL DATA' }).then(function () {
+          return bootstrap();
+        }).then(function () {
+          renderAdmin(); refreshAllViews(); loadEntry(null);
+          toast('All trading data deleted. A backup was saved before deletion.', 'warn');
+        }).catch(apiFail);
+      }).catch(function (err) {
+        apiFail(err);
+        toast('Could not download the backup — nothing was deleted.', 'error');
+      });
+    }).catch(apiFail);
   });
   /* ---- modals ---- */
   ['reviewModal', 'genModal', 'lightbox'].forEach(function (id) {
