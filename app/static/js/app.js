@@ -275,7 +275,16 @@ function calc(e){
   var mortRate=handled>0?(num(e.mortCount)/handled)*100:0;
   var meatAvailG=num(e.openMeatG)+actualMeatG;
   var expCloseWtG=availWtG-num(e.liveSoldWtG)-hotelLiveG-num(e.mortWtG)-dressedWtG;
-  var expCloseMeatG=meatAvailG-num(e.skinSoldG)-num(e.skinlessSoldG)-num(e.liverSoldG)-hotelMeatG-num(e.damageG);
+  /* Closing meat (tomorrow's opening) is built from TODAY's dressing only —
+     mirrors compute_entry() (calc.py). Opening meat is still shown
+     (meatAvailG, openMeatValue) but is not folded into what carries
+     forward, so one bad day can't cascade into a running negative balance.
+     A negative result here means more was recorded sold/gone today than
+     was actually dressed today; floor it and keep the clamped-away amount
+     as its own reported figure (meatDeficitG). */
+  var expCloseMeatGRaw=actualMeatG-num(e.skinSoldG)-num(e.skinlessSoldG)-num(e.liverSoldG)-hotelMeatG-num(e.damageG);
+  var meatDeficitG=Math.max(-expCloseMeatGRaw,0);
+  var expCloseMeatG=Math.max(expCloseMeatGRaw,0);
   var meatVarG=expCloseMeatG-num(e.closeMeatG);
 
   /* ---- profit & loss ---- */
@@ -296,6 +305,7 @@ function calc(e){
   var damageValue=num(e.damageG)/1000*meatCostKg;
   var shortValue=shortG/1000*meatCostKg;
   var bonusValue=bonusG/1000*meatCostKg;
+  var meatDeficitValue=meatDeficitG/1000*meatCostKg;
 
   var photos=e.photos||[];
   var needsPhoto=num(e.mortCount)>0 && photos.length===0;
@@ -315,6 +325,7 @@ function calc(e){
     cashSales:counterSaleAmt+liveAmt+cutAmt+hotelCash,
     handled:handled, expBirds:expBirds, birdVar:birdVar, mortRate:mortRate,
     meatAvailG:meatAvailG, expCloseWtG:expCloseWtG, expCloseMeatG:expCloseMeatG, meatVarG:meatVarG,
+    meatDeficitG:meatDeficitG, meatDeficitValue:meatDeficitValue,
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
     closeValue:closeValue, cogs:cogs, grossProfit:grossProfit,
     labour:lab.wages, advances:advances, otherExp:lab.other, overheads:overheads,

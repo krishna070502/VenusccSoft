@@ -287,7 +287,7 @@ def test_calc():
          "skin+skinless+liver+live+cutting", 17_180.00,
          lambda: broiler["revenue"])
     case("Calc engine", "Closing meat excludes liver from the pool",
-         "5+56-30-20-1 liver-1 damage", 9_000,
+         "56-30-20-1 liver-1 damage (opening meat isn't carried into closing)", 4_000,
          lambda: broiler["expCloseMeatG"])
     case("Calc engine", "Expected closing birds",
          "80+100-20 live-0 dead-40 dressed", 120,
@@ -1445,8 +1445,11 @@ def test_hotels():
          "1 of each", [1100.0, 3000.0],
          lambda: [calc.get("hotelCash"), calc.get("hotelCredit")])
     case("Hotel sales", "Hotel weight leaves the meat pool",
-         "open 5kg + meat 56kg − counter 31kg − hotel 25kg − damage 1kg", 4_000,
+         "meat 56kg − counter 31kg − hotel 25kg − damage 1kg = −1kg, floored", 0,
          lambda: calc.get("expCloseMeatG"))
+    case("Hotel sales", "...and the shortfall is reported, not hidden",
+         "floored 1kg shows up as meatDeficitG", 1_000,
+         lambda: calc.get("meatDeficitG"))
     case("Hotel sales", "Hotel money is inside revenue",
          "counter + hotel + live + cutting",
          round(calc.get("counterSaleAmt", 0) + calc.get("hotelAmt", 0)
@@ -1690,7 +1693,8 @@ def test_live_and_functions():
     case("Live sales", "The weight comes off the expected closing weight",
          "400 kg − 60 kg", 340_000, lambda: calc.get("expCloseWtG"))
     case("Live sales", "It does NOT touch the meat pool",
-         "opening meat 5 kg stays", 5_000, lambda: calc.get("expCloseMeatG"))
+         "no dressing today, live sale doesn't draw from meat", 0,
+         lambda: calc.get("expCloseMeatG"))
     case("Live sales", "Live weight is reported apart from meat weight",
          "hotelLiveG vs hotelMeatG", [60_000, 0],
          lambda: [calc.get("hotelLiveG"), calc.get("hotelMeatG")])

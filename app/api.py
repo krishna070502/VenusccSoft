@@ -446,7 +446,13 @@ def _carry_forward_opening(entry: DailyEntry) -> None:
     if prev:
         entry.open_birds = prev.close_birds
         entry.open_weight_g = prev.close_weight_g
-        entry.open_meat_g = prev.close_meat_g
+        # Floored at 0 — compute_entry() now floors a newly-computed
+        # close_meat_g the same way (see the meatDeficitG comment there),
+        # but a row saved before that fix could still be sitting on an old
+        # negative value; clamping here too means the very next new entry
+        # for this branch+category comes out clean regardless, with no
+        # admin action needed to "unstick" it.
+        entry.open_meat_g = max(prev.close_meat_g, 0)
 
 
 def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None) -> None:
@@ -1127,7 +1133,13 @@ def entries_carry_forward():
         "date": prev.business_date.isoformat(),
         "closeBirds": prev.close_birds,
         "closeWtG": prev.close_weight_g,
-        "closeMeatG": prev.close_meat_g,
+        # Floored at 0, same reasoning as _carry_forward_opening() and the
+        # meatDeficitG floor in compute_entry() — a row saved before that
+        # fix could still hold an old negative value; this is the actual
+        # figure that pre-fills "Opening meat" on screen for a brand-new
+        # entry, admin or supervisor, so it has to be clamped here too or
+        # the negative would keep showing up right where it was first seen.
+        "closeMeatG": max(prev.close_meat_g, 0),
         "avgRate": calc.get("avgRate", 0),
         "rateSkin": float(prev.rate_skin), "rateSkinless": float(prev.rate_skinless),
         "rateLiver": float(prev.rate_liver), "rateLive": float(prev.rate_live),

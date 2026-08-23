@@ -185,13 +185,28 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
                       - int(entry.get("mortWtG") or 0) - dressed_wt_g)
 
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
+    # Closing meat — the figure that becomes tomorrow's opening meat — is
+    # deliberately built from TODAY's dressing only (actual meat obtained,
+    # less whatever left the pool today). Opening meat is still reported
+    # (meatAvailG, openMeatValue, and the P&L cost basis below) but is not
+    # folded into what carries forward. That makes every day's carry-forward
+    # self-contained: a bad or uncounted day can no longer cascade into a
+    # running negative balance down the chain, which is exactly what
+    # happened at Yarrakatta.
     # liver draws from the same meat pool as skin and skinless, and so does
     # everything that went out to a hotel or hostel
-    exp_close_meat_g = (meat_avail_g - int(entry.get("skinSoldG") or 0)
-                        - int(entry.get("skinlessSoldG") or 0)
-                        - int(entry.get("liverSoldG") or 0)
-                        - hotel_meat_g
-                        - int(entry.get("damageG") or 0))
+    exp_close_meat_g_raw = (actual_meat_g - int(entry.get("skinSoldG") or 0)
+                            - int(entry.get("skinlessSoldG") or 0)
+                            - int(entry.get("liverSoldG") or 0)
+                            - hotel_meat_g
+                            - int(entry.get("damageG") or 0))
+    # Physical stock can never be negative — a negative result here means
+    # more was recorded as sold/gone today than was actually dressed today
+    # (a data-entry slip, or genuinely oversold). Floor it, and keep the
+    # clamped-away amount as its own reported figure (meatDeficitG) so the
+    # shortfall stays visible to admin rather than silently vanishing.
+    meat_deficit_g = max(-exp_close_meat_g_raw, 0)
+    exp_close_meat_g = max(exp_close_meat_g_raw, 0)
     meat_var_g = exp_close_meat_g - int(entry.get("closeMeatG") or 0)
 
     # ---- profit & loss (daily; overheads are handled separately) --------
@@ -216,6 +231,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     damage_value = _d(entry.get("damageG") or 0) / Decimal(1000) * meat_cost_kg
     short_value = _d(short_g) / Decimal(1000) * meat_cost_kg
     bonus_value = _d(bonus_g) / Decimal(1000) * meat_cost_kg
+    meat_deficit_value = _d(meat_deficit_g) / Decimal(1000) * meat_cost_kg
 
     photos = entry.get("photos") or []
     needs_photo = int(entry.get("mortCount") or 0) > 0 and len(photos) == 0
@@ -254,6 +270,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "mortRate": float(round(mort_rate, 2)),
         "expCloseWtG": exp_close_wt_g, "meatAvailG": meat_avail_g,
         "expCloseMeatG": exp_close_meat_g, "meatVarG": meat_var_g,
+        "meatDeficitG": meat_deficit_g, "meatDeficitValue": money(meat_deficit_value),
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),
         "cogs": money(cogs), "grossProfit": money(gross_profit),
         "labour": money(wages), "advances": money(advances),
