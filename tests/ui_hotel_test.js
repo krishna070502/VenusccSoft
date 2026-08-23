@@ -144,13 +144,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n[UI] the meat balance allows for it');
   setVal($('f_dressedCount'), '40');
   setVal($('f_dressedWt_kg'), '100');
-  setVal($('f_actualMeat_kg'), '69');
+  // Closing meat is the direct entry now (Section G) — actual meat obtained
+  // is read-only, reconciled from it. 49 kg physically left over + the
+  // 20 kg the hotel already took = 69 kg obtained, same figures as before,
+  // just flowing the other way.
+  setVal($('f_closeMeat_kg'), '49');
   await sleep(300);
-  const closeMeatKg = w.parseFloat($('f_closeMeat_kg').value || '0');
-  check('auto closing meat is 69 kg obtained minus the 20 kg the hotel took',
-        closeMeatKg === 49, 'got ' + closeMeatKg + ' kg');
-  check('the hint mentions hotel sales',
-        /hotel sales/i.test($('hint_closeMeat').textContent), $('hint_closeMeat').textContent);
+  const actualMeatKg = w.parseFloat($('f_actualMeat_kg').value || '0');
+  check('actual meat obtained reconciles to 69 kg — the 49 kg left over plus the 20 kg the hotel took',
+        actualMeatKg === 69, 'got ' + actualMeatKg + ' kg');
 
   console.log('\n[UI] marking it paid moves the money');
   const paidBox = w.document.querySelector('#hotelRows [data-h="settled"]');

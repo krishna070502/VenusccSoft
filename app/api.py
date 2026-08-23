@@ -341,20 +341,23 @@ def visible_branch_ids() -> list[int]:
     return [b.id for b in Branch.query.filter(Branch.code.in_(codes)).all()]
 
 
-CLOSE_FIELD_COL = {"closeBirds": "close_birds", "closeWtG": "close_weight_g",
-                   "closeMeatG": "close_meat_g"}
+CLOSE_FIELD_COL = {"closeBirds": "close_birds", "closeWtG": "close_weight_g"}
 
 
 def _manual_close_keys(d: dict) -> set:
     """
-    Which of closeBirds/closeWtG/closeMeatG (if any) the client is asking to
-    set by hand this save, rather than have the server compute.
+    Which of closeBirds/closeWtG (if any) the client is asking to set by
+    hand this save, rather than have the server compute.
 
-    Only an admin gets this — a supervisor's screen never shows the fields as
-    editable, so nothing they send here is trusted even if present. The
-    client signals per-field via `closeAuto: {birds, wt, meat}`; a field is
-    manual only when its flag is explicitly False AND the matching value is
-    present in the payload.
+    Closing meat isn't part of this any more: it's always a direct physical
+    count, entered by whoever is filling out the form (Section G on the
+    entry form), the same as skin/skinless/liver sold — see
+    _apply_entry_fields below. Only an admin gets this auto/manual toggle
+    for birds and weight — a supervisor's screen never shows those two
+    fields as editable, so nothing they send here is trusted even if
+    present. The client signals per-field via `closeAuto: {birds, wt}`; a
+    field is manual only when its flag is explicitly False AND the matching
+    value is present in the payload.
     """
     if not g.user.is_admin:
         return set()
@@ -364,8 +367,6 @@ def _manual_close_keys(d: dict) -> set:
         manual.add("closeBirds")
     if auto.get("wt") is False and "closeWtG" in d:
         manual.add("closeWtG")
-    if auto.get("meat") is False and "closeMeatG" in d:
-        manual.add("closeMeatG")
     return manual
 
 
@@ -373,19 +374,27 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
     """
     Copy the editable numeric fields from a client payload onto the row.
 
-    closeBirds/closeWtG/closeMeatG are handled separately: normally the
-    server works them out (see _recompute_closing_stock), but an admin can
-    switch any one of the three to manual and type a figure by hand — for a
-    physical recount that does not match the formula, say. `manual_close`
-    (from _manual_close_keys) says which ones, if any, to honor here.
+    closeBirds/closeWtG are handled separately: normally the server works
+    them out (see _recompute_closing_stock), but an admin can switch either
+    to manual and type a figure by hand — for a physical recount that does
+    not match the formula, say. `manual_close` (from _manual_close_keys)
+    says which ones, if any, to honor here.
+
+    closeMeatG is NOT in that group — it's always taken directly from the
+    payload here, like skinSoldG/skinlessSoldG/liverSoldG, because it's
+    always a physical count rather than a formula output (see calc.py's
+    compute_entry: actual meat obtained is now reconciled FROM this figure,
+    not the other way around, which is also why actualMeatG is no longer
+    read from the client at all — _recompute_closing_stock below sets it
+    from the same calculation, server-side, after this runs).
     """
     ints = {
         "liveSoldCount": "live_sold_count", "liveSoldWtG": "live_sold_weight_g",
         "mortCount": "mortality_count", "mortWtG": "mortality_weight_g",
         "damageG": "damage_meat_g", "dressedCount": "dressed_count",
-        "dressedWtG": "dressed_weight_g", "actualMeatG": "actual_meat_g",
+        "dressedWtG": "dressed_weight_g",
         "skinSoldG": "skin_sold_g", "skinlessSoldG": "skinless_sold_g",
-        "liverSoldG": "liver_sold_g",
+        "liverSoldG": "liver_sold_g", "closeMeatG": "close_meat_g",
     }
     for src, col in ints.items():
         if src in d:
@@ -458,18 +467,18 @@ def _carry_forward_opening(entry: DailyEntry) -> None:
 
 def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None) -> None:
     """
-    Set closing birds, closing bird weight and closing meat weight from the
-    formula, not from a hand count — except any field an admin just put in
-    manual mode (`manual_close`), which _apply_entry_fields() already set and
-    this leaves alone. Call this after opening stock, purchases, counter
-    sales and hotel/hostel sales are all in place on `entry` — it reads them
-    straight off the object via to_dict(), so purchases/hotel_sales only need
-    to be appended to the in-memory relationship, not flushed.
-
-    Day-close reconciliation (see day_close()) may still nudge close_meat_g
-    afterwards, when what was actually collected in cash/UPI doesn't match
-    what the day's entry says was sold — that happens after this, not instead
-    of it.
+    Set closing birds and closing bird weight from the formula, not from a
+    hand count — except either field an admin just put in manual mode
+    (`manual_close`), which _apply_entry_fields() already set and this
+    leaves alone. Also sets actual_meat_g, which is now always a
+    reconciliation (skin + skinless + liver + hotel meat + damage + closing
+    meat — see compute_entry) rather than something the client sends;
+    closing meat itself was already written by _apply_entry_fields() above,
+    straight from the payload, since it's a physical count rather than a
+    formula output. Call this after opening stock, purchases, counter sales
+    and hotel/hostel sales are all in place on `entry` — it reads them
+    straight off the object via to_dict(), so purchases/hotel_sales only
+    need to be appended to the in-memory relationship, not flushed.
     """
     manual_close = manual_close or set()
     data = entry.to_dict(include_costs=True)
@@ -478,8 +487,7 @@ def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None)
         entry.close_birds = calc["expBirds"]
     if "closeWtG" not in manual_close:
         entry.close_weight_g = calc["expCloseWtG"]
-    if "closeMeatG" not in manual_close:
-        entry.close_meat_g = calc["expCloseMeatG"]
+    entry.actual_meat_g = calc["actualMeatG"]
 
 
 def _replace_purchases(entry: DailyEntry, rows: list) -> None:

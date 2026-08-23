@@ -557,11 +557,11 @@
 
         <!-- F: Dressing -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-slate-700"><span class="sec-badge !text-slate-900">F</span>Dressing / Processing</div>
+          <div class="sec-head bg-slate-700"><span class="sec-badge !text-slate-900">F</span>Dressing / Processing<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">actual meat obtained = skin + skinless + liver + closing meat (Section G)</span></div>
           <div class="grid-f">
             <div><label class="lbl" for="f_dressedCount" title="Number of birds actually dressed (slaughtered and cleaned) today.">Dressed birds <span class="req">*</span></label><input type="number" min="0" step="1" id="f_dressedCount" class="inp num" placeholder="0" /></div>
             <div><label class="lbl">Live weight dressed <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_dressedWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_dressedWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
-            <div><label class="lbl">Actual meat obtained <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_actualMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_actualMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
+            <div><label class="lbl flex items-center gap-2">Actual meat obtained<span class="ml-auto text-[10px] uppercase tracking-wide text-slate-400 normal-case">from Section G</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_actualMeat_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_actualMeat_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div></div>
           </div>
           <div class="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <div class="calcbox bg-slate-50 border border-slate-200"><span class="text-slate-600">Expected meat</span><span class="ml-auto font-bold num" id="o_expMeat">0</span></div>
@@ -578,6 +578,7 @@
             <div><label class="lbl" title="Skin-on dressed meat sold today.">Skin sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinAmt" class="num">0.00</span></p></div>
             <div><label class="lbl" title="Skinless dressed meat sold today.">Skinless sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_skinlessSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_skinlessSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_skinlessAmt" class="num">0.00</span></p></div>
             <div><label class="lbl" title="Liver sold today.">Liver sold</label><div class="kgg"><input type="number" min="0" step="1" id="f_liverSold_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_liverSold_g" class="inp num" placeholder="0" /><span>g</span></div><p class="text-[11px] text-slate-500 mt-1">₹<span id="o_liverAmt" class="num">0.00</span></p></div>
+            <div><label class="lbl" title="After selling, weigh whatever meat physically remains and enter it here — this is the day's real closing meat. Skin + skinless + liver sold plus this figure is taken as the actual meat obtained from dressing today, and this same figure carries forward as tomorrow's opening meat.">Closing meat <span class="req">*</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" /><span>g</span></div></div>
           </div>
         </fieldset>
 
@@ -600,11 +601,11 @@
 
         <!-- I: Closing -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">computed automatically — opening + purchased − sold − mortality − damage</span></div>
+          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">birds &amp; weight computed automatically — closing meat is entered in Section G</span></div>
           <div class="grid-f">
             <div><label class="lbl flex items-center gap-2" for="f_closeBirds">Closing birds<button type="button" data-auto="closeBirds" data-admin="1" class="autoBtn ml-auto">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" readonly tabindex="-1" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
             <div><label class="lbl flex items-center gap-2">Closing bird weight<button type="button" data-auto="closeWt" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
-            <div><label class="lbl flex items-center gap-2">Closing meat<button type="button" data-auto="closeMeat" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeat_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeat_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeMeat"></p></div>
+            <div><label class="lbl">Closing meat<span class="ml-auto text-[10px] uppercase tracking-wide text-slate-400 normal-case">from Section G</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeatMirror_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeatMirror_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div></div>
             <div class="sm:col-span-2"><label class="lbl" for="f_notes" title="Optional remarks for anyone reviewing this entry later.">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
           </div>
         </fieldset>
@@ -625,9 +626,8 @@
             <div class="flex justify-between"><dt class="text-slate-500">Birds handled</dt><dd class="font-bold num" id="o_handled">0</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Expected closing birds</dt><dd class="font-bold num" id="o_expBirds">0</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Bird variance</dt><dd class="font-bold num" id="o_birdVar">0</dd></div>
-            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Meat available</dt><dd class="font-bold num" id="o_meatAvail">0</dd></div>
-            <div class="flex justify-between"><dt class="text-slate-500">Expected closing meat</dt><dd class="font-bold num" id="o_expCloseMeat">0</dd></div>
-            <div class="flex justify-between"><dt class="text-slate-500">Meat variance</dt><dd class="font-bold num" id="o_meatVar">0</dd></div>
+            <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Meat available <span class="text-[10px] uppercase tracking-wide text-slate-400">memo — opening + obtained</span></dt><dd class="font-bold num" id="o_meatAvail">0</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Closing meat <span class="text-[10px] uppercase tracking-wide text-slate-400">entered in Section G</span></dt><dd class="font-bold num" id="o_expCloseMeat">0</dd></div>
             <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Live birds sold (retail)</dt><dd class="font-bold num text-emerald-700" id="o_liveRetail">0</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">Dressed birds</dt><dd class="font-bold num" id="o_dressedCt">0</dd></div>
             <div class="border-t border-dashed pt-2.5 flex justify-between"><dt class="text-slate-500">Counter meat sales</dt><dd class="font-bold num" id="o_counterAmt">₹0.00</dd></div>

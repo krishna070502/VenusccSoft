@@ -278,7 +278,10 @@ def test_calc():
          "82.000 kg live @31%", 25_420,
          lambda: broiler["wasteMeatG"])
     case("Calc engine", "Yield percentage",
-         "56.000 kg meat from 82.000 kg", 68.29,
+         # actual meat obtained is now reconciled from closing meat (9kg,
+         # base_entry's default) + skin(30) + skinless(20) + liver(1) +
+         # damage(1) = 61.000 kg — see calc.py's compute_entry().
+         "61.000 kg meat from 82.000 kg", 74.39,
          lambda: broiler["yieldPct"])
     case("Calc engine", "Weighted average cost across opening + purchase",
          "200 kg @₹120 + 205 kg @₹130", 125.06,
@@ -286,36 +289,40 @@ def test_calc():
     case("Calc engine", "Revenue sums all sale lines",
          "skin+skinless+liver+live+cutting", 17_180.00,
          lambda: broiler["revenue"])
-    case("Calc engine", "Closing meat excludes liver from the pool",
-         "56-30-20-1 liver-1 damage (opening meat isn't carried into closing)", 4_000,
+    case("Calc engine", "Closing meat is a direct entry now, not a formula output",
+         "base_entry's default closeMeatG (9kg), unchanged", 9_000,
          lambda: broiler["expCloseMeatG"])
     case("Calc engine", "Expected closing birds",
          "80+100-20 live-0 dead-40 dressed", 120,
          lambda: broiler["expBirds"])
 
-    exact = compute_entry(base_entry(dressedWtG=100_000, actualMeatG=69_000), SETTINGS)
+    # actualMeatG is derived now: closeMeatG + skin(30,000) + skinless(20,000)
+    # + liver(1,000) + damage(1,000) — base_entry's other defaults, sum
+    # 52,000 — so each closeMeatG below is chosen to reconstruct the same
+    # actual-meat-obtained figure these cases were originally testing.
+    exact = compute_entry(base_entry(dressedWtG=100_000, closeMeatG=17_000), SETTINGS)
     case("Calc engine", "Exact 69% yield produces no bonus and no shortfall",
-         "100 kg live -> 69 kg meat", (0, 0),
+         "100 kg live -> 69 kg meat (17,000 closing + 52,000 sold/damage)", (0, 0),
          lambda: (exact["bonusG"], exact["shortG"]))
-    bonus = compute_entry(base_entry(dressedWtG=100_000, actualMeatG=73_000), SETTINGS)
+    bonus = compute_entry(base_entry(dressedWtG=100_000, closeMeatG=21_000), SETTINGS)
     case("Calc engine", "Excess meat becomes bonus",
-         "100 kg live -> 73 kg meat", 4_000,
+         "100 kg live -> 73 kg meat (21,000 closing + 52,000 sold/damage)", 4_000,
          lambda: bonus["bonusG"])
     case("Calc engine", "Bonus above tolerance raises the high-yield flag",
          "73% vs 69% ±2", True, lambda: bonus["yieldHigh"])
-    short = compute_entry(base_entry(dressedWtG=100_000, actualMeatG=64_000), SETTINGS)
+    short = compute_entry(base_entry(dressedWtG=100_000, closeMeatG=12_000), SETTINGS)
     case("Calc engine", "Meat below expected becomes a shortfall",
-         "100 kg live -> 64 kg meat", 5_000,
+         "100 kg live -> 64 kg meat (12,000 closing + 52,000 sold/damage)", 5_000,
          lambda: short["shortG"])
     case("Calc engine", "Shortfall below tolerance raises the low-yield flag",
          "64% vs 69% ±2", True, lambda: short["yieldLow"])
-    edge = compute_entry(base_entry(dressedWtG=100_000, actualMeatG=67_000), SETTINGS)
+    edge = compute_entry(base_entry(dressedWtG=100_000, closeMeatG=15_000), SETTINGS)
     case("Calc engine", "Inside tolerance raises no flag",
          "67% vs 69% ±2", (False, False),
          lambda: (edge["yieldLow"], edge["yieldHigh"]))
 
     parents = compute_entry(base_entry(category="parents", dressedWtG=100_000,
-                                       actualMeatG=79_000), SETTINGS)
+                                       closeMeatG=27_000), SETTINGS)
     case("Calc engine", "Parents waste 21% -> expected meat",
          "100 kg live, parents", 79_000,
          lambda: parents["expectedMeatG"])
@@ -340,7 +347,9 @@ def test_calc():
     case("Calc engine", "Purchased birds are summed across lines",
          "50 + 50", 100, lambda: multi["buyBirds"])
 
-    big = compute_entry(base_entry(dressedWtG=50_000_000, actualMeatG=34_500_000,
+    # 34,500,000 actual meat wanted -> closeMeatG = 34,500,000 - 52,000
+    # (base_entry's default sold/damage) = 34,448,000
+    big = compute_entry(base_entry(dressedWtG=50_000_000, closeMeatG=34_448_000,
                                    purchases=[{"birds": 200_000, "wtG": 400_000_000,
                                                "rate": 130}]), SETTINGS)
     case("Calc engine", "Large volumes stay precise (50 tonnes)",
@@ -491,8 +500,12 @@ def test_entries():
     case("Approval", "Supervisor cannot edit an approved record", "PUT as supervisor", 403,
          lambda: SUP.put(f"/api/entries/{eid}", json={"actualMeatG": 99_000}).status_code)
     case("Approval", "Admin can edit an approved record", "PUT as admin", 57_000,
+         # actualMeatG is derived now (closing meat + skin + skinless + liver
+         # + hotel + damage — see calc.py), never taken from the client, so
+         # this edits closeMeatG (5,000 + the default 52,000 sold/damage =
+         # 57,000) and checks the derived figure instead.
          lambda: ADMIN.put(f"/api/entries/{eid}",
-                           json={"actualMeatG": 57_000}).get_json()["actualMeatG"])
+                           json={"closeMeatG": 5_000}).get_json()["actualMeatG"])
     case("Approval", "Record stays approved after an admin edit", "status", "approved",
          lambda: ADMIN.get("/api/entries").get_json()[0]["status"] if False else
          _status_of(eid))
@@ -1447,8 +1460,8 @@ def test_hotels():
     case("Hotel sales", "Hotel weight leaves the meat pool",
          "meat 56kg − counter 31kg − hotel 25kg − damage 1kg = −1kg, floored", 0,
          lambda: calc.get("expCloseMeatG"))
-    case("Hotel sales", "...and the shortfall is reported, not hidden",
-         "floored 1kg shows up as meatDeficitG", 1_000,
+    case("Hotel sales", "...meatDeficitG stays zero — closing meat (0) was entered directly, nothing to floor",
+         "closeMeatG=0 is a direct entry now, not a derived/floored figure", 0,
          lambda: calc.get("meatDeficitG"))
     case("Hotel sales", "Hotel money is inside revenue",
          "counter + hotel + live + cutting",
@@ -1693,7 +1706,7 @@ def test_live_and_functions():
     case("Live sales", "The weight comes off the expected closing weight",
          "400 kg − 60 kg", 340_000, lambda: calc.get("expCloseWtG"))
     case("Live sales", "It does NOT touch the meat pool",
-         "no dressing today, live sale doesn't draw from meat", 0,
+         "closing meat (5kg, entered directly) is untouched by the live sale", 5_000,
          lambda: calc.get("expCloseMeatG"))
     case("Live sales", "Live weight is reported apart from meat weight",
          "hotelLiveG vs hotelMeatG", [60_000, 0],

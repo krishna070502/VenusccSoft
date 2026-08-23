@@ -79,7 +79,7 @@ function kindDef(v){ return CUSTOMER_KINDS.filter(function(k){ return k.v===v; }
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
           customers:[], receipts:[], customerAdjustments:[], custTotals:{}, closes:[],
           window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, dcCurrent:null, closeHistory:[],
-          lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true, closeMeat:true },
+          lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
           purchaseLedger:null, openPurchases:{} };
@@ -224,7 +224,7 @@ function calc(e){
   var meatCostKg=yieldFrac>0 ? avgRate/yieldFrac : 0;
 
   /* ---- dressing ---- */
-  var dressedWtG=num(e.dressedWtG), actualMeatG=num(e.actualMeatG);
+  var dressedWtG=num(e.dressedWtG);
   /* Math.floor, not a bare multiply — mirrors int(dressed_wt_g * yield_frac)
      in compute_entry() (calc.py). Without the floor, a fractional gram
      (e.g. 14007g * 78% = 10925.46g) left expectedMeatG a hair above the
@@ -237,11 +237,6 @@ function calc(e){
      calc.py exactly, so this and "Expected meat" always add up to the
      dressed weight on the nose, on both client and server. */
   var wasteMeatG=dressedWtG-expectedMeatG;
-  var varianceG=actualMeatG-expectedMeatG;
-  var bonusG=Math.max(varianceG,0), shortG=Math.max(-varianceG,0);
-  var yieldPct=dressedWtG>0?(actualMeatG/dressedWtG)*100:0;
-  var yieldLow=dressedWtG>0&&actualMeatG>0&&yieldPct<expYield-tol;
-  var yieldHigh=dressedWtG>0&&yieldPct>expYield+tol;
 
   /* ---- revenue ---- */
   var skinAmt=num(e.skinSoldG)/1000*num(e.rateSkin);
@@ -268,6 +263,22 @@ function calc(e){
   var meatSaleAmt=counterSaleAmt+hotelAmt;
   var revenue=meatSaleAmt+liveAmt+cutAmt;
 
+  /* ---- actual meat obtained (derived from the physical closing count) ----
+     Closing meat is a real physical count (Section G on the entry form),
+     not a formula output any more — mirrors compute_entry() (calc.py).
+     Actual meat obtained is reconciled FROM it: whatever was sold at the
+     counter, sold to a hotel/hostel, or written off as damage, plus
+     whatever is physically left over at closing, is what must have come
+     out of dressing today. bonus/short meat are unchanged in meaning, just
+     fed from this reconciled figure now instead of a typed one. */
+  var closeMeatG=num(e.closeMeatG);
+  var actualMeatG=closeMeatG+num(e.skinSoldG)+num(e.skinlessSoldG)+num(e.liverSoldG)+hotelMeatG+num(e.damageG);
+  var varianceG=actualMeatG-expectedMeatG;
+  var bonusG=Math.max(varianceG,0), shortG=Math.max(-varianceG,0);
+  var yieldPct=dressedWtG>0?(actualMeatG/dressedWtG)*100:0;
+  var yieldLow=dressedWtG>0&&actualMeatG>0&&yieldPct<expYield-tol;
+  var yieldHigh=dressedWtG>0&&yieldPct>expYield+tol;
+
   /* ---- birds & meat balance ---- */
   var handled=num(e.openBirds)+buyBirds;
   /* Unlike opening meat, opening birds legitimately belongs in this sum —
@@ -284,17 +295,14 @@ function calc(e){
   var expCloseWtGRaw=availWtG-num(e.liveSoldWtG)-hotelLiveG-num(e.mortWtG)-dressedWtG;
   var wtDeficitG=Math.max(-expCloseWtGRaw,0);
   var expCloseWtG=Math.max(expCloseWtGRaw,0);
-  /* Closing meat (tomorrow's opening) is built from TODAY's dressing only —
-     mirrors compute_entry() (calc.py). Opening meat is still shown
-     (meatAvailG, openMeatValue) but is not folded into what carries
-     forward, so one bad day can't cascade into a running negative balance.
-     A negative result here means more was recorded sold/gone today than
-     was actually dressed today; floor it and keep the clamped-away amount
-     as its own reported figure (meatDeficitG). */
-  var expCloseMeatGRaw=actualMeatG-num(e.skinSoldG)-num(e.skinlessSoldG)-num(e.liverSoldG)-hotelMeatG-num(e.damageG);
-  var meatDeficitG=Math.max(-expCloseMeatGRaw,0);
-  var expCloseMeatG=Math.max(expCloseMeatGRaw,0);
-  var meatVarG=expCloseMeatG-num(e.closeMeatG);
+  /* Closing meat is a direct physical count now, not a formula output, so
+     there's nothing left to derive or floor — it simply IS what was
+     entered in Section G, and it's what becomes tomorrow's opening meat.
+     meatVarG/meatDeficitG stay at zero by construction here; kept only so
+     the Meat shortfall report and older approved entries (computed before
+     this change, when they could be nonzero) keep working. */
+  var expCloseMeatG=closeMeatG;
+  var meatVarG=0, meatDeficitG=0;
 
   /* ---- profit & loss ---- */
   var openMeatValue=num(e.openMeatG)/1000*meatCostKg;
@@ -324,7 +332,8 @@ function calc(e){
   return { wastePct:wastePct, expYield:expYield, yieldFrac:yieldFrac,
     buyBirds:buyBirds, buyWtG:buyWtG, buyAmt:buyAmt, openValue:openValue, availWtG:availWtG,
     availValue:availValue, avgRate:avgRate, meatCostKg:meatCostKg,
-    expectedMeatG:expectedMeatG, wasteMeatG:wasteMeatG, varianceG:varianceG, bonusG:bonusG, shortG:shortG,
+    expectedMeatG:expectedMeatG, wasteMeatG:wasteMeatG, actualMeatG:actualMeatG,
+    varianceG:varianceG, bonusG:bonusG, shortG:shortG,
     yieldPct:yieldPct, yieldLow:yieldLow, yieldHigh:yieldHigh,
     skinAmt:skinAmt, skinlessAmt:skinlessAmt, liverAmt:liverAmt, liveAmt:liveAmt, cutAmt:cutAmt,
     counterSaleAmt:counterSaleAmt, meatSaleAmt:meatSaleAmt, revenue:revenue,
@@ -351,7 +360,6 @@ function warnings(e,c){
   if(c.yieldLow) w.push({lvl:'red',t:'Meat shortfall',m:'Yield '+pct(c.yieldPct)+' against an expected '+pct(c.expYield,0)+'. Short by '+fmtW(c.shortG)+' ≈ '+money0(c.shortValue)+'.'});
   if(c.yieldHigh) w.push({lvl:'amber',t:'Excess meat — bonus',m:'Yield '+pct(c.yieldPct)+' exceeds the expected '+pct(c.expYield,0)+'. Bonus '+fmtW(c.bonusG)+' ≈ '+money0(c.bonusValue)+'.'});
   if(c.birdVar!==0&&c.hasData) w.push({lvl:'amber',t:'Bird count mismatch',m:'Closing count is '+Math.abs(c.birdVar)+' bird(s) '+(c.birdVar>0?'short of':'above')+' the expected balance.'});
-  if(Math.abs(c.meatVarG)>500&&c.hasData) w.push({lvl:'amber',t:'Meat balance mismatch',m:'Closing meat differs from expected by '+fmtW(Math.abs(c.meatVarG))+'.'});
   if(c.mortRate>2) w.push({lvl:'amber',t:'High mortality',m:pct(c.mortRate,2)+' of birds handled ≈ '+money0(c.mortValue)+' lost.'});
   if(c.hasData&&c.netProfit<0) w.push({lvl:'red',t:'Day closed at a loss',m:'Net '+money0(c.netProfit)+' after cost, labour and expenses.'});
   return w;
@@ -446,17 +454,15 @@ function setCloseReadonly(ids,on){
   ids.forEach(function(id){ var el=$(id); if(!el) return; el.readOnly=on; el.tabIndex=on?-1:0; });
 }
 function applyAutoFill(c){
-  var hb=$('hint_closeBirds'), hw=$('hint_closeWt'), hm=$('hint_closeMeat');
-  var expB=Math.max(Math.round(c.expBirds),0), expW=Math.max(Math.round(c.expCloseWtG),0), expM=Math.max(Math.round(c.expCloseMeatG),0);
+  var hb=$('hint_closeBirds'), hw=$('hint_closeWt');
+  var expB=Math.max(Math.round(c.expBirds),0), expW=Math.max(Math.round(c.expCloseWtG),0);
 
   if(S.auto.closeBirds && !$('f_closeBirds').disabled){ if($('f_closeBirds').value!==String(expB)) $('f_closeBirds').value=expB; }
   if(S.auto.closeWt && !$('f_closeWt_kg').disabled) setG('f_closeWt',expW);
-  if(S.auto.closeMeat && !$('f_closeMeat_kg').disabled) setG('f_closeMeat',expM);
 
   hb.textContent=S.auto.closeBirds?'Auto: opening + purchased − live sold − mortality − dressed':'Manual — expected '+expB;
   hw.textContent=S.auto.closeWt?'Auto from weights entered above':'Manual — expected '+fmtW(expW);
-  hm.textContent=S.auto.closeMeat?'Auto: open meat + obtained − counter sales − hotel sales − damage':'Manual — expected '+fmtW(expM);
-  [['closeBirds',hb],['closeWt',hw],['closeMeat',hm]].forEach(function(x){
+  [['closeBirds',hb],['closeWt',hw]].forEach(function(x){
     x[1].className='text-[11px] mt-1 '+(S.auto[x[0]]?'text-emerald-600':'text-amber-600');
   });
   qsa('[data-auto]').forEach(function(b){
@@ -470,7 +476,13 @@ function applyAutoFill(c){
   });
   setCloseReadonly(['f_closeBirds'],S.auto.closeBirds);
   setCloseReadonly(['f_closeWt_kg','f_closeWt_g'],S.auto.closeWt);
-  setCloseReadonly(['f_closeMeat_kg','f_closeMeat_g'],S.auto.closeMeat);
+  // Closing meat has no auto/manual toggle any more — it's always a direct
+  // physical count, entered in Section G. Mirror it (read-only) into
+  // Section I alongside birds/weight, and mirror the reconciled actual
+  // meat obtained (Section G's skin+skinless+liver+closing, plus hotel and
+  // damage) back up into Section F's read-only display.
+  setG('f_closeMeatMirror', Math.round(c.expCloseMeatG));
+  setG('f_actualMeat', Math.max(Math.round(c.actualMeatG),0));
 }
 
 /* ---------------- auth & RBAC ---------------- */
@@ -681,12 +693,17 @@ function readForm(){
   e.rateSkin=v('f_rateSkin'); e.rateSkinless=v('f_rateSkinless'); e.rateLiver=v('f_rateLiver'); e.rateLive=v('f_rateLive');
   e.liveSoldCount=v('f_liveSoldCount'); e.liveSoldWtG=gv('f_liveSoldWt'); e.cutCharges=v('f_cutCharges');
   e.mortCount=v('f_mortCount'); e.mortWtG=gv('f_mortWt'); e.damageG=gv('f_damage');
-  e.dressedCount=v('f_dressedCount'); e.dressedWtG=gv('f_dressedWt'); e.actualMeatG=gv('f_actualMeat');
+  // actualMeatG is not read here: it's reconciled server-side from
+  // skin+skinless+liver+hotel meat+damage+closing meat (see calc.py), never
+  // taken from the client — the readonly Section F box is just a preview.
+  e.dressedCount=v('f_dressedCount'); e.dressedWtG=gv('f_dressedWt');
   e.skinSoldG=gv('f_skinSold'); e.skinlessSoldG=gv('f_skinlessSold'); e.liverSoldG=gv('f_liverSold');
   e.closeBirds=v('f_closeBirds'); e.closeWtG=gv('f_closeWt'); e.closeMeatG=gv('f_closeMeat');
-  /* tells the server which (if any) of these three the admin set by hand this
-     save, rather than have it recompute them — see _manual_close_keys() */
-  e.closeAuto={ birds:S.auto.closeBirds, wt:S.auto.closeWt, meat:S.auto.closeMeat };
+  /* tells the server which (if any) of these two the admin set by hand this
+     save, rather than have it recompute them — see _manual_close_keys().
+     Closing meat isn't part of this: it's always taken directly from
+     f_closeMeat above, the same as skin/skinless/liver sold. */
+  e.closeAuto={ birds:S.auto.closeBirds, wt:S.auto.closeWt };
   e.notes=tv('f_notes'); e.explanation=tv('f_explanation');
   e.photos=S.photos.slice();
   /* tells the server these images are real and not an empty list from a
@@ -775,7 +792,7 @@ var REQUIRED = [
   {id:'f_rateLive',  label:'Live bird price',         test:function(){ return v('f_rateLive')>0; }},
   {id:'f_dressedCount',label:'Number of dressed birds',test:function(){ return filled('f_dressedCount'); }},
   {id:'f_dressedWt_kg',label:'Live weight of dressed birds',test:function(){ return v('f_dressedCount')===0 || gv('f_dressedWt')>0; }},
-  {id:'f_actualMeat_kg',label:'Actual meat obtained', test:function(){ return v('f_dressedCount')===0 || gv('f_actualMeat')>0; }},
+  {id:'f_closeMeat_kg',label:'Closing meat (Section G)', test:function(){ return v('f_dressedCount')===0 || filledG('f_closeMeat'); }},
   {id:'f_closeBirds',label:'Closing birds',           test:function(){ return filled('f_closeBirds'); }},
   {id:'f_closeWt_kg',label:'Closing bird weight',     test:function(){ return v('f_closeBirds')===0 || gv('f_closeWt')>0; }, firstDayOptional:true}
 ];
@@ -829,12 +846,13 @@ function lockForm(locked){
 
 function loadEntry(id){
   S.editing=id?(S.entries.filter(function(x){return x.id===id;})[0]||null):null;
-  // Closing birds/weight/meat are computed by the server and shown read-only
-  // by default, whether this is a new entry or one being reopened. An admin
-  // (and only an admin — the toggle buttons are data-admin) can flip any of
-  // the three to manual from here; a supervisor never sees the toggle so
-  // theirs stays on regardless.
-  S.auto={ closeBirds:true, closeWt:true, closeMeat:true };
+  // Closing birds/weight are computed by the server and shown read-only by
+  // default, whether this is a new entry or one being reopened. An admin
+  // (and only an admin — the toggle buttons are data-admin) can flip either
+  // to manual from here; a supervisor never sees the toggle so theirs stays
+  // on regardless. Closing meat has no such toggle — it's always a direct
+  // physical count, entered in Section G.
+  S.auto={ closeBirds:true, closeWt:true };
   if(S.editing){
     S.cat=S.editing.category; S.branch=S.editing.branch;
     $('branchSelect').value=S.branch; syncSegs(); fillForm(S.editing); $('carryNote').textContent='';
@@ -1061,8 +1079,6 @@ function recalc(){
   $('o_birdVar').className='font-bold num '+(c.birdVar===0?'text-emerald-700':'text-rose-600');
   $('o_meatAvail').textContent=fmtW(c.meatAvailG);
   $('o_expCloseMeat').textContent=fmtW(c.expCloseMeatG);
-  $('o_meatVar').textContent=fmtW(c.meatVarG);
-  $('o_meatVar').className='font-bold num '+(Math.abs(c.meatVarG)>500?'text-rose-600':'text-emerald-700');
 
   refreshHotelTotals(e);
   if($('o_hotelWt')) $('o_hotelWt').textContent=fmtW(c.hotelTotalG);
@@ -1814,7 +1830,7 @@ function openReview(id){
         (isAdmin()?row('Opening rate',money(e.openRate)+'/kg')+row('Weighted avg cost',money(c.avgRate)+'/kg','text-emerald-700'):''))+
       block('Purchases', purch+row('Total purchased',c.buyBirds+' birds · '+fmtW(c.buyWtG)+(isAdmin()?' · '+money(c.buyAmt):''),'text-emerald-700'))+
       block('Live retail sales (no dressing)', row('Live birds sold',num(e.liveSoldCount)+' birds')+row('Live weight sold',fmtWs(e.liveSoldWtG))+row('Live sale amount',money(c.liveAmt),'text-emerald-700')+row('Cutting charges',money(e.cutCharges)))+
-      block('Dressing', row('Dressed birds',num(e.dressedCount))+row('Live weight',fmtWs(e.dressedWtG))+row('Expected meat @'+(100-c.wastePct)+'%',fmtWs(c.expectedMeatG))+row('Waste @'+c.wastePct+'%',fmtWs(c.wasteMeatG))+row('Actual meat',fmtWs(e.actualMeatG))+row('Yield',pct(c.yieldPct),c.yieldLow?'text-rose-600':c.yieldHigh?'text-amber-600':'text-emerald-700')+row(c.bonusG>0?'Bonus meat':'Shortfall',(c.bonusG>0?fmtWs(c.bonusG):fmtWs(c.shortG))+(isAdmin()?' ≈ '+money0(c.bonusG>0?c.bonusValue:c.shortValue):''),c.bonusG>0?'text-emerald-700':'text-rose-600'))+
+      block('Dressing', row('Dressed birds',num(e.dressedCount))+row('Live weight',fmtWs(e.dressedWtG))+row('Expected meat @'+(100-c.wastePct)+'%',fmtWs(c.expectedMeatG))+row('Waste @'+c.wastePct+'%',fmtWs(c.wasteMeatG))+row('Actual meat',fmtWs(c.actualMeatG))+row('Yield',pct(c.yieldPct),c.yieldLow?'text-rose-600':c.yieldHigh?'text-amber-600':'text-emerald-700')+row(c.bonusG>0?'Bonus meat':'Shortfall',(c.bonusG>0?fmtWs(c.bonusG):fmtWs(c.shortG))+(isAdmin()?' ≈ '+money0(c.bonusG>0?c.bonusValue:c.shortValue):''),c.bonusG>0?'text-emerald-700':'text-rose-600'))+
       block('Sales', row('Skin (counter)',fmtW(e.skinSoldG)+' · '+money(c.skinAmt))+row('Skinless (counter)',fmtW(e.skinlessSoldG)+' · '+money(c.skinlessAmt))+row('Liver (counter)',fmtW(e.liverSoldG)+' · '+money(c.liverAmt))+row('Hotels &amp; hostels',fmtW(c.hotelTotalG)+' · '+money(c.hotelAmt),'text-indigo-700')+row('Live birds',num(e.liveSoldCount)+' · '+money(c.liveAmt))+row('Cutting',money(e.cutCharges))+row('Total revenue',money(c.revenue),'text-emerald-700'))+
       block('Hotels &amp; hostels', hotelBlock)+
       block('Mortality & damage', row('Mortality',num(e.mortCount)+' birds')+row('Weight',fmtWs(e.mortWtG))+row('Rate',pct(c.mortRate,2))+

@@ -122,15 +122,8 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
 
     # ---- dressing --------------------------------------------------------
     dressed_wt_g = int(entry.get("dressedWtG") or 0)
-    actual_meat_g = int(entry.get("actualMeatG") or 0)
     expected_meat_g = int(_d(dressed_wt_g) * yield_frac)
     waste_meat_g = dressed_wt_g - expected_meat_g
-    variance_g = actual_meat_g - expected_meat_g
-    bonus_g = max(variance_g, 0)
-    short_g = max(-variance_g, 0)
-    yield_pct = (_d(actual_meat_g) / _d(dressed_wt_g) * 100) if dressed_wt_g > 0 else D0
-    yield_low = dressed_wt_g > 0 and actual_meat_g > 0 and yield_pct < (exp_yield - tol)
-    yield_high = dressed_wt_g > 0 and yield_pct > (exp_yield + tol)
 
     # ---- revenue ---------------------------------------------------------
     def sale(grams_key, rate_key):
@@ -172,6 +165,30 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     meat_sale_amt = counter_sale_amt + hotel_amt
     revenue = meat_sale_amt + live_amt + cut_amt
 
+    # ---- actual meat obtained (derived from the physical closing count) --
+    # Closing meat is now a real physical count, entered directly (Section G
+    # on the entry form) rather than computed — so actual meat obtained is
+    # reconciled FROM it instead of the other way around: whatever was sold
+    # at the counter, sold to a hotel/hostel, or written off as damage, plus
+    # whatever is physically left over at closing, is what must have come
+    # out of dressing today. This makes a miscounted closing figure show up
+    # immediately as an odd actual/expected yield instead of silently
+    # drifting the stock balance the way an independently-typed "actual meat
+    # obtained" used to. bonus_g/short_g are unchanged in meaning — just fed
+    # from this reconciled figure now instead of a typed one.
+    close_meat_g = int(entry.get("closeMeatG") or 0)
+    actual_meat_g = (close_meat_g + int(entry.get("skinSoldG") or 0)
+                     + int(entry.get("skinlessSoldG") or 0)
+                     + int(entry.get("liverSoldG") or 0)
+                     + hotel_meat_g
+                     + int(entry.get("damageG") or 0))
+    variance_g = actual_meat_g - expected_meat_g
+    bonus_g = max(variance_g, 0)
+    short_g = max(-variance_g, 0)
+    yield_pct = (_d(actual_meat_g) / _d(dressed_wt_g) * 100) if dressed_wt_g > 0 else D0
+    yield_low = dressed_wt_g > 0 and actual_meat_g > 0 and yield_pct < (exp_yield - tol)
+    yield_high = dressed_wt_g > 0 and yield_pct > (exp_yield + tol)
+
     # ---- bird & meat balance --------------------------------------------
     handled = int(entry.get("openBirds") or 0) + buy_birds
     # a live bird sold to a hotel or a function leaves the shed exactly like a
@@ -198,29 +215,18 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     exp_close_wt_g = max(exp_close_wt_g_raw, 0)
 
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
-    # Closing meat — the figure that becomes tomorrow's opening meat — is
-    # deliberately built from TODAY's dressing only (actual meat obtained,
-    # less whatever left the pool today). Opening meat is still reported
-    # (meatAvailG, openMeatValue, and the P&L cost basis below) but is not
-    # folded into what carries forward. That makes every day's carry-forward
-    # self-contained: a bad or uncounted day can no longer cascade into a
-    # running negative balance down the chain, which is exactly what
-    # happened at Yarrakatta.
-    # liver draws from the same meat pool as skin and skinless, and so does
-    # everything that went out to a hotel or hostel
-    exp_close_meat_g_raw = (actual_meat_g - int(entry.get("skinSoldG") or 0)
-                            - int(entry.get("skinlessSoldG") or 0)
-                            - int(entry.get("liverSoldG") or 0)
-                            - hotel_meat_g
-                            - int(entry.get("damageG") or 0))
-    # Physical stock can never be negative — a negative result here means
-    # more was recorded as sold/gone today than was actually dressed today
-    # (a data-entry slip, or genuinely oversold). Floor it, and keep the
-    # clamped-away amount as its own reported figure (meatDeficitG) so the
-    # shortfall stays visible to admin rather than silently vanishing.
-    meat_deficit_g = max(-exp_close_meat_g_raw, 0)
-    exp_close_meat_g = max(exp_close_meat_g_raw, 0)
-    meat_var_g = exp_close_meat_g - int(entry.get("closeMeatG") or 0)
+    # Closing meat is now a direct physical count (Section G), not a formula
+    # output, so there is nothing left to derive or floor here — it simply
+    # IS the entered figure, and it is what becomes tomorrow's opening meat
+    # (opening meat is still reported above via meatAvailG/openMeatValue,
+    # but was never folded into this). meatVarG/meatDeficitG stay at zero by
+    # construction for every entry computed under this formula; they are
+    # kept only so the Meat shortfall dashboard report and older approved
+    # entries (computed before this change, when they could be nonzero)
+    # keep working.
+    exp_close_meat_g = close_meat_g
+    meat_var_g = 0
+    meat_deficit_g = 0
 
     # ---- profit & loss (daily; overheads are handled separately) --------
     open_meat_value = _d(entry.get("openMeatG") or 0) / Decimal(1000) * meat_cost_kg
@@ -257,6 +263,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "availValue": money(avail_value), "avgRate": money(avg_rate),
         "meatCostKg": money(meat_cost_kg),
         "expectedMeatG": expected_meat_g, "wasteMeatG": waste_meat_g,
+        "actualMeatG": actual_meat_g,
         "varianceG": variance_g, "bonusG": bonus_g, "shortG": short_g,
         "yieldPct": float(round(yield_pct, 2)), "yieldLow": yield_low, "yieldHigh": yield_high,
         "skinAmt": money(skin_amt), "skinlessAmt": money(skinless_amt),
@@ -313,8 +320,8 @@ REQUIRED_FIELDS = [
      lambda e: e.get("dressedCount") is not None, False),
     ("dressedWtG", "Live weight of dressed birds",
      lambda e: int(e.get("dressedCount") or 0) == 0 or int(e.get("dressedWtG") or 0) > 0, False),
-    ("actualMeatG", "Actual meat obtained",
-     lambda e: int(e.get("dressedCount") or 0) == 0 or int(e.get("actualMeatG") or 0) > 0, False),
+    ("closeMeatG", "Closing meat (Section G — weigh what remains after selling)",
+     lambda e: int(e.get("dressedCount") or 0) == 0 or e.get("closeMeatG") is not None, False),
     ("closeBirds", "Closing birds", lambda e: e.get("closeBirds") is not None, False),
     ("closeWtG", "Closing bird weight",
      lambda e: int(e.get("closeBirds") or 0) == 0 or int(e.get("closeWtG") or 0) > 0, True),

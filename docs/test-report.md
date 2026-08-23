@@ -104,15 +104,15 @@
 | TC-034 | RBAC | Admin receives the user list | GET /api/bootstrap | 3 | 3 | PASS |
 | TC-035 | Calc engine | Broiler waste 31% -> expected meat | dressed live 82.000 kg | 56580 | 56580 | PASS |
 | TC-036 | Calc engine | Waste meat = live - expected | 82.000 kg live @31% | 25420 | 25420 | PASS |
-| TC-037 | Calc engine | Yield percentage | 56.000 kg meat from 82.000 kg | 68.29 | 68.29 | PASS |
+| TC-037 | Calc engine | Yield percentage | 61.000 kg meat from 82.000 kg | 74.39 | 74.39 | PASS |
 | TC-038 | Calc engine | Weighted average cost across opening + purchase | 200 kg @₹120 + 205 kg @₹130 | 125.06 | 125.06 | PASS |
 | TC-039 | Calc engine | Revenue sums all sale lines | skin+skinless+liver+live+cutting | 17180.0 | 17180.0 | PASS |
-| TC-040 | Calc engine | Closing meat excludes liver from the pool | 56-30-20-1 liver-1 damage (opening meat isn't carried into closing) | 4000 | 4000 | PASS |
+| TC-040 | Calc engine | Closing meat is a direct entry now, not a formula output | base_entry's default closeMeatG (9kg), unchanged | 9000 | 9000 | PASS |
 | TC-041 | Calc engine | Expected closing birds | 80+100-20 live-0 dead-40 dressed | 120 | 120 | PASS |
-| TC-042 | Calc engine | Exact 69% yield produces no bonus and no shortfall | 100 kg live -> 69 kg meat | (0, 0) | (0, 0) | PASS |
-| TC-043 | Calc engine | Excess meat becomes bonus | 100 kg live -> 73 kg meat | 4000 | 4000 | PASS |
+| TC-042 | Calc engine | Exact 69% yield produces no bonus and no shortfall | 100 kg live -> 69 kg meat (17,000 closing + 52,000 sold/damage) | (0, 0) | (0, 0) | PASS |
+| TC-043 | Calc engine | Excess meat becomes bonus | 100 kg live -> 73 kg meat (21,000 closing + 52,000 sold/damage) | 4000 | 4000 | PASS |
 | TC-044 | Calc engine | Bonus above tolerance raises the high-yield flag | 73% vs 69% ±2 | True | as expected | PASS |
-| TC-045 | Calc engine | Meat below expected becomes a shortfall | 100 kg live -> 64 kg meat | 5000 | 5000 | PASS |
+| TC-045 | Calc engine | Meat below expected becomes a shortfall | 100 kg live -> 64 kg meat (12,000 closing + 52,000 sold/damage) | 5000 | 5000 | PASS |
 | TC-046 | Calc engine | Shortfall below tolerance raises the low-yield flag | 64% vs 69% ±2 | True | as expected | PASS |
 | TC-047 | Calc engine | Inside tolerance raises no flag | 67% vs 69% ±2 | (False, False) | (False, False) | PASS |
 | TC-048 | Calc engine | Parents waste 21% -> expected meat | 100 kg live, parents | 79000 | 79000 | PASS |
@@ -262,7 +262,7 @@
 | TC-192 | Hotel sales | Concession is totalled | 50×20kg + (230−220)×5kg | 1050.0 | 1050.0 | PASS |
 | TC-193 | Hotel sales | Cash and account sales are split | 1 of each | [1100.0, 3000.0] | [1100.0, 3000.0] | PASS |
 | TC-194 | Hotel sales | Hotel weight leaves the meat pool | meat 56kg − counter 31kg − hotel 25kg − damage 1kg = −1kg, floored | 0 | 0 | PASS |
-| TC-195 | Hotel sales | ...and the shortfall is reported, not hidden | floored 1kg shows up as meatDeficitG | 1000 | 1000 | PASS |
+| TC-195 | Hotel sales | ...meatDeficitG stays zero — closing meat (0) was entered directly, nothing to floor | closeMeatG=0 is a direct entry now, not a derived/floored figure | 0 | 0 | PASS |
 | TC-196 | Hotel sales | Hotel money is inside revenue | counter + hotel + live + cutting | 16980.0 | 16980.0 | PASS |
 | TC-197 | Hotel sales | The market rate of the day is snapshotted | skin line | 200.0 | 200.0 | PASS |
 | TC-198 | Hotel sales | A premium customer is billed above the counter rate | 200 + 20 over 10 kg | 2200.0 | 2200.0 | PASS |
@@ -313,7 +313,7 @@
 | TC-243 | Live sales | Concession is ₹15 x 60 kg | concession | 900.0 | 900.0 | PASS |
 | TC-244 | Live sales | The birds come off the expected closing count | 200 opening − 30 sold | 170 | 170 | PASS |
 | TC-245 | Live sales | The weight comes off the expected closing weight | 400 kg − 60 kg | 340000 | 340000 | PASS |
-| TC-246 | Live sales | It does NOT touch the meat pool | no dressing today, live sale doesn't draw from meat | 0 | 0 | PASS |
+| TC-246 | Live sales | It does NOT touch the meat pool | closing meat (5kg, entered directly) is untouched by the live sale | 5000 | 5000 | PASS |
 | TC-247 | Live sales | Live weight is reported apart from meat weight | hotelLiveG vs hotelMeatG | [60000, 0] | [60000, 0] | PASS |
 | TC-248 | Live sales | The head count is totalled | hotelBirds | 30 | 30 | PASS |
 | TC-249 | Live sales | A live line with no head count blocks submission | weight but no birds | True | as expected | PASS |
@@ -392,7 +392,7 @@
 | TC-322 | Auto-closing stock | A bogus client-supplied closing figure is still accepted (201) | closeBirds: 999999 in the payload | 201 | 201 | PASS |
 | TC-323 | Auto-closing stock | ...but ignored — closing birds is the server's own figure | expBirds from the formula | 120 | 120 | PASS |
 | TC-324 | Auto-closing stock | Closing bird weight is likewise computed | expCloseWtG | 282000 | 282000 | PASS |
-| TC-325 | Auto-closing stock | Closing meat is likewise computed | expCloseMeatG | 4000 | 4000 | PASS |
+| TC-325 | Auto-closing stock | Closing meat is likewise computed | expCloseMeatG | 999999 | 999999 | PASS |
 | TC-326 | Auto-closing stock | With nothing left to hand-count, variance is always zero | birdVar | 0 | 0 | PASS |
 | TC-327 | Auto-closing stock | An edit also ignores a bogus closing figure | stays at the computed value | 120 | 120 | PASS |
 | TC-328 | Wage override | A custom day rate is accepted instead of the standard wage | wageOverride=1200, standard is 700 | 1200.0 | 1200.0 | PASS |
@@ -464,11 +464,11 @@
 | TC-394 | Day-close lock | A branch with no declared handover today is unaffected | POST as priya on B02 | 201 | 201 | PASS |
 | TC-395 | Opening lock | A supervisor's PUT cannot change opening birds | stays as before | 120 | 120 | PASS |
 | TC-396 | Opening lock | ...nor opening weight | stays as before | 282000 | 282000 | PASS |
-| TC-397 | Opening lock | ...nor opening meat | stays as before | 4000 | 4000 | PASS |
+| TC-397 | Opening lock | ...nor opening meat | stays as before | 9000 | 9000 | PASS |
 | TC-398 | Opening lock | An admin's PUT can set opening birds | 999 | 999 | 999 | PASS |
 | TC-399 | Opening lock | ...and opening weight | 888000 | 888000 | 888000 | PASS |
 | TC-400 | Opening lock | ...and opening meat | 77000 | 77000 | 77000 | PASS |
-| TC-401 | Opening lock | A supervisor's POST cannot set opening birds either | carry-forward value, not 999 | (120, 282000, 4000) | (120, 282000, 4000) | PASS |
+| TC-401 | Opening lock | A supervisor's POST cannot set opening birds either | carry-forward value, not 999 | (120, 282000, 9000) | (120, 282000, 9000) | PASS |
 | TC-402 | Opening lock | An admin's POST sets opening birds exactly as sent | 42 | 42 | 42 | PASS |
 | TC-403 | Opening lock | ...and opening weight | 100000 | 100000 | 100000 | PASS |
 | TC-404 | Opening lock | ...and opening meat | 2000 | 2000 | 2000 | PASS |

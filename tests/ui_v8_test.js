@@ -534,7 +534,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   setVal($('branchSelect'), 'B02'); await sleep(300);
   click(qa('#entryCatSeg button').find(b => b.getAttribute('data-cat') === 'parents')); await sleep(400);
   setVal($('f_dressedWt_kg'), '14'); setVal($('f_dressedWt_g'), '7');
-  setVal($('f_actualMeat_kg'), '10'); setVal($('f_actualMeat_g'), '925');
+  // Actual meat obtained is read-only now, reconciled from Section G's
+  // closing meat (+ skin/skinless/liver/damage, all 0 here) — so closing
+  // meat is what has to be set to land on the same 10.925 kg.
+  setVal($('f_closeMeat_kg'), '10'); setVal($('f_closeMeat_g'), '925');
   await sleep(400);
 
   check('waste % shown matches the 22% setting', $('o_wastePct').textContent.trim() === '22',
@@ -693,28 +696,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     body: JSON.stringify({ verdict: 'approved', openRate: 120 })
   });
 
-  // Same date, 'parents' instead of 'broiler' (the unique constraint is
-  // branch+category+date, so this coexists with the bonus entry above) —
-  // 4,500g recorded sold against only 4,000g actually obtained is a 500g
-  // shortfall, regardless of what the formula expected that day.
-  const shortEntry = await (await w.fetch('/api/entries', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      branch: 'B01', category: 'parents', businessDate: d75,
-      openBirds: 0, openWtG: 0, openMeatG: 0, openRate: 120,
-      rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
-      liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
-      mortCount: 0, mortWtG: 0, damageG: 0,
-      dressedCount: 3, dressedWtG: 6000, actualMeatG: 4000,
-      skinSoldG: 4500, skinlessSoldG: 0, liverSoldG: 0,
-      closeBirds: 0, closeWtG: 0, closeMeatG: 0, purchases: [{ supplier: 'Shiva Traders', birds: 3, wtG: 6000, rate: 120 }]
-    })
-  })).json();
-  await w.fetch('/api/entries/' + shortEntry.id + '/decision', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ verdict: 'approved', openRate: 120 })
-  });
-
   // Raw-fetch-created data never appears in S.entries until a fresh
   // bootstrap — same re-sign-in pattern used everywhere else in this file.
   setVal($('loginUser'), 'admin'); setVal($('loginPass'), 'admin123');
@@ -749,14 +730,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('the bonus meat table\'s Print/Excel buttons do not throw', printCalls >= 11, printCalls + ' calls');
 
   const msRow = () => qa('#msBody tr').find(tr => tr.textContent.includes(d75));
-  check('the meat shortfall table lists the day sold exceeded actual', !!msRow(), msRow() && msRow().textContent);
-  check('...actual meat shows 4.000 kg', !!msRow() && /4\.000/.test(msRow().textContent));
-  check('...sold + damaged shows 4.500 kg', !!msRow() && /4\.500/.test(msRow().textContent));
-  check('...shortfall shows −0.500 kg', !!msRow() && /[−-]0\.500/.test(msRow().textContent));
-
-  const msFootRow = q('#msFoot tr');
-  check('the totals footer adds up the shortfall grams', !!msFootRow && /0\.500/.test(msFootRow.textContent),
-        msFootRow && msFootRow.textContent);
+  // Closing meat is a direct physical entry now (Section G), not a formula
+  // output, so meatDeficitG can no longer be nonzero for any entry created
+  // through the app — there's nothing left to floor away. The table can
+  // only ever show something for an entry approved before this change, so
+  // on a fresh database it stays empty; the bonus entry above (deficitG=0)
+  // proves it doesn't false-positive on a normal day.
+  check('the meat shortfall table shows its empty state — nothing can go negative any more',
+        $('msBody').textContent.includes('No day in this range'), $('msBody').textContent);
 
   click($('msPrint')); await sleep(200);
   click($('msExport')); await sleep(200);

@@ -166,7 +166,12 @@ def load_demo(admin: User) -> dict:
                         hotel_g += grams
                     made["hotelSales"] += 1
 
-                close_m = max(open_m + meat - skin - skinless - liver - hotel_g - dmg, 0)
+                # Closing meat is today's dressing only, opening meat is not
+                # folded in (see compute_entry() in calc.py) — actual meat
+                # obtained is derived FROM this at display time (closing +
+                # skin + skinless + liver + hotel + damage), so including
+                # open_m here would double-count it into that reconstruction.
+                close_m = max(meat - skin - skinless - liver - hotel_g - dmg, 0)
                 # live birds sold to a function leave the shed, so they come
                 # off the closing bird count as well as the weight
                 close_b = max(close_b - hotel_live_birds, 0)
