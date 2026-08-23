@@ -2643,6 +2643,28 @@ def verify_dayclose(close_id):
     return jsonify(close_payload(row.branch, row.business_date))
 
 
+@bp.delete("/dayclose/<close_id>")
+@admin_required
+def delete_dayclose(close_id):
+    """Remove a wrongly-declared handover — the day goes back to "not yet
+    declared" so the supervisor's actual cash can be re-entered from scratch.
+    Admin only, same lock as every other Day Close route. Deleting a verified
+    handover is allowed too; verification just meant someone had looked at
+    it, not that it is now permanent."""
+    row = db.session.get(DayClose, close_id)
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+    err = require_branch(row.branch.code)
+    if err:
+        return err
+    log_activity("Deleted handover",
+                 f"{row.business_date} · cash ₹{row.cash_amount} + UPI ₹{row.upi_amount}",
+                 branch_code=row.branch.code)
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
 @bp.get("/dayclose/history")
 @admin_required
 def dayclose_history():
@@ -2724,6 +2746,7 @@ def dayclose_history():
                 "verified": bool(row and row.verified_by_id),
                 "declaredByName": row.declared_by.name if row and row.declared_by else "",
                 "missing": row is None,
+                "id": row.id if row else None,
                 "meatAdjustG": row.meat_adjust_g if row else 0,
                 "meatAdjustAmount": float(row.meat_adjust_amount) if row else 0.0,
             })

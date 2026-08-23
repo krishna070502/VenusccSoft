@@ -3627,7 +3627,8 @@ function renderDayClose() {
                     '<button data-dcsave="' + esc(b.branch) + '" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-4 py-2.5 rounded-lg"><i class="fa-solid fa-floppy-disk mr-1"></i>' + (c ? 'Update handover' : 'Record handover') + '</button>' +
                     (c
                       ? '<button data-dcverify="' + esc(c.id) + '" data-reopen="' + (c.verifiedAt ? '1' : '') + '" class="border border-slate-300 text-slate-600 font-bold text-sm px-4 py-2.5 rounded-lg">' +
-                        (c.verifiedAt ? 'Reopen' : 'Verify') + '</button>'
+                        (c.verifiedAt ? 'Reopen' : 'Verify') + '</button>' +
+                        '<button data-dcdelete="' + esc(c.id) + '" title="Delete this handover — the day goes back to not yet declared" class="border border-rose-300 text-rose-600 font-bold text-sm px-4 py-2.5 rounded-lg hover:bg-rose-50"><i class="fa-solid fa-trash mr-1"></i>Delete</button>'
                       : '') +
                   '</div>'
                 : (c ? '' : '<p class="mt-3 text-[11px] text-slate-400 italic">Not declared yet — an admin still needs to enter this.</p>')) +
@@ -3668,8 +3669,11 @@ function renderDayCloseHistory() {
               : r.difference > 0 ? 'text-amber-700' : 'text-rose-600') + '">' +
             (r.difference === null ? '—' : (r.difference > 0 ? '+' : '') + money0(r.difference)) + '</td>' +
           '<td class="px-4 py-2.5">' + diffChip(r.difference) +
-            (r.verified ? ' <i class="fa-solid fa-lock text-emerald-600 text-[10px]"></i>' : '') + '</td></tr>';
-      }).join('') : '<tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">Nothing traded between ' + from + ' and ' + to + '.</td></tr>';
+            (r.verified ? ' <i class="fa-solid fa-lock text-emerald-600 text-[10px]"></i>' : '') + '</td>' +
+          '<td class="px-4 py-2.5 text-right">' + (r.id
+            ? '<button data-dchistdel="' + esc(r.id) + '" title="Delete this handover" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>'
+            : '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">Nothing traded between ' + from + ' and ' + to + '.</td></tr>';
 
       $('dcHistNote').textContent = rows.length
         ? rows.length + ' day(s)' + (missing ? ' · ' + missing + ' not yet declared' : ' · all declared')
@@ -3682,7 +3686,7 @@ function renderDayCloseHistory() {
         '<td class="px-4 py-2.5 text-right num">' + money0(tUpi) + '</td>' +
         '<td class="px-4 py-2.5 text-right num">' + money0(t.declared) + '</td>' +
         '<td class="px-4 py-2.5 text-right num ' + (Math.abs(t.diff) < 0.5 ? 'text-emerald-700' : t.diff > 0 ? 'text-amber-700' : 'text-rose-600') + '">' +
-        (t.diff > 0 ? '+' : '') + money0(t.diff) + '</td><td></td></tr>' : '';
+        (t.diff > 0 ? '+' : '') + money0(t.diff) + '</td><td></td><td></td></tr>' : '';
 
       var badge = $('closeBadge');
       if (badge) {
@@ -4682,7 +4686,37 @@ function wire() {
         })
         .catch(apiFail)
         .then(function () { spinRelease(vkey, vctx); });
+      return;
     }
+    var del = ev.target.closest('[data-dcdelete]');
+    if (del) {
+      if (!confirm('Delete this handover? The day goes back to not yet declared.')) return;
+      var dkey = 'dcdelete:' + del.getAttribute('data-dcdelete');
+      var dctx = spinGuard(dkey, del);
+      if (!dctx) return;
+      api('DELETE', '/dayclose/' + del.getAttribute('data-dcdelete'))
+        .then(function () {
+          renderDayClose();
+          toast('Handover deleted.', 'warn');
+        })
+        .catch(apiFail)
+        .then(function () { spinRelease(dkey, dctx); });
+    }
+  });
+  $('dcHistBody').addEventListener('click', function (ev) {
+    var del = ev.target.closest('[data-dchistdel]'); if (!del) return;
+    if (!confirm('Delete this handover? The day goes back to not yet declared.')) return;
+    var dkey = 'dchistdel:' + del.getAttribute('data-dchistdel');
+    var dctx = spinGuard(dkey, del);
+    if (!dctx) return;
+    api('DELETE', '/dayclose/' + del.getAttribute('data-dchistdel'))
+      .then(function () {
+        renderDayCloseHistory();
+        if (S.dcCurrent) renderDayClose();   // keep the branch cards in sync too
+        toast('Handover deleted.', 'warn');
+      })
+      .catch(apiFail)
+      .then(function () { spinRelease(dkey, dctx); });
   });
   $('dcCards').addEventListener('input', function (ev) {
     var el = ev.target.closest('[data-dc]'); if (!el) return;

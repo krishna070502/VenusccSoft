@@ -1912,6 +1912,20 @@ def test_dayclose():
          lambda: ADMIN.post(f"/api/dayclose/{cid}/verify", json={"reopen": True})
                       .get_json()["close"]["verifiedAt"])
 
+    case("Cash tally", "A supervisor cannot delete a handover", "DELETE dayclose", 403,
+         lambda: SUP.delete(f"/api/dayclose/{cid}").status_code)
+    case("Cash tally", "An admin can delete a wrongly-declared handover",
+         "DELETE dayclose", True,
+         lambda: ADMIN.delete(f"/api/dayclose/{cid}").get_json()["ok"])
+    case("Cash tally", "The day goes back to not yet declared", "close is null", None,
+         lambda: ADMIN.get(f"/api/dayclose?date={day}&branch=B01")
+                      .get_json()["branches"][0]["close"])
+    case("Cash tally", "Deleting an already-deleted handover is a 404",
+         "DELETE again", 404,
+         lambda: ADMIN.delete(f"/api/dayclose/{cid}").status_code)
+    case("Cash tally", "The row really is gone from the table", "count", 0,
+         lambda: _count(DayClose, business_date=parse_iso(day), _branch="B01"))
+
 
 def parse_iso(txt):
     return date.fromisoformat(txt)
