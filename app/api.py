@@ -444,14 +444,15 @@ def _carry_forward_opening(entry: DailyEntry) -> None:
     # the one that's safe to read before that.
     prev = _previous_approved(entry.branch.id, entry.category)
     if prev:
-        entry.open_birds = prev.close_birds
-        entry.open_weight_g = prev.close_weight_g
-        # Floored at 0 — compute_entry() now floors a newly-computed
-        # close_meat_g the same way (see the meatDeficitG comment there),
-        # but a row saved before that fix could still be sitting on an old
-        # negative value; clamping here too means the very next new entry
-        # for this branch+category comes out clean regardless, with no
-        # admin action needed to "unstick" it.
+        # Floored at 0 — compute_entry() now floors newly-computed
+        # close_birds/close_weight_g/close_meat_g the same way (see the
+        # birdDeficit/wtDeficitG/meatDeficitG comments there), but a row
+        # saved before that fix could still be sitting on an old negative
+        # value; clamping here too means the very next new entry for this
+        # branch+category comes out clean regardless, with no admin action
+        # needed to "unstick" it.
+        entry.open_birds = max(prev.close_birds, 0)
+        entry.open_weight_g = max(prev.close_weight_g, 0)
         entry.open_meat_g = max(prev.close_meat_g, 0)
 
 
@@ -1131,14 +1132,15 @@ def entries_carry_forward():
     return jsonify({
         "found": True,
         "date": prev.business_date.isoformat(),
-        "closeBirds": prev.close_birds,
-        "closeWtG": prev.close_weight_g,
         # Floored at 0, same reasoning as _carry_forward_opening() and the
-        # meatDeficitG floor in compute_entry() — a row saved before that
-        # fix could still hold an old negative value; this is the actual
-        # figure that pre-fills "Opening meat" on screen for a brand-new
-        # entry, admin or supervisor, so it has to be clamped here too or
-        # the negative would keep showing up right where it was first seen.
+        # birdDeficit/wtDeficitG/meatDeficitG floors in compute_entry() — a
+        # row saved before that fix could still hold an old negative value;
+        # these are the actual figures that pre-fill Opening birds/weight/
+        # meat on screen for a brand-new entry, admin or supervisor, so they
+        # have to be clamped here too or the negative would keep showing up
+        # right where it was first seen.
+        "closeBirds": max(prev.close_birds, 0),
+        "closeWtG": max(prev.close_weight_g, 0),
         "closeMeatG": max(prev.close_meat_g, 0),
         "avgRate": calc.get("avgRate", 0),
         "rateSkin": float(prev.rate_skin), "rateSkinless": float(prev.rate_skinless),

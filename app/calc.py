@@ -176,13 +176,26 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     handled = int(entry.get("openBirds") or 0) + buy_birds
     # a live bird sold to a hotel or a function leaves the shed exactly like a
     # counter live sale, so it comes off the bird count and the bird weight
-    exp_birds = (handled - int(entry.get("liveSoldCount") or 0) - hotel_birds
-                 - int(entry.get("mortCount") or 0) - int(entry.get("dressedCount") or 0))
+    #
+    # Unlike opening MEAT (see exp_close_meat_g_raw below), opening BIRDS
+    # legitimately belongs in this sum — a live bird sitting in the shed
+    # from yesterday and one bought this morning are the same kind of stock,
+    # not two different-provenance pools being mixed. What still needs
+    # guarding against is the same failure mode as meat: more recorded as
+    # sold/dressed/dead than were actually on hand, which must show up as a
+    # same-day deficit rather than a negative headcount that compounds into
+    # tomorrow's opening count.
+    exp_birds_raw = (handled - int(entry.get("liveSoldCount") or 0) - hotel_birds
+                     - int(entry.get("mortCount") or 0) - int(entry.get("dressedCount") or 0))
+    bird_deficit = max(-exp_birds_raw, 0)
+    exp_birds = max(exp_birds_raw, 0)
     bird_var = exp_birds - int(entry.get("closeBirds") or 0)
     mort_rate = (_d(entry.get("mortCount") or 0) / _d(handled) * 100) if handled > 0 else D0
 
-    exp_close_wt_g = (avail_wt_g - int(entry.get("liveSoldWtG") or 0) - hotel_live_g
-                      - int(entry.get("mortWtG") or 0) - dressed_wt_g)
+    exp_close_wt_g_raw = (avail_wt_g - int(entry.get("liveSoldWtG") or 0) - hotel_live_g
+                          - int(entry.get("mortWtG") or 0) - dressed_wt_g)
+    wt_deficit_g = max(-exp_close_wt_g_raw, 0)
+    exp_close_wt_g = max(exp_close_wt_g_raw, 0)
 
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
     # Closing meat — the figure that becomes tomorrow's opening meat — is
@@ -232,6 +245,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     short_value = _d(short_g) / Decimal(1000) * meat_cost_kg
     bonus_value = _d(bonus_g) / Decimal(1000) * meat_cost_kg
     meat_deficit_value = _d(meat_deficit_g) / Decimal(1000) * meat_cost_kg
+    wt_deficit_value = _d(wt_deficit_g) / Decimal(1000) * avg_rate
 
     photos = entry.get("photos") or []
     needs_photo = int(entry.get("mortCount") or 0) > 0 and len(photos) == 0
@@ -267,8 +281,10 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         # here, with credit sales left out because no money changed hands
         "cashSales": money(counter_sale_amt + live_amt + cut_amt + hotel_cash),
         "handled": handled, "expBirds": exp_birds, "birdVar": bird_var,
+        "birdDeficit": bird_deficit,
         "mortRate": float(round(mort_rate, 2)),
         "expCloseWtG": exp_close_wt_g, "meatAvailG": meat_avail_g,
+        "wtDeficitG": wt_deficit_g, "wtDeficitValue": money(wt_deficit_value),
         "expCloseMeatG": exp_close_meat_g, "meatVarG": meat_var_g,
         "meatDeficitG": meat_deficit_g, "meatDeficitValue": money(meat_deficit_value),
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),

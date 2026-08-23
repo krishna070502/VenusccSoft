@@ -270,11 +270,20 @@ function calc(e){
 
   /* ---- birds & meat balance ---- */
   var handled=num(e.openBirds)+buyBirds;
-  var expBirds=handled-num(e.liveSoldCount)-hotelBirds-num(e.mortCount)-num(e.dressedCount);
+  /* Unlike opening meat, opening birds legitimately belongs in this sum —
+     a bird in the shed from yesterday and one bought this morning are the
+     same stock. Still floor the result: more recorded sold/dressed/dead
+     than were on hand must show as a same-day deficit, not a negative
+     headcount that compounds into tomorrow's opening count. */
+  var expBirdsRaw=handled-num(e.liveSoldCount)-hotelBirds-num(e.mortCount)-num(e.dressedCount);
+  var birdDeficit=Math.max(-expBirdsRaw,0);
+  var expBirds=Math.max(expBirdsRaw,0);
   var birdVar=expBirds-num(e.closeBirds);
   var mortRate=handled>0?(num(e.mortCount)/handled)*100:0;
   var meatAvailG=num(e.openMeatG)+actualMeatG;
-  var expCloseWtG=availWtG-num(e.liveSoldWtG)-hotelLiveG-num(e.mortWtG)-dressedWtG;
+  var expCloseWtGRaw=availWtG-num(e.liveSoldWtG)-hotelLiveG-num(e.mortWtG)-dressedWtG;
+  var wtDeficitG=Math.max(-expCloseWtGRaw,0);
+  var expCloseWtG=Math.max(expCloseWtGRaw,0);
   /* Closing meat (tomorrow's opening) is built from TODAY's dressing only —
      mirrors compute_entry() (calc.py). Opening meat is still shown
      (meatAvailG, openMeatValue) but is not folded into what carries
@@ -306,6 +315,7 @@ function calc(e){
   var shortValue=shortG/1000*meatCostKg;
   var bonusValue=bonusG/1000*meatCostKg;
   var meatDeficitValue=meatDeficitG/1000*meatCostKg;
+  var wtDeficitValue=wtDeficitG/1000*avgRate;
 
   var photos=e.photos||[];
   var needsPhoto=num(e.mortCount)>0 && photos.length===0;
@@ -323,8 +333,9 @@ function calc(e){
     hotelLiveG:hotelLiveG, hotelMeatG:hotelMeatG, hotelBirds:hotelBirds,
     hotelTotalG:hotelTotalG, hotelLines:hotelLines,
     cashSales:counterSaleAmt+liveAmt+cutAmt+hotelCash,
-    handled:handled, expBirds:expBirds, birdVar:birdVar, mortRate:mortRate,
-    meatAvailG:meatAvailG, expCloseWtG:expCloseWtG, expCloseMeatG:expCloseMeatG, meatVarG:meatVarG,
+    handled:handled, expBirds:expBirds, birdVar:birdVar, birdDeficit:birdDeficit, mortRate:mortRate,
+    meatAvailG:meatAvailG, expCloseWtG:expCloseWtG, wtDeficitG:wtDeficitG, wtDeficitValue:wtDeficitValue,
+    expCloseMeatG:expCloseMeatG, meatVarG:meatVarG,
     meatDeficitG:meatDeficitG, meatDeficitValue:meatDeficitValue,
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
     closeValue:closeValue, cogs:cogs, grossProfit:grossProfit,
