@@ -15,7 +15,13 @@ var LS = {
 };
 var K = { users:'vcc_users', branches:'vcc_branches', entries:'vcc_entries',
           workers:'vcc_workers', ledger:'vcc_ledger', settings:'vcc_settings', session:'vcc_session',
-          activity:'vcc_activity', logoutReason:'vcc_logout_reason', overheads:'vcc_overheads' };
+          activity:'vcc_activity', logoutReason:'vcc_logout_reason', overheads:'vcc_overheads',
+          /* Which screen/branch/entry to come back to after a reload — a plain
+             browser refresh used to always land back on the Dashboard (or the
+             blank Entry form) no matter what was open, which felt like losing
+             your place. lastEntry is '' for "no entry open" (a genuine blank
+             new-entry screen) vs unset/missing for "nothing recorded yet". */
+          lastView:'vcc_last_view', lastBranch:'vcc_last_branch', lastEntry:'vcc_last_entry' };
 var DB = {
   read:function(key,fb){ var r=LS.get(key); if(!r) return fb;
     try{ var val=JSON.parse(r); return (val===null||val===undefined)?fb:val; }catch(e){ return fb; } },
@@ -541,6 +547,13 @@ function refreshBranchSelects(){
   if(S.branches[S.branch]===undefined||codes.indexOf(S.branch)<0) S.branch=codes[0]||null;
   var opts=codes.map(function(k){ return '<option value="'+esc(k)+'">'+esc(S.branches[k])+'</option>'; }).join('');
   $('branchSelect').innerHTML=opts; if(S.branch) $('branchSelect').value=S.branch;
+  /* Remembered so a reload lands back on the same branch — see startApp().
+     Rebuilding this <select>'s options and re-setting .value here is also
+     what keeps it from ever silently drifting out of sync with S.branch (and
+     therefore with f_branchLabel below, and with whatever entry is loaded on
+     screen) the way it could when a caller updated S.branch and the select's
+     DOM value through two different, not-always-both-taken code paths. */
+  if(S.branch) LS.set(K.lastBranch,S.branch);
   var rb=$('recBranch'), keep=rb.value;
   rb.innerHTML='<option value="">All my branches</option>'+opts;
   rb.value=codes.indexOf(keep)>=0?keep:'';
@@ -793,6 +806,46 @@ function blankForm(){
     });
 }
 
+/* ---------------- unsaved-changes autosave ----------------
+   A refresh (accidental reload, browser crash, phone locking mid-typing)
+   used to wipe out anything not already saved to the server — everything
+   in the form since the last click of Save/Submit, gone. This mirrors
+   readForm()'s snapshot into localStorage as the admin/supervisor types,
+   keyed to whichever entry (or, for a brand new one, branch+category+date)
+   is currently open, and offers it back the next time that same slot is
+   loaded — including right after a reload, since loadEntry() calls
+   tryRestoreDraft() itself. Photos are deliberately left out of the
+   snapshot: they're already attached (not "unsaved typing" in the same
+   sense) and re-saving a handful of base64 images on every keystroke risks
+   the same "Storage full" wall LS.set() already has to guard against. */
+function draftKey(){
+  return 'vcc_draft_'+(S.editing?S.editing.id:('new_'+S.branch+'_'+S.cat+'_'+dOf(tv('f_datetime')||nowLocal())));
+}
+var draftTimer=null;
+function saveDraftSoon(){
+  if(!S.user||!$('view-entry')||$('view-entry').classList.contains('hidden')) return;
+  clearTimeout(draftTimer);
+  draftTimer=setTimeout(function(){
+    var snap=readForm();
+    delete snap.photos; delete snap.photosLoaded;
+    DB.write(draftKey(),{ savedAt:Date.now(), data:snap });
+  },800);
+}
+function clearDraft(key){ LS.del(key||draftKey()); }
+var DRAFT_MAX_AGE_MS=7*24*60*60*1000;   // a week — older than that, assume abandoned
+function tryRestoreDraft(){
+  var raw=DB.read(draftKey(),null);
+  if(!raw||!raw.data) return;
+  if(Date.now()-(raw.savedAt||0)>DRAFT_MAX_AGE_MS){ clearDraft(); return; }
+  var restored=Object.assign({},raw.data);
+  // keep whatever photos actually loaded from the server — the draft never
+  // carried them in the first place (see the note above)
+  restored.photos=S.photos.slice(); restored.photosLoaded=S.photosLoaded;
+  fillForm(restored);
+  recalc();
+  toast('Restored what you were typing before the page reloaded.','warn');
+}
+
 /* ---------------- mandatory field validation ---------------- */
 /* True when this branch + category has no approved history yet, i.e. the very
    first day of data entry. Opening figures cannot be known on that day.        */
@@ -868,12 +921,23 @@ function loadEntry(id){
   // on regardless. Closing meat has no such toggle — it's always a direct
   // physical count, entered in Section G.
   S.auto={ closeBirds:true, closeWt:true };
+  /* Remembered so a reload reopens the same record instead of always
+     landing on a blank new entry — see startApp(). '' (not omitted) means
+     "definitely a blank new entry", so restoring it doesn't fall through to
+     some earlier id that no longer applies. */
+  LS.set(K.lastEntry,id||'');
   if(S.editing){
     S.cat=S.editing.category; S.branch=S.editing.branch;
-    $('branchSelect').value=S.branch; syncSegs(); fillForm(S.editing); $('carryNote').textContent='';
+    // refreshBranchSelects() (not a bare .value assignment) so the header
+    // dropdown, f_branchLabel and S.branch can never drift apart the way
+    // they could here before — the exact mismatch reported live 2026-08-25
+    // (header showing one branch, the entry's own Branch field showing the
+    // one it actually belongs to).
+    refreshBranchSelects(); syncSegs(); fillForm(S.editing); $('carryNote').textContent='';
   } else { blankForm(); }
   var e=S.editing, locked=e?!canEdit(e):false;
   lockForm(locked);
+  if(!locked) tryRestoreDraft();
 
   var st=e?e.status:'new';
   var labels={ draft:'Draft — not submitted', pending:'Pending admin approval',
@@ -1069,6 +1133,12 @@ function recalc(){
      variance figure below reflects what is actually on screen */
   applyAutoFill(c);
   e=readForm(); c=calc(e);
+  // recalc() runs after every field edit and after every add/remove of a
+  // purchase, hotel-sale or photo row — the one place that already sees
+  // every way the form can change — so it's also the one place autosave
+  // needs to hook in, rather than duplicating a save call at each of those
+  // call sites individually.
+  saveDraftSoon();
   $('o_buyBirds').textContent=c.buyBirds.toLocaleString('en-IN');
   $('o_buyWt').textContent=fmtW(c.buyWtG);
   $('o_buyAmt').textContent=money(c.buyAmt);
@@ -2611,6 +2681,11 @@ function showView(name){
   if(name==='purchases') renderPurchaseLedger();
   if(name==='admin') renderAdmin();
   window.scrollTo({top:0,behavior:'smooth'});
+  // Remembered so a reload comes back to the same screen instead of always
+  // resetting to the Dashboard — see startApp(). Stored after the
+  // role-based redirects above, so it's always the screen actually shown,
+  // never one a supervisor got bounced away from.
+  LS.set(K.lastView,name);
 }
 function syncSegs(){
   qsa('#entryCatSeg button').forEach(function(b){ b.classList.toggle('active',b.getAttribute('data-cat')===S.cat); });
@@ -3221,6 +3296,7 @@ function saveEntry(status) {
   var e = readForm();
   e.businessDate = dOf(e.datetime);
   e.submit = (status === 'pending');
+  var savedDraftKey = draftKey();   // captured now — S.editing (and so draftKey()) changes once loadEntry(rec.id) runs below
 
   var p = S.editing
     ? api('PUT', '/entries/' + S.editing.id, e)
@@ -3229,6 +3305,7 @@ function saveEntry(status) {
   var hadHotel = (e.hotelSales || []).length > 0;
   p.then(function (rec) {
     upsertEntry(rec);
+    clearDraft(savedDraftKey);   // it's on the server now — nothing left to recover
     toast(status === 'draft' ? 'Draft saved.' : status === 'pending' ? 'Sent to admin for approval.' : 'Changes saved.');
     /* hotel lines move customer balances, so pull the fresh totals back */
     return (hadHotel || (rec.hotelSales || []).length ? bootstrap() : Promise.resolve())
@@ -4337,6 +4414,12 @@ function startApp(user, fresh) {
   S.user = user;
   $('loginScreen').classList.add('hidden');
   $('appShell').classList.remove('hidden');
+  // Come back to the same branch this browser was last looking at — before
+  // refreshBranchSelects() below, so it validates/applies it the same way
+  // it would any other branch switch (falls back to the first one this
+  // user can see if the saved branch no longer applies to them).
+  var savedBranch = LS.get(K.lastBranch);
+  if (savedBranch) S.branch = savedBranch;
   applyRbac(); refreshBranchSelects();
   $('dashFrom').value = monthStart(); $('dashTo').value = todayISO();
   // A supervisor only ever has today's entry to look at, so there is no
@@ -4357,8 +4440,22 @@ function startApp(user, fresh) {
   renderDayCloseHistory();
   if (isAdmin()) $('recStatus').value = 'pending';
   bumpActivity(); tickSession();
-  syncSegs(); loadEntry(null); updatePendingBadge();
-  showView(isAdmin() ? 'dashboard' : 'entry');
+  syncSegs(); updatePendingBadge();
+  // '' means "was deliberately a blank new entry" and restores as such;
+  // null/undefined (never saved before) also falls through to blank. Either
+  // way this replaces the old hardcoded loadEntry(null) — a refresh no
+  // longer drops whatever record was open back to a blank form.
+  var savedEntry = LS.get(K.lastEntry);
+  loadEntry(savedEntry ? savedEntry : null);
+  // Same idea for which screen was open — a plain page refresh used to
+  // always land back on the Dashboard (or the Entry screen for a
+  // supervisor) no matter what tab was actually open. Only trust a saved
+  // name that's still a real, currently-rendered view; showView() itself
+  // still applies the role redirects (dashboard/dayclose/purchases away
+  // from a supervisor) on top of whatever this resolves to.
+  var savedView = LS.get(K.lastView);
+  var knownViews = qsa('#mainNav .tab-btn').map(function (b) { return b.getAttribute('data-view'); });
+  showView(savedView && knownViews.indexOf(savedView) >= 0 ? savedView : (isAdmin() ? 'dashboard' : 'entry'));
 }
 
 function autoLogout() {
