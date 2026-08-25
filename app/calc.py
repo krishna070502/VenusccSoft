@@ -101,11 +101,22 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     buy_birds = 0
     buy_wt_g = 0
     buy_amt = D0
+    # Birds handed back to a supplier physically leave the shed on the day
+    # the return is recorded — whether that purchase was bought today or
+    # weeks ago — so they have to come off today's available stock the same
+    # way a live sale or mortality does, not just sit in the supplier ledger.
+    # Priced at the ORIGINAL purchase's rate (enforced in _replace_purchases),
+    # so netting it out of avail_value alongside avail_wt_g leaves the
+    # average cost of what's left unchanged — exactly the stock at its own
+    # cost basis is what's being removed, not "an average return".
+    return_birds = 0
+    return_wt_g = 0
+    return_amt = D0
     for p in entry.get("purchases", []) or []:
-        # Birds returned to a supplier are a supplier-ledger event only — they
-        # do not add to this day's available stock, so they're skipped here.
-        # See the Purchase model docstring and the /api/purchase-ledger route.
         if p.get("kind") == "return":
+            return_birds += int(p.get("birds") or 0)
+            return_wt_g += int(p.get("wtG") or 0)
+            return_amt += _d(p.get("wtG") or 0) / Decimal(1000) * _d(p.get("rate") or 0)
             continue
         buy_birds += int(p.get("birds") or 0)
         buy_wt_g += int(p.get("wtG") or 0)
@@ -115,8 +126,12 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     open_rate = _d(entry.get("openRate"))
     open_value = _d(open_wt_g) / Decimal(1000) * open_rate
 
-    avail_wt_g = open_wt_g + buy_wt_g
-    avail_value = open_value + buy_amt
+    # buyBirds/buyWtG/buyAmt below stay GROSS (what was bought, full stop —
+    # matches the Dashboard's "birds purchased" figure and the purchase
+    # ledger's own "bought" column); the return only ever nets out of the
+    # day's STOCK balance, via avail_wt_g/avail_value below.
+    avail_wt_g = open_wt_g + buy_wt_g - return_wt_g
+    avail_value = open_value + buy_amt - return_amt
     avg_rate = (avail_value / (_d(avail_wt_g) / Decimal(1000))) if avail_wt_g > 0 else open_rate
     meat_cost_kg = (avg_rate / yield_frac) if yield_frac > 0 else D0
 
@@ -190,7 +205,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     yield_high = dressed_wt_g > 0 and yield_pct > (exp_yield + tol)
 
     # ---- bird & meat balance --------------------------------------------
-    handled = int(entry.get("openBirds") or 0) + buy_birds
+    handled = int(entry.get("openBirds") or 0) + buy_birds - return_birds
     # a live bird sold to a hotel or a function leaves the shed exactly like a
     # counter live sale, so it comes off the bird count and the bird weight
     #
@@ -259,6 +274,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     return {
         "wastePct": float(waste_pct), "expYield": float(exp_yield),
         "buyBirds": buy_birds, "buyWtG": buy_wt_g, "buyAmt": money(buy_amt),
+        "returnBirds": return_birds, "returnWtG": return_wt_g, "returnAmt": money(return_amt),
         "openValue": money(open_value), "availWtG": avail_wt_g,
         "availValue": money(avail_value), "avgRate": money(avg_rate),
         "meatCostKg": money(meat_cost_kg),

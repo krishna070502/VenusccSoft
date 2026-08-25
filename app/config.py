@@ -55,8 +55,16 @@ class Config:
     # Admin has no entry here on purpose — idle_limit_minutes() in security.py
     # hardcodes admin to unlimited (no auto-logout at all), so this dict only
     # ever needs to cover roles that actually get timed out.
+    #
+    # Was 10 — far too tight for a supervisor actually doing the job this app
+    # is for: weighing birds, counting stock, walking between the shed and
+    # the counter, all with the phone in a pocket between taps. A phone
+    # backgrounds or locks in well under 10 minutes on its own, so 10 minutes
+    # of no taps was getting read as "walked away", logging people out mid
+    # data-entry multiple times a shift. 30 still logs out a device left
+    # unattended, just not one that's mid-form between physical steps.
     IDLE_MINUTES = {
-        "supervisor": int(os.environ.get("IDLE_SUPERVISOR_MIN", 10)),
+        "supervisor": int(os.environ.get("IDLE_SUPERVISOR_MIN", 30)),
     }
 
     MAX_CONTENT_LENGTH = 24 * 1024 * 1024      # mortality photo uploads

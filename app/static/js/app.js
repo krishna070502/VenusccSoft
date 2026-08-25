@@ -52,8 +52,11 @@ var LEDGER_TYPES = {
 
 /* Admin has no idle limit at all — Infinity here is just the safe fallback
    before bootstrap()'s real (server-configured) value arrives; tickSession()
-   also short-circuits for admin so the countdown pill/warning never show. */
-var IDLE_MS = { admin: Infinity, supervisor: 10*60*1000 };
+   also short-circuits for admin so the countdown pill/warning never show.
+   The supervisor fallback mirrors config.py's default (30 min) — it's only
+   ever used in the sliver of time before bootstrap() overwrites it with the
+   server's real value, but should still agree with the server if it is. */
+var IDLE_MS = { admin: Infinity, supervisor: 30*60*1000 };
 var IDLE_WARN = 30*1000;
 
 /* Hotels & hostels buy under the counter rate. PRODUCTS keeps the three
@@ -209,17 +212,27 @@ function calc(e){
   var tol=num(S.settings.tolerance);
 
   /* ---- purchases & weighted average cost ---- */
-  /* Birds returned to a supplier (kind==='return') are a supplier-ledger
-     event only — mirrors the same skip in compute_entry() (calc.py) — they
-     never add to this day's available stock. */
+  /* Birds returned to a supplier (kind==='return') physically leave the shed
+     on the day the return is recorded — whether bought today or weeks ago —
+     so they come off today's available stock the same way a live sale or
+     mortality does; mirrors compute_entry() (calc.py). buyBirds/buyWtG/buyAmt
+     stay GROSS (what was bought, matching the Dashboard's "purchased" figure
+     and the purchase ledger's own "bought" column) — only availWtG/availValue
+     net the return out, priced at the original purchase's own rate so the
+     average cost of what's left is unchanged. */
   var rows=e.purchases||[];
   var buyBirds=0, buyWtG=0, buyAmt=0;
-  rows.forEach(function(r){ if(r.kind==='return') return;
+  var returnBirds=0, returnWtG=0, returnAmt=0;
+  rows.forEach(function(r){
+    if(r.kind==='return'){
+      returnBirds+=num(r.birds); returnWtG+=num(r.wtG); returnAmt+=num(r.wtG)/1000*num(r.rate);
+      return;
+    }
     buyBirds+=num(r.birds); buyWtG+=num(r.wtG); buyAmt+=num(r.wtG)/1000*num(r.rate); });
 
   var openWtG=num(e.openWtG), openRate=num(e.openRate);
   var openValue=openWtG/1000*openRate;
-  var availWtG=openWtG+buyWtG, availValue=openValue+buyAmt;
+  var availWtG=openWtG+buyWtG-returnWtG, availValue=openValue+buyAmt-returnAmt;
   var avgRate=availWtG>0 ? availValue/(availWtG/1000) : openRate;
   var meatCostKg=yieldFrac>0 ? avgRate/yieldFrac : 0;
 
@@ -280,7 +293,7 @@ function calc(e){
   var yieldHigh=dressedWtG>0&&yieldPct>expYield+tol;
 
   /* ---- birds & meat balance ---- */
-  var handled=num(e.openBirds)+buyBirds;
+  var handled=num(e.openBirds)+buyBirds-returnBirds;
   /* Unlike opening meat, opening birds legitimately belongs in this sum —
      a bird in the shed from yesterday and one bought this morning are the
      same stock. Still floor the result: more recorded sold/dressed/dead
@@ -330,7 +343,9 @@ function calc(e){
   var hasData=handled>0||dressedWtG>0||revenue>0;
 
   return { wastePct:wastePct, expYield:expYield, yieldFrac:yieldFrac,
-    buyBirds:buyBirds, buyWtG:buyWtG, buyAmt:buyAmt, openValue:openValue, availWtG:availWtG,
+    buyBirds:buyBirds, buyWtG:buyWtG, buyAmt:buyAmt,
+    returnBirds:returnBirds, returnWtG:returnWtG, returnAmt:returnAmt,
+    openValue:openValue, availWtG:availWtG,
     availValue:availValue, avgRate:avgRate, meatCostKg:meatCostKg,
     expectedMeatG:expectedMeatG, wasteMeatG:wasteMeatG, actualMeatG:actualMeatG,
     varianceG:varianceG, bonusG:bonusG, shortG:shortG,
@@ -4359,6 +4374,23 @@ function init() {
   setInterval(function () {
     if (S.user && Date.now() - S.lastAct < 60000) api('POST', '/heartbeat', {}).catch(function () { });
   }, 45000);
+  /* A phone locks or the browser backgrounds the tab well within the idle
+     window on its own — a mobile OS routinely throttles or pauses
+     setInterval entirely while hidden, so both the 1s tickSession clock and
+     the 45s heartbeat can simply stop running for however long the tab was
+     out of view. Catch up the moment it's visible again: re-run tickSession
+     immediately (rather than waiting up to a second for its own timer), and
+     if that puts them still inside the idle window, treat coming back to
+     the app as activity and re-heartbeat right away — closing the gap a
+     throttled timer would otherwise have left. */
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || !S.user) return;
+    tickSession();
+    if (Date.now() - S.lastAct < idleMs()) {
+      bumpActivity();
+      api('POST', '/heartbeat', {}).catch(function () { });
+    }
+  });
 
   api('GET', '/me').then(function (d) {
     if (!d.user) {

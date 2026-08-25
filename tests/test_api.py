@@ -2733,6 +2733,25 @@ def test_v16_purchase_returns():
          buy_id, buy_id, lambda: ret_line["returnOf"])
     case("Purchase ledger", "A return does not count toward that day's own purchases total",
          "0 birds bought on the return entry itself", 0, lambda: returned["calc"]["buyBirds"])
+    # Regression: reported live 2026-08-23 — returning 20 birds against an
+    # earlier purchase left closing birds/weight completely unchanged, as if
+    # the return had no effect at all, because compute_entry() excluded
+    # returns from the day's stock balance entirely rather than netting them
+    # out of it. openBirds=80, live sold=20, dressed=40, no mortality ->
+    # without the return, expBirds would be 80-20-40=20; with 20 returned,
+    # it must drop to zero. Likewise openWtG=200,000 - liveSoldWtG=41,000 -
+    # dressedWtG=82,000 = 77,000 without the return; the 51,000g return
+    # brings that down to 26,000.
+    case("Purchase ledger", "Returned birds come off today's closing bird count",
+         "80 open - 20 live - 40 dressed - 20 returned = 0", 0,
+         lambda: returned["calc"]["expBirds"])
+    case("Purchase ledger", "Returned weight comes off today's closing weight too",
+         "200,000 open - 41,000 live - 82,000 dressed - 51,000 returned = 26,000", 26_000,
+         lambda: returned["calc"]["expCloseWtG"])
+    case("Purchase ledger", "The return amount is reported on its own, priced at the original rate",
+         "20 birds, 51kg, Rs 9,180", (20, 51_000, 9180.0),
+         lambda: (returned["calc"]["returnBirds"], returned["calc"]["returnWtG"],
+                  returned["calc"]["returnAmt"]))
 
     open_after = ADMIN.get("/api/purchases/open?branch=B01&supplier=Shiva%20Traders").get_json()
     case("Purchase ledger", "The returnable balance drops by what was returned",
@@ -2782,6 +2801,13 @@ def test_v16_purchase_returns():
     case("Purchase ledger", "The same-entry return is still priced off the original rate",
          "120", 120.0,
          lambda: next(p for p in same_updated["purchases"] if p["kind"] == "return")["rate"])
+    case("Purchase ledger", "...and it comes off this same entry's closing bird count too",
+         "80 open + 300 bought - 20 live - 40 dressed - 20 returned = 300", 300,
+         lambda: same_updated["calc"]["expBirds"])
+    case("Purchase ledger", "...and off the closing weight",
+         "200,000 open + 600,000 bought - 41,000 live - 82,000 dressed - 40,000 returned "
+         "= 637,000", 637_000,
+         lambda: same_updated["calc"]["expCloseWtG"])
 
 
 # ===========================================================================
