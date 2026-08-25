@@ -531,6 +531,8 @@ def _replace_purchases(entry: DailyEntry, rows: list) -> None:
             else:
                 rate = Decimal(str(existing_rates[i])) if i < len(existing_rates) else Decimal("0")
             supplier = (r.get("supplier") or "")[:160]
+        bill = r.get("billPhoto")
+        has_bill = isinstance(bill, str) and bill.startswith("data:image")
         entry.purchases.append(Purchase(
             supplier=supplier,
             batch_no=(r.get("batch") or "")[:64],
@@ -539,6 +541,8 @@ def _replace_purchases(entry: DailyEntry, rows: list) -> None:
             rate=rate,
             kind=kind,
             return_of_id=return_of_id,
+            bill_photo=bill if has_bill else None,
+            has_bill=has_bill,
         ))
 
 
@@ -1939,6 +1943,22 @@ def list_open_purchases():
     return jsonify({"rows": out})
 
 
+@bp.get("/purchases/<int:purchase_id>/bill")
+@admin_required
+def purchase_bill(purchase_id):
+    """
+    One purchase line's bill photo, fetched only when the admin actually
+    opens it from the Purchase Ledger. Same reasoning as entry_photos()
+    above: a base64 JPEG has no business travelling with a ledger listing
+    that might span hundreds of transactions.
+    """
+    p = (Purchase.query.filter_by(id=purchase_id)
+         .options(undefer(Purchase.bill_photo)).first())
+    if not p or not p.has_bill:
+        return jsonify({"error": "not_found", "message": "No bill photo on file for this purchase."}), 404
+    return jsonify({"billPhoto": p.bill_photo})
+
+
 @bp.get("/purchase-ledger")
 @admin_required
 def purchase_ledger():
@@ -1984,7 +2004,7 @@ def purchase_ledger():
             agg["boughtAmt"] += amt
         txns.append({"id": p.id, "date": p.entry.business_date.isoformat(), "supplier": name,
                      "kind": p.kind, "birds": p.birds, "wtG": p.weight_g, "rate": float(p.rate),
-                     "amount": round(amt, 2), "returnOf": p.return_of_id})
+                     "amount": round(amt, 2), "returnOf": p.return_of_id, "hasBill": p.has_bill})
 
     suppliers = []
     for agg in by_supplier.values():

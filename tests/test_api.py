@@ -111,7 +111,8 @@ def base_entry(**over):
              dressedCount=40, dressedWtG=82_000, actualMeatG=56_000,
              skinSoldG=30_000, skinlessSoldG=20_000, liverSoldG=1_000,
              closeBirds=120, closeWtG=282_000, closeMeatG=9_000,
-             purchases=[{"supplier": "Sunrise", "birds": 100, "wtG": 205_000, "rate": 130}])
+             purchases=[{"supplier": "Sunrise", "birds": 100, "wtG": 205_000, "rate": 130,
+                        "billPhoto": "data:image/jpeg;base64," + "A" * 40, "hasBill": True}])
     e.update(over)
     return e
 
@@ -3150,6 +3151,82 @@ def test_v21_recompute_closing_stock_cascade():
 
 
 # ===========================================================================
+# 20e. Purchase bill photo — mandatory per buy line, stored, shown in ledger
+# ===========================================================================
+def test_v22_purchase_bill_photo():
+    print("\n[33] Purchase bill photo")
+    bill = "data:image/jpeg;base64," + "B" * 200
+
+    case("Purchase bill", "A buy line with birds but no bill is refused on submit",
+         "422 — bill photo missing", 422,
+         lambda: ADMIN.post("/api/entries", json=base_entry(
+             branch="B01", category="broiler", businessDate=D(90), submit=True,
+             purchases=[{"supplier": "Sunrise", "birds": 100, "wtG": 205_000,
+                        "rate": 130}])).status_code)
+    missing_msg = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(90), submit=True,
+        purchases=[{"supplier": "Sunrise", "birds": 100, "wtG": 205_000,
+                   "rate": 130}])).get_json()
+    case("Purchase bill", "...and names exactly what's missing",
+         "Purchase line 1 — bill photo", True,
+         lambda: any("bill photo" in m for m in missing_msg["missing"]))
+
+    case("Purchase bill", "A buy line with birds=0 does not require a bill",
+         "birds=0, no bill, still submits", 201,
+         lambda: ADMIN.post("/api/entries", json=base_entry(
+             branch="B01", category="broiler", businessDate=D(89), submit=True,
+             purchases=[{"supplier": "Zero Birds Co", "birds": 0, "wtG": 0,
+                        "rate": 0}])).status_code)
+
+    with_bill = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(88), submit=True,
+        purchases=[{"supplier": "Sunrise", "birds": 100, "wtG": 205_000,
+                   "rate": 130, "billPhoto": bill}]))
+    case("Purchase bill", "A buy line with a bill photo submits fine",
+         "201", 201, lambda: with_bill.status_code)
+    saved = with_bill.get_json()
+    pid = saved["purchases"][0]["id"]
+    case("Purchase bill", "The saved purchase reports hasBill",
+         True, saved["purchases"][0]["hasBill"], lambda: saved["purchases"][0]["hasBill"])
+    case("Purchase bill", "...and a single-entry fetch includes the bill image inline",
+         bill, True,
+         lambda: ADMIN.get(f"/api/entries/{saved['id']}").get_json()
+                      ["purchases"][0]["billPhoto"] == bill)
+
+    bought = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(87),
+        purchases=[{"supplier": "Return Test Co", "birds": 40, "wtG": 82_000,
+                   "rate": 150, "billPhoto": bill}])).get_json()
+    buy_id = bought["purchases"][0]["id"]
+    case("Purchase bill", "A return line never needs its own bill, however many birds",
+         201, 201,
+         lambda: ADMIN.post("/api/entries", json=base_entry(
+             branch="B01", category="parents", businessDate=D(86), submit=True,
+             purchases=[{"kind": "return", "returnOf": buy_id, "birds": 10,
+                        "wtG": 20_000}])).status_code)
+
+    ledger = ADMIN.get(f"/api/purchase-ledger?branch=B01&from={D(90)}&to={D(87)}").get_json()
+    case("Purchase bill", "Transactions in the purchase ledger report hasBill",
+         True, True,
+         lambda: any(t["id"] == pid and t["hasBill"] for t in ledger["transactions"]))
+
+    case("Purchase bill", "GET /purchases/<id>/bill returns the stored photo",
+         bill, bill, lambda: ADMIN.get(f"/api/purchases/{pid}/bill").get_json()["billPhoto"])
+    # A fresh buy line saved as a draft (no submit, so the missing-bill
+    # validation never fires) gives a genuine purchase id with no bill on file.
+    draft_no_bill = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(85),
+        purchases=[{"supplier": "No Bill Co", "birds": 5, "wtG": 10_000,
+                   "rate": 100}])).get_json()
+    no_bill_pid = draft_no_bill["purchases"][0]["id"]
+    case("Purchase bill", "...and 404s for a purchase with no bill on file",
+         404, 404, lambda: ADMIN.get(f"/api/purchases/{no_bill_pid}/bill").status_code)
+
+    case("Purchase bill", "A supervisor cannot fetch a bill photo",
+         403, 403, lambda: SUP.get(f"/api/purchases/{pid}/bill").status_code)
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3317,6 +3394,7 @@ if __name__ == "__main__":
     test_v19_live_bird_weight_shortage()
     test_v20_feed_purchase()
     test_v21_recompute_closing_stock_cascade()
+    test_v22_purchase_bill_photo()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

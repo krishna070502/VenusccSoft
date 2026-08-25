@@ -304,6 +304,13 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     # in this rule.
     needs_photo = int(entry.get("mortCount") or 0) > 1 and len(photos) == 0
 
+    # How many purchase lines still need a bill photo before this day can be
+    # submitted — a return is exempt (see validate_for_submission above).
+    bill_missing = sum(
+        1 for p in (entry.get("purchases") or [])
+        if p.get("kind", "buy") != "return" and int(p.get("birds") or 0) > 0
+        and not p.get("hasBill"))
+
     return {
         "wastePct": float(waste_pct), "expYield": float(exp_yield),
         "buyBirds": buy_birds, "buyWtG": buy_wt_g, "buyAmt": money(buy_amt),
@@ -353,7 +360,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "netProfit": money(net_profit),
         "mortValue": money(mort_value), "damageValue": money(damage_value),
         "shortValue": money(short_value), "bonusValue": money(bonus_value),
-        "needsPhoto": needs_photo,
+        "needsPhoto": needs_photo, "billMissing": bill_missing,
     }
 
 
@@ -401,6 +408,10 @@ def validate_for_submission(entry: dict, is_admin: bool, is_first_entry: bool) -
             missing.append(f"Purchase line {i} — rate per kg")
         if birds > 0 and wt <= 0:
             missing.append(f"Purchase line {i} — weight")
+        # A return has no bill of its own — it's priced off the original
+        # purchase's own bill, already on file against that earlier entry.
+        if p.get("kind", "buy") != "return" and birds > 0 and not p.get("hasBill"):
+            missing.append(f"Purchase line {i} — bill photo")
 
     for i, h in enumerate(entry.get("hotelSales") or [], start=1):
         grams = int(h.get("weightG") or 0)

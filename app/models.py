@@ -250,7 +250,7 @@ class DailyEntry(db.Model):
             "rejectReason": self.reject_reason or "",
             "photoCount": len(self.photos),
             "photosLoaded": include_photos,
-            "purchases": [p.to_dict(include_costs) for p in self.purchases],
+            "purchases": [p.to_dict(include_costs, include_photos) for p in self.purchases],
             "hotelSales": [s.to_dict() for s in self.hotel_sales],
         }
         d["photos"] = [p.data_url for p in self.photos] if include_photos else []
@@ -284,14 +284,29 @@ class Purchase(db.Model):
     kind = Column(String(10), nullable=False, default="buy")   # 'buy' | 'return'
     return_of_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
 
+    # Photo of the supplier's bill for this purchase line — mandatory for a
+    # 'buy' line with birds > 0 (see validate_for_submission in calc.py); a
+    # return has no bill of its own, it's priced off the original purchase.
+    # DEFERRED like MortalityPhoto.data_url, for the same reason: listing
+    # purchases (the entries list, the purchase ledger's by-supplier table)
+    # must not drag a ~50-150 KB base64 image off disk for every row that
+    # never displays it. has_bill is a plain, always-loaded column purely so
+    # to_dict() and the purchase ledger can report whether a bill exists
+    # without ever touching the deferred blob itself.
+    bill_photo = deferred(Column(Text))
+    has_bill = Column(Boolean, nullable=False, default=False)
+
     entry = relationship("DailyEntry", back_populates="purchases")
     return_of = relationship("Purchase", remote_side=[id])
 
-    def to_dict(self, include_costs: bool = True):
-        return {"id": self.id, "supplier": self.supplier or "", "batch": self.batch_no or "",
-                "birds": self.birds, "wtG": self.weight_g,
-                "rate": float(self.rate) if include_costs else 0,
-                "kind": self.kind or "buy", "returnOf": self.return_of_id}
+    def to_dict(self, include_costs: bool = True, include_photo: bool = True):
+        d = {"id": self.id, "supplier": self.supplier or "", "batch": self.batch_no or "",
+             "birds": self.birds, "wtG": self.weight_g,
+             "rate": float(self.rate) if include_costs else 0,
+             "kind": self.kind or "buy", "returnOf": self.return_of_id,
+             "hasBill": self.has_bill}
+        d["billPhoto"] = (self.bill_photo if include_photo else None) if self.has_bill else None
+        return d
 
 
 class MortalityPhoto(db.Model):

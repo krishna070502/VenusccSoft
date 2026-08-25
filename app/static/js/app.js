@@ -364,6 +364,11 @@ function calc(e){
   // A single dead bird is not photo-worthy; required once mortality is more
   // than 1 bird a day — same threshold for every branch. Mirrors calc.py.
   var needsPhoto=num(e.mortCount)>1 && photos.length===0;
+  // How many purchase lines still need a bill photo — a return is exempt.
+  // Mirrors calc.py's validate_for_submission / billMissing.
+  var billMissing=(e.purchases||[]).filter(function(p){
+    return (p.kind||'buy')!=='return' && num(p.birds)>0 && !p.billPhoto;
+  }).length;
   var hasData=handled>0||dressedWtG>0||revenue>0;
 
   return { wastePct:wastePct, expYield:expYield, yieldFrac:yieldFrac,
@@ -392,12 +397,13 @@ function calc(e){
     labour:lab.wages, advances:advances, otherExp:lab.other, overheads:overheads,
     manDays:lab.manDays, netProfit:netProfit,
     mortValue:mortValue, damageValue:damageValue, shortValue:shortValue, bonusValue:bonusValue,
-    needsPhoto:needsPhoto, hasData:hasData };
+    needsPhoto:needsPhoto, billMissing:billMissing, hasData:hasData };
 }
 
 function warnings(e,c){
   var w=[];
   if(c.needsPhoto) w.push({lvl:'red',t:'Mortality photo missing',m:num(e.mortCount)+' bird(s) recorded. At least one photo is required before submitting.'});
+  if(c.billMissing>0) w.push({lvl:'red',t:'Purchase bill missing',m:c.billMissing+' purchase line'+(c.billMissing>1?'s':'')+' need a bill photo before submitting.'});
   if(c.yieldLow) w.push({lvl:'red',t:'Meat shortfall',m:'Yield '+pct(c.yieldPct)+' against an expected '+pct(c.expYield,0)+'. Short by '+fmtW(c.shortG)+' ≈ '+money0(c.shortValue)+'.'});
   if(c.liveShortWtG>0) w.push({lvl:'red',t:'Live bird weight shortage',m:'Closing birds worked out to 0, but '+fmtW(c.liveShortWtG)+' ≈ '+money0(c.liveShortValue)+' of live bird weight is unaccounted for. Recheck purchases, sales, mortality and dressed counts — this weight will NOT be carried forward to tomorrow.'});
   if(c.yieldHigh) w.push({lvl:'amber',t:'Excess meat — bonus',m:'Yield '+pct(c.yieldPct)+' exceeds the expected '+pct(c.expYield,0)+'. Bonus '+fmtW(c.bonusG)+' ≈ '+money0(c.bonusValue)+'.'});
@@ -605,6 +611,28 @@ function loadOpenPurchases(branch){
   }).catch(function(){ return []; });
 }
 
+/* The bill-photo strip under a purchase (not a return) line — mandatory
+   once birds > 0 (see calc.py's validate_for_submission / billMissing).
+   Uploaded by whoever is filling the entry (supervisor included, same as
+   any other physical count on this form) — the photo is not a costing
+   figure like the rate, so there is no admin gate on it. */
+function billPhotoRow(p,i,locked){
+  var required=num(p.birds)>0 && !p.billPhoto;
+  return '<div class="sm:col-span-12 border-t border-dashed pt-2 mt-1 flex flex-wrap items-center gap-3">'+
+    '<span class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Bill photo'+
+      (num(p.birds)>0?' <span class="req">*</span>':'')+'</span>'+
+    (p.billPhoto
+      ? '<img src="'+p.billPhoto+'" data-pbillview="'+i+'" alt="Purchase bill" class="h-14 w-14 object-cover rounded-lg border-2 border-slate-200 cursor-zoom-in" />'+
+        (locked?'':'<button type="button" data-pbillrm="'+i+'" class="text-[11px] font-bold text-rose-600 hover:underline">Remove</button>')
+      : (required
+          ? '<span class="text-[11px] font-bold text-rose-600"><i class="fa-solid fa-triangle-exclamation mr-1"></i>No bill uploaded — required</span>'
+          : '<span class="text-[11px] text-slate-400 italic">No bill uploaded</span>'))+
+    (locked?'':'<label class="ml-auto cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg">'+
+      '<i class="fa-solid fa-camera"></i> '+(p.billPhoto?'Replace':'Upload bill')+
+      '<input type="file" accept="image/*" capture="environment" class="hidden" data-pbillfile="'+i+'" /></label>')+
+  '</div>';
+}
+
 function renderPurchases(){
   var locked=S.editing?!canEdit(S.editing):false;
   var box=$('purchaseRows');
@@ -637,6 +665,7 @@ function renderPurchases(){
           ? '<div class="sm:col-span-2"><label class="lbl">Rate ₹/kg</label><input type="number" min="0" step="0.01" data-p="rate" data-i="'+i+'" class="inp num" value="'+(p.rate||'')+'" '+(locked?'disabled':'')+' /></div>'
           : '<div class="sm:col-span-2"><label class="lbl">Rate</label><p class="inp !bg-slate-100 text-slate-400 text-xs italic">admin only</p></div>')))+
       '<div class="sm:col-span-1 flex justify-end">'+(locked?'':'<button type="button" data-prm="'+i+'" class="h-9 w-9 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>')+'</div>'+
+      (isReturn?'':billPhotoRow(p,i,locked))+
       (isAdmin() && !isReturn?'<div class="sm:col-span-12 text-right text-xs font-bold text-emerald-800">Line value: '+money(num(p.wtG)/1000*num(p.rate))+'</div>':'')+
       (isAdmin() && isReturn && against?'<div class="sm:col-span-12 text-right text-xs font-bold text-rose-700">Deducted from ledger: −'+money(num(p.wtG)/1000*against.rate)+'</div>':'')+
     '</div>';
@@ -911,6 +940,7 @@ function validate(showMarks){
     /* the purchase RATE is the admin's to enter at approval, never the supervisor's */
     if(isAdmin() && (num(p.birds)>0||num(p.wtG)>0) && num(p.rate)<=0) miss.push('Purchase line '+(i+1)+' — rate per kg');
     if(num(p.birds)>0 && num(p.wtG)<=0) miss.push('Purchase line '+(i+1)+' — weight');
+    if((p.kind||'buy')!=='return' && num(p.birds)>0 && !p.billPhoto) miss.push('Purchase line '+(i+1)+' — bill photo');
   });
   var formNow=readForm();
   S.hotelSales.forEach(function(l,i){
@@ -2586,11 +2616,11 @@ function downloadWipeBackup(b) {
   entries.forEach(function (e) {
     (e.purchases || []).forEach(function (p) {
       purchaseRows.push([e.businessDate, e.branch, e.category, p.supplier, p.batch,
-        p.kind, p.birds, p.wtG / 1000, p.rate]);
+        p.kind, p.birds, p.wtG / 1000, p.rate, p.hasBill ? 'Yes' : 'No']);
     });
   });
   var purchaseSheet = { name: 'Purchases',
-    headers: ['Date', 'Branch', 'Category', 'Supplier', 'Batch', 'Kind', 'Birds', 'Weight (kg)', 'Rate'],
+    headers: ['Date', 'Branch', 'Category', 'Supplier', 'Batch', 'Kind', 'Birds', 'Weight (kg)', 'Rate', 'Bill on file'],
     rows: purchaseRows };
 
   var hotelRows = [];
@@ -4250,8 +4280,9 @@ function renderPurchaseLedger(){
         '<td class="px-4 py-2.5 text-right num">'+(isRet?'−':'')+t.birds+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+(isRet?'−':'')+fmtW(t.wtG)+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+money0(t.rate)+'</td>'+
-        '<td class="px-4 py-2.5 text-right num'+(isRet?' text-rose-700':'')+'">'+(isRet?'−':'')+money0(t.amount)+'</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
+        '<td class="px-4 py-2.5 text-right num'+(isRet?' text-rose-700':'')+'">'+(isRet?'−':'')+money0(t.amount)+'</td>'+
+        '<td class="px-4 py-2.5 text-center">'+(t.hasBill?'<button type="button" class="text-emerald-700 hover:text-emerald-900" data-pltxn-bill="'+t.id+'" title="View purchase bill"><i class="fa-solid fa-file-invoice"></i></button>':'<span class="text-slate-300">&mdash;</span>')+'</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
   }).catch(apiFail);
 }
 
@@ -4776,6 +4807,14 @@ function wire() {
     recalc();
   });
   $('purchaseRows').addEventListener('change', function (ev) {
+    var fileEl = ev.target.closest('[data-pbillfile]');
+    if (fileEl) {
+      var pi = +fileEl.getAttribute('data-pbillfile'), pp = S.purchases[pi]; if (!pp) return;
+      var f = fileEl.files && fileEl.files[0];
+      if (f) compress(f, function (u) { pp.billPhoto = u; renderPurchases(); recalc(); });
+      fileEl.value = '';
+      return;
+    }
     var el = ev.target.closest('[data-p="returnOf"]'); if (!el) return;
     var i = +el.getAttribute('data-i'), p = S.purchases[i]; if (!p) return;
     var orig = (S.openPurchases[S.branch] || []).filter(function (o) { return String(o.id) === el.value; })[0];
@@ -4787,6 +4826,14 @@ function wire() {
   $('purchaseRows').addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-prm]');
     if (b) { S.purchases.splice(+b.getAttribute('data-prm'), 1); renderPurchases(); recalc(); return; }
+    var billRm = ev.target.closest('[data-pbillrm]');
+    if (billRm) {
+      var bi = +billRm.getAttribute('data-pbillrm'), bp = S.purchases[bi];
+      if (bp) { bp.billPhoto = null; renderPurchases(); recalc(); }
+      return;
+    }
+    var billView = ev.target.closest('[data-pbillview]');
+    if (billView) { $('lightboxImg').src = billView.src; $('lightbox').classList.remove('hidden'); return; }
     var ret = ev.target.closest('[data-pret]'); if (!ret) return;
     var i = +ret.getAttribute('data-pret'), p = S.purchases[i]; if (!p) return;
     if (p.kind === 'return') {
@@ -4984,6 +5031,17 @@ function wire() {
     var d = S.purchaseLedger;
     printTable('Purchase ledger — ' + (S.branches[S.branch] || S.branch),
       d ? d.from + ' to ' + d.to : '', by.headers, by.rows);
+  });
+  /* Bill icon in the Transactions table — fetched on demand (see
+     purchase_bill() server-side) rather than carried in the ledger
+     payload, same reasoning as mortality photos. */
+  $('plTxnBody').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-pltxn-bill]'); if (!btn) return;
+    var id = btn.getAttribute('data-pltxn-bill');
+    btn.disabled = true;
+    api('GET', '/purchases/' + id + '/bill').then(function (d) {
+      $('lightboxImg').src = d.billPhoto; $('lightbox').classList.remove('hidden');
+    }).catch(apiFail).then(function () { btn.disabled = false; });
   });
   ['flFrom', 'flTo'].forEach(function (id) { $(id).addEventListener('change', renderFeedLedger); });
   $('flThisMonth').addEventListener('click', function () {
