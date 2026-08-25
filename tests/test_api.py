@@ -2756,6 +2756,33 @@ def test_v16_purchase_returns():
     case("Purchase ledger", "...nor the open-purchases picker",
          403, 403, lambda: SUP.get("/api/purchases/open?branch=B01").status_code)
 
+    # Regression: buying from a supplier and returning some of that SAME
+    # purchase in the same daily entry (bought 300, 20 turned out unfit,
+    # returned same day) used to crash with a 500 AttributeError. The save
+    # replaces the whole purchases list in one go — entry.purchases.clear()
+    # orphans this entry's own existing purchase rows (nulling their .entry
+    # relationship via back_populates, in-session, before anything flushes)
+    # before the loop ever gets to resolve what the return line points at —
+    # so a return against a purchase that belongs to THIS SAME entry hit
+    # orig.entry as None. Reported live 2026-08-23 on Lb PETA branch,
+    # returning birds to Shiva Traders.
+    same_entry = ADMIN.post("/api/entries", json=base_entry(
+        branch="B02", category="parents", businessDate=D(58),
+        purchases=[{"supplier": "Shiva Traders", "birds": 300, "wtG": 600_000, "rate": 120}],
+    )).get_json()
+    same_buy_id = same_entry["purchases"][0]["id"]
+    same_updated = ADMIN.put(f"/api/entries/{same_entry['id']}", json={
+        "purchases": [
+            {"supplier": "Shiva Traders", "birds": 300, "wtG": 600_000, "rate": 120},
+            {"kind": "return", "returnOf": same_buy_id, "birds": 20, "wtG": 40_000},
+        ]}).get_json()
+    case("Purchase ledger",
+         "Returning against a purchase from the SAME entry no longer 500s",
+         "two purchase lines saved", 2, lambda: len(same_updated["purchases"]))
+    case("Purchase ledger", "The same-entry return is still priced off the original rate",
+         "120", 120.0,
+         lambda: next(p for p in same_updated["purchases"] if p["kind"] == "return")["rate"])
+
 
 # ===========================================================================
 def test_v17_customer_adjustments():

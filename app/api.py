@@ -504,7 +504,18 @@ def _replace_purchases(entry: DailyEntry, rows: list) -> None:
             if not g.user.is_admin:
                 raise FieldError(f"purchase[{i}].kind", "Only an admin can record a return.")
             orig = db.session.get(Purchase, to_int(r.get("returnOf"), f"purchase[{i}].returnOf"))
-            if not orig or orig.kind != "buy" or orig.entry.branch_id != entry.branch_id:
+            # Branch check via orig.entry_id (a plain column) rather than the
+            # orig.entry relationship — the entry.purchases.clear() just above
+            # already orphaned every purchase this entry used to have, which
+            # (via back_populates) nulls out .entry on those specific Python
+            # objects immediately, in-session, before anything is flushed. A
+            # return against a purchase from THIS SAME entry (bought and
+            # partly returned the same day — the most natural use of this
+            # feature) would otherwise hit orig.entry as None here and crash
+            # with an AttributeError instead of the validation error below.
+            orig_branch_id = (entry.branch_id if orig and orig.entry_id == entry.id
+                              else (orig.entry.branch_id if orig and orig.entry else None))
+            if not orig or orig.kind != "buy" or orig_branch_id != entry.branch_id:
                 raise FieldError(f"purchase[{i}].returnOf",
                                   "Pick which purchase this return is against.")
             return_of_id = orig.id
