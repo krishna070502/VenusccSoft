@@ -229,6 +229,22 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     wt_deficit_g = max(-exp_close_wt_g_raw, 0)
     exp_close_wt_g = max(exp_close_wt_g_raw, 0)
 
+    # Birds and weight are tracked independently — purchases, sales,
+    # mortality and dressing each carry their own count AND their own
+    # weight, entered separately — so it is possible for every bird handled
+    # today to be fully accounted for (exp_birds hits exactly 0) while the
+    # weight side still shows something left over. That leftover has no
+    # physical bird to sit on any more, so it cannot be a real closing
+    # balance: it is pulled out as a live-bird weight shortage instead of
+    # being carried forward as tomorrow's opening weight (see
+    # _recompute_closing_stock in api.py, which writes exp_close_wt_g
+    # straight onto close_weight_g — zeroing it here is what makes tomorrow
+    # start clean at 0 kg rather than inheriting a phantom weight).
+    live_short_wt_g = exp_close_wt_g if exp_birds == 0 else 0
+    if live_short_wt_g:
+        exp_close_wt_g = 0
+    live_short_value = _d(live_short_wt_g) / Decimal(1000) * avg_rate
+
     meat_avail_g = int(entry.get("openMeatG") or 0) + actual_meat_g
     # Closing meat is now a direct physical count (Section G), not a formula
     # output, so there is nothing left to derive or floor here — it simply
@@ -308,6 +324,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "mortRate": float(round(mort_rate, 2)),
         "expCloseWtG": exp_close_wt_g, "meatAvailG": meat_avail_g,
         "wtDeficitG": wt_deficit_g, "wtDeficitValue": money(wt_deficit_value),
+        "liveShortWtG": live_short_wt_g, "liveShortValue": money(live_short_value),
         "expCloseMeatG": exp_close_meat_g, "meatVarG": meat_var_g,
         "meatDeficitG": meat_deficit_g, "meatDeficitValue": money(meat_deficit_value),
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),

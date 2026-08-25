@@ -2,7 +2,7 @@
 
 **Run:** 2026-08-25  
 **Database:** throwaway SQLite file, deleted after the run  
-**Result:** 556/556 passed, 0 failed
+**Result:** 567/567 passed, 0 failed
 
 ## Summary by module
 
@@ -37,6 +37,7 @@
 | Labour | 5 | 5 | 0 |
 | Ledger edit | 4 | 4 | 0 |
 | Ledger filters | 11 | 11 | 0 |
+| Live bird shortage | 10 | 10 | 0 |
 | Live pricing | 3 | 3 | 0 |
 | Live sales | 10 | 10 | 0 |
 | Manual closing stock | 7 | 7 | 0 |
@@ -49,7 +50,7 @@
 | Paging | 7 | 7 | 0 |
 | Payroll | 10 | 10 | 0 |
 | Photos | 12 | 12 | 0 |
-| Purchase ledger | 20 | 20 | 0 |
+| Purchase ledger | 21 | 21 | 0 |
 | RBAC | 17 | 17 | 0 |
 | Receipt edit | 7 | 7 | 0 |
 | Robustness | 9 | 9 | 0 |
@@ -63,7 +64,7 @@
 | Wage override | 2 | 2 | 0 |
 | Window | 4 | 4 | 0 |
 | Workers rename | 1 | 1 | 0 |
-| **Total** | **556** | **556** | **0** |
+| **Total** | **567** | **567** | **0** |
 
 ## Test cases
 
@@ -500,128 +501,139 @@
 | TC-429 | Purchase ledger | ...and links back to the purchase it returns | 68 | 68 | 68 | PASS |
 | TC-430 | Purchase ledger | A return does not count toward that day's own purchases total | 0 birds bought on the return entry itself | 0 | 0 | PASS |
 | TC-431 | Purchase ledger | Returned birds come off today's closing bird count | 80 open - 20 live - 40 dressed - 20 returned = 0 | 0 | 0 | PASS |
-| TC-432 | Purchase ledger | Returned weight comes off today's closing weight too | 200,000 open - 41,000 live - 82,000 dressed - 51,000 returned = 26,000 | 26000 | 26000 | PASS |
-| TC-433 | Purchase ledger | The return amount is reported on its own, priced at the original rate | 20 birds, 51kg, Rs 9,180 | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
-| TC-434 | Purchase ledger | The returnable balance drops by what was returned | 40 - 20 = 20 remaining | 20 | 20 | PASS |
-| TC-435 | Purchase ledger | Bought birds/weight/amount are totaled for the supplier | 40 birds, 102kg, Rs 18,360 | (40, 102000, 18360.0) | (40, 102000, 18360.0) | PASS |
-| TC-436 | Purchase ledger | Returned birds/weight/amount are totaled too | 20 birds, 51kg, Rs 9,180 | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
-| TC-437 | Purchase ledger | Net is bought minus returned | 20 birds, 51kg, Rs 9,180 net | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
-| TC-438 | Purchase ledger | A supervisor cannot reach the purchase ledger | 403 | 403 | 403 | PASS |
-| TC-439 | Purchase ledger | ...nor the open-purchases picker | 403 | 403 | 403 | PASS |
-| TC-440 | Purchase ledger | Returning against a purchase from the SAME entry no longer 500s | two purchase lines saved | 2 | 2 | PASS |
-| TC-441 | Purchase ledger | The same-entry return is still priced off the original rate | 120 | 120.0 | 120.0 | PASS |
-| TC-442 | Purchase ledger | ...and it comes off this same entry's closing bird count too | 80 open + 300 bought - 20 live - 40 dressed - 20 returned = 300 | 300 | 300 | PASS |
-| TC-443 | Purchase ledger | ...and off the closing weight | 200,000 open + 600,000 bought - 41,000 live - 82,000 dressed - 40,000 returned = 637,000 | 637000 | 637000 | PASS |
-| TC-444 | Billing adjustment | A supervisor cannot create one | 403 | 403 | 403 | PASS |
-| TC-445 | Billing adjustment | A zero amount is refused | 422 | 422 | 422 | PASS |
-| TC-446 | Billing adjustment | A cash adjustment saves with the fields sent | (300.0, True, '2026-06-06') | (300.0, True, '2026-06-06') | (300.0, True, '2026-06-06') | PASS |
-| TC-447 | Billing adjustment | A negative, on-account adjustment saves too | (-150.0, False) | (-150.0, False) | (-150.0, False) | PASS |
-| TC-448 | Billing adjustment | A cash adjustment lands in the 'cash' bucket | 300.0 | 300.0 | 300.0 | PASS |
-| TC-449 | Billing adjustment | A credit adjustment lands in the 'credit' bucket | -150.0 | -150.0 | -150.0 | PASS |
-| TC-450 | Billing adjustment | Both are also reported as 'adjusted' | 150.0 | 150.0 | 150.0 | PASS |
-| TC-451 | Billing adjustment | Billed = credit + cash, so it moves too | 150.0 | 150.0 | 150.0 | PASS |
-| TC-452 | Billing adjustment | Both adjustments show up on the customer's ledger | 2 | 2 | 2 | PASS |
-| TC-453 | Billing adjustment | A settled (cash) adjustment does not move the balance | 0.0 | 0.0 | 0.0 | PASS |
-| TC-454 | Billing adjustment | An on-account adjustment moves the balance by its amount | -150.0 | -150.0 | -150.0 | PASS |
-| TC-455 | Billing adjustment | A cash adjustment raises that day's expected handover | 300.0 | 300.0 | 300.0 | PASS |
-| TC-456 | Billing adjustment | ...and shows inside hotelCash on that day's breakdown | 300.0 | 300.0 | 300.0 | PASS |
-| TC-457 | Billing adjustment | ...and inside that day's revenue | 300.0 | 300.0 | 300.0 | PASS |
-| TC-458 | Billing adjustment | A credit adjustment does NOT move expected cash | 0.0 | 0.0 | 0.0 | PASS |
-| TC-459 | Billing adjustment | ...but does move that day's revenue | -150.0 | -150.0 | -150.0 | PASS |
-| TC-460 | Billing adjustment | A credit-only day still surfaces in Day Close history (revenue moved even though cash did not) | True | True | as expected | PASS |
-| TC-461 | Billing adjustment | A supervisor cannot delete one | 403 | 403 | 403 | PASS |
-| TC-462 | Billing adjustment | An admin can delete one | 200 | 200 | 200 | PASS |
-| TC-463 | Billing adjustment | Deleting it removes its effect on the totals | 300.0 | 300.0 | 300.0 | PASS |
-| TC-464 | Receipt edit | A supervisor cannot edit one | 403 | 403 | 403 | PASS |
-| TC-465 | Receipt edit | A zero/negative amount is refused | 422 | 422 | 422 | PASS |
-| TC-466 | Receipt edit | The amount, mode and note all update | (650.0, 'upi', 'Corrected — was cash, actually UPI') | (650.0, 'upi', 'Corrected — was cash, actually UPI') | (650.0, 'upi', 'Corrected — was cash, actually UPI') | PASS |
-| TC-467 | Receipt edit | The customer's 'received' total reflects the corrected amount, not the original | 650.0 | 650.0 | 650.0 | PASS |
-| TC-468 | Receipt edit | ...and so does the ledger row itself | 650.0 | 650.0 | 650.0 | PASS |
-| TC-469 | Receipt edit | An admin can still delete a receipt outright | 200 | 200 | 200 | PASS |
-| TC-470 | Receipt edit | Deleting it removes it from 'received' too | 0.0 | 0.0 | 0.0 | PASS |
-| TC-471 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
-| TC-472 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
-| TC-473 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
-| TC-474 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
-| TC-475 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
-| TC-476 | Schema | and says exactly what to run | message | True | as expected | PASS |
-| TC-477 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
-| TC-478 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
-| TC-479 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
-| TC-480 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
-| TC-481 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
-| TC-482 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
-| TC-483 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
-| TC-484 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
-| TC-485 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
-| TC-486 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
-| TC-487 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
-| TC-488 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
-| TC-489 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
-| TC-490 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
-| TC-491 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
-| TC-492 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
-| TC-493 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
-| TC-494 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
-| TC-495 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
-| TC-496 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
-| TC-497 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
-| TC-498 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
-| TC-499 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
-| TC-500 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
-| TC-501 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
-| TC-502 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
-| TC-503 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
-| TC-504 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
-| TC-505 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
-| TC-506 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
-| TC-507 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
-| TC-508 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
-| TC-509 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
-| TC-510 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
-| TC-511 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
-| TC-512 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
-| TC-513 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
-| TC-514 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
-| TC-515 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
-| TC-516 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
-| TC-517 | Activity log | Captures who did it | userName present | True | as expected | PASS |
-| TC-518 | Activity log | Captures the role | role present | True | as expected | PASS |
-| TC-519 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
-| TC-520 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
-| TC-521 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
-| TC-522 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
-| TC-523 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
-| TC-524 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
-| TC-525 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
-| TC-526 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
-| TC-527 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
-| TC-528 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
-| TC-529 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
-| TC-530 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
-| TC-531 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
-| TC-532 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
-| TC-533 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
-| TC-534 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
-| TC-535 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
-| TC-536 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 31 | 31 | PASS |
-| TC-537 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
-| TC-538 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
-| TC-539 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
-| TC-540 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
-| TC-541 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 31 | 31 | PASS |
-| TC-542 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
-| TC-543 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
-| TC-544 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
-| TC-545 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
-| TC-546 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
-| TC-547 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
-| TC-548 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
-| TC-549 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
-| TC-550 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
-| TC-551 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
-| TC-552 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
-| TC-553 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
-| TC-554 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
-| TC-555 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
-| TC-556 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |
+| TC-432 | Purchase ledger | ...closing weight is not left non-zero when closing birds is 0 | 0 birds left to carry the 26,000 g — it becomes a shortage instead | 0 | 0 | PASS |
+| TC-433 | Purchase ledger | ...the 26,000 g shows up as a live bird weight shortage instead | 200,000 open - 41,000 live - 82,000 dressed - 51,000 returned = 26,000 | 26000 | 26000 | PASS |
+| TC-434 | Purchase ledger | The return amount is reported on its own, priced at the original rate | 20 birds, 51kg, Rs 9,180 | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
+| TC-435 | Purchase ledger | The returnable balance drops by what was returned | 40 - 20 = 20 remaining | 20 | 20 | PASS |
+| TC-436 | Purchase ledger | Bought birds/weight/amount are totaled for the supplier | 40 birds, 102kg, Rs 18,360 | (40, 102000, 18360.0) | (40, 102000, 18360.0) | PASS |
+| TC-437 | Purchase ledger | Returned birds/weight/amount are totaled too | 20 birds, 51kg, Rs 9,180 | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
+| TC-438 | Purchase ledger | Net is bought minus returned | 20 birds, 51kg, Rs 9,180 net | (20, 51000, 9180.0) | (20, 51000, 9180.0) | PASS |
+| TC-439 | Purchase ledger | A supervisor cannot reach the purchase ledger | 403 | 403 | 403 | PASS |
+| TC-440 | Purchase ledger | ...nor the open-purchases picker | 403 | 403 | 403 | PASS |
+| TC-441 | Purchase ledger | Returning against a purchase from the SAME entry no longer 500s | two purchase lines saved | 2 | 2 | PASS |
+| TC-442 | Purchase ledger | The same-entry return is still priced off the original rate | 120 | 120.0 | 120.0 | PASS |
+| TC-443 | Purchase ledger | ...and it comes off this same entry's closing bird count too | 80 open + 300 bought - 20 live - 40 dressed - 20 returned = 300 | 300 | 300 | PASS |
+| TC-444 | Purchase ledger | ...and off the closing weight | 200,000 open + 600,000 bought - 41,000 live - 82,000 dressed - 40,000 returned = 637,000 | 637000 | 637000 | PASS |
+| TC-445 | Billing adjustment | A supervisor cannot create one | 403 | 403 | 403 | PASS |
+| TC-446 | Billing adjustment | A zero amount is refused | 422 | 422 | 422 | PASS |
+| TC-447 | Billing adjustment | A cash adjustment saves with the fields sent | (300.0, True, '2026-06-06') | (300.0, True, '2026-06-06') | (300.0, True, '2026-06-06') | PASS |
+| TC-448 | Billing adjustment | A negative, on-account adjustment saves too | (-150.0, False) | (-150.0, False) | (-150.0, False) | PASS |
+| TC-449 | Billing adjustment | A cash adjustment lands in the 'cash' bucket | 300.0 | 300.0 | 300.0 | PASS |
+| TC-450 | Billing adjustment | A credit adjustment lands in the 'credit' bucket | -150.0 | -150.0 | -150.0 | PASS |
+| TC-451 | Billing adjustment | Both are also reported as 'adjusted' | 150.0 | 150.0 | 150.0 | PASS |
+| TC-452 | Billing adjustment | Billed = credit + cash, so it moves too | 150.0 | 150.0 | 150.0 | PASS |
+| TC-453 | Billing adjustment | Both adjustments show up on the customer's ledger | 2 | 2 | 2 | PASS |
+| TC-454 | Billing adjustment | A settled (cash) adjustment does not move the balance | 0.0 | 0.0 | 0.0 | PASS |
+| TC-455 | Billing adjustment | An on-account adjustment moves the balance by its amount | -150.0 | -150.0 | -150.0 | PASS |
+| TC-456 | Billing adjustment | A cash adjustment raises that day's expected handover | 300.0 | 300.0 | 300.0 | PASS |
+| TC-457 | Billing adjustment | ...and shows inside hotelCash on that day's breakdown | 300.0 | 300.0 | 300.0 | PASS |
+| TC-458 | Billing adjustment | ...and inside that day's revenue | 300.0 | 300.0 | 300.0 | PASS |
+| TC-459 | Billing adjustment | A credit adjustment does NOT move expected cash | 0.0 | 0.0 | 0.0 | PASS |
+| TC-460 | Billing adjustment | ...but does move that day's revenue | -150.0 | -150.0 | -150.0 | PASS |
+| TC-461 | Billing adjustment | A credit-only day still surfaces in Day Close history (revenue moved even though cash did not) | True | True | as expected | PASS |
+| TC-462 | Billing adjustment | A supervisor cannot delete one | 403 | 403 | 403 | PASS |
+| TC-463 | Billing adjustment | An admin can delete one | 200 | 200 | 200 | PASS |
+| TC-464 | Billing adjustment | Deleting it removes its effect on the totals | 300.0 | 300.0 | 300.0 | PASS |
+| TC-465 | Receipt edit | A supervisor cannot edit one | 403 | 403 | 403 | PASS |
+| TC-466 | Receipt edit | A zero/negative amount is refused | 422 | 422 | 422 | PASS |
+| TC-467 | Receipt edit | The amount, mode and note all update | (650.0, 'upi', 'Corrected — was cash, actually UPI') | (650.0, 'upi', 'Corrected — was cash, actually UPI') | (650.0, 'upi', 'Corrected — was cash, actually UPI') | PASS |
+| TC-468 | Receipt edit | The customer's 'received' total reflects the corrected amount, not the original | 650.0 | 650.0 | 650.0 | PASS |
+| TC-469 | Receipt edit | ...and so does the ledger row itself | 650.0 | 650.0 | 650.0 | PASS |
+| TC-470 | Receipt edit | An admin can still delete a receipt outright | 200 | 200 | 200 | PASS |
+| TC-471 | Receipt edit | Deleting it removes it from 'received' too | 0.0 | 0.0 | 0.0 | PASS |
+| TC-472 | Live bird shortage | Closing birds still computes to 0 | 180 handled - 20 live - 160 dressed | 0 | 0 | PASS |
+| TC-473 | Live bird shortage | The leftover weight is pulled out as a shortage | 405,000 avail - 41,000 live - 300,000 dressed = 64,000 | 64000 | 64000 | PASS |
+| TC-474 | Live bird shortage | ...and closing weight itself is zeroed, not left at 64,000 | no birds left to carry it | 0 | 0 | PASS |
+| TC-475 | Live bird shortage | ...valued at the day's weighted average rate | 64 kg @ ~125.06/kg | 8003.95 | 8003.95 | PASS |
+| TC-476 | Live bird shortage | An ordinary day (birds still open) reports no shortage | expBirds=120, nothing to flag | 0 | 0 | PASS |
+| TC-477 | Live bird shortage | Submitting the day succeeds despite 0 closing birds | id present | True | as expected | PASS |
+| TC-478 | Live bird shortage | The saved entry's own closing weight is zeroed too | not left at the raw 64,000 | 0 | 0 | PASS |
+| TC-479 | Live bird shortage | ...closing birds is 0, as expected | 0 | 0 | 0 | PASS |
+| TC-480 | Live bird shortage | The shortage is reported on the saved entry's calc | 64,000 g ≈ Rs 8,003.95 | (64000, 8003.95) | (64000, 8003.95) | PASS |
+| TC-481 | Live bird shortage | Tomorrow's opening weight carries forward at 0, not 64,000 | closeWtG from carry-forward | 0 | 0 | PASS |
+| TC-482 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
+| TC-483 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
+| TC-484 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
+| TC-485 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
+| TC-486 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
+| TC-487 | Schema | and says exactly what to run | message | True | as expected | PASS |
+| TC-488 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
+| TC-489 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
+| TC-490 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
+| TC-491 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
+| TC-492 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
+| TC-493 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
+| TC-494 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
+| TC-495 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
+| TC-496 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
+| TC-497 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
+| TC-498 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
+| TC-499 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
+| TC-500 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
+| TC-501 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
+| TC-502 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
+| TC-503 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
+| TC-504 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
+| TC-505 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
+| TC-506 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
+| TC-507 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
+| TC-508 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
+| TC-509 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
+| TC-510 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
+| TC-511 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
+| TC-512 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
+| TC-513 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
+| TC-514 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
+| TC-515 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
+| TC-516 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
+| TC-517 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
+| TC-518 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
+| TC-519 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
+| TC-520 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
+| TC-521 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
+| TC-522 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
+| TC-523 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
+| TC-524 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
+| TC-525 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
+| TC-526 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
+| TC-527 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
+| TC-528 | Activity log | Captures who did it | userName present | True | as expected | PASS |
+| TC-529 | Activity log | Captures the role | role present | True | as expected | PASS |
+| TC-530 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
+| TC-531 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
+| TC-532 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
+| TC-533 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
+| TC-534 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
+| TC-535 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
+| TC-536 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
+| TC-537 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
+| TC-538 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
+| TC-539 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
+| TC-540 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
+| TC-541 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
+| TC-542 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
+| TC-543 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
+| TC-544 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
+| TC-545 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
+| TC-546 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
+| TC-547 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 31 | 31 | PASS |
+| TC-548 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
+| TC-549 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
+| TC-550 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
+| TC-551 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
+| TC-552 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 31 | 31 | PASS |
+| TC-553 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
+| TC-554 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
+| TC-555 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
+| TC-556 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
+| TC-557 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
+| TC-558 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
+| TC-559 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
+| TC-560 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
+| TC-561 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
+| TC-562 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
+| TC-563 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
+| TC-564 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
+| TC-565 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
+| TC-566 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
+| TC-567 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |

@@ -314,6 +314,14 @@ function calc(e){
   var expCloseWtGRaw=availWtG-num(e.liveSoldWtG)-hotelLiveG-num(e.mortWtG)-dressedWtG;
   var wtDeficitG=Math.max(-expCloseWtGRaw,0);
   var expCloseWtG=Math.max(expCloseWtGRaw,0);
+  /* Birds and weight are tracked independently, so every bird handled today
+     can be fully accounted for (expBirds hits exactly 0) while the weight
+     side still shows something left over — that leftover has no bird left
+     to sit on, so it is pulled out as a live-bird weight shortage instead of
+     being carried forward as tomorrow's opening weight. Mirrors calc.py. */
+  var liveShortWtG=expBirds===0?expCloseWtG:0;
+  if(liveShortWtG) expCloseWtG=0;
+  var liveShortValue=liveShortWtG/1000*avgRate;
   /* Closing meat is a direct physical count now, not a formula output, so
      there's nothing left to derive or floor — it simply IS what was
      entered in Section G, and it's what becomes tomorrow's opening meat.
@@ -365,6 +373,7 @@ function calc(e){
     cashSales:counterSaleAmt+liveAmt+cutAmt+hotelCash,
     handled:handled, expBirds:expBirds, birdVar:birdVar, birdDeficit:birdDeficit, mortRate:mortRate,
     meatAvailG:meatAvailG, expCloseWtG:expCloseWtG, wtDeficitG:wtDeficitG, wtDeficitValue:wtDeficitValue,
+    liveShortWtG:liveShortWtG, liveShortValue:liveShortValue,
     expCloseMeatG:expCloseMeatG, meatVarG:meatVarG,
     meatDeficitG:meatDeficitG, meatDeficitValue:meatDeficitValue,
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
@@ -379,6 +388,7 @@ function warnings(e,c){
   var w=[];
   if(c.needsPhoto) w.push({lvl:'red',t:'Mortality photo missing',m:num(e.mortCount)+' bird(s) recorded. At least one photo is required before submitting.'});
   if(c.yieldLow) w.push({lvl:'red',t:'Meat shortfall',m:'Yield '+pct(c.yieldPct)+' against an expected '+pct(c.expYield,0)+'. Short by '+fmtW(c.shortG)+' ≈ '+money0(c.shortValue)+'.'});
+  if(c.liveShortWtG>0) w.push({lvl:'red',t:'Live bird weight shortage',m:'Closing birds worked out to 0, but '+fmtW(c.liveShortWtG)+' ≈ '+money0(c.liveShortValue)+' of live bird weight is unaccounted for. Recheck purchases, sales, mortality and dressed counts — this weight will NOT be carried forward to tomorrow.'});
   if(c.yieldHigh) w.push({lvl:'amber',t:'Excess meat — bonus',m:'Yield '+pct(c.yieldPct)+' exceeds the expected '+pct(c.expYield,0)+'. Bonus '+fmtW(c.bonusG)+' ≈ '+money0(c.bonusValue)+'.'});
   if(c.birdVar!==0&&c.hasData) w.push({lvl:'amber',t:'Bird count mismatch',m:'Closing count is '+Math.abs(c.birdVar)+' bird(s) '+(c.birdVar>0?'short of':'above')+' the expected balance.'});
   if(c.mortRate>2) w.push({lvl:'amber',t:'High mortality',m:pct(c.mortRate,2)+' of birds handled ≈ '+money0(c.mortValue)+' lost.'});
@@ -486,6 +496,15 @@ function applyAutoFill(c){
   [['closeBirds',hb],['closeWt',hw]].forEach(function(x){
     x[1].className='text-[11px] mt-1 '+(S.auto[x[0]]?'text-emerald-600':'text-amber-600');
   });
+  // Closing birds worked out to 0 but the weight arithmetic still left
+  // something over — that weight is not a real closing balance any more
+  // (see calc()'s liveShortWtG), so it is highlighted here rather than
+  // shown as an ordinary auto-filled figure, and it is NOT carried to
+  // tomorrow (closeWt itself is already zeroed above via expCloseWtG).
+  if(c.liveShortWtG>0){
+    hw.innerHTML='<span class="font-bold text-rose-600"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Shortage '+fmtW(c.liveShortWtG)+' ≈ '+money0(c.liveShortValue)+' — 0 birds closing, not carried to tomorrow</span>';
+    hw.className='text-[11px] mt-1';
+  }
   qsa('[data-auto]').forEach(function(b){
     /* This overwrites the whole className every recalc(), which runs on
        every keystroke — so the admin-only 'hidden' class applyRbac() set
@@ -921,6 +940,7 @@ function loadEntry(id){
   // on regardless. Closing meat has no such toggle — it's always a direct
   // physical count, entered in Section G.
   S.auto={ closeBirds:true, closeWt:true };
+  S.warnedLiveShort=false;   // reset so the shortage popup can fire again for whatever's loaded now
   /* Remembered so a reload reopens the same record instead of always
      landing on a blank new entry — see startApp(). '' (not omitted) means
      "definitely a blank new entry", so restoring it doesn't fall through to
@@ -1200,6 +1220,26 @@ function recalc(){
     }
   }
   $('liveAlerts').innerHTML=dupWarn+alertHtml(warnings(e,c));
+
+  // One-time popup for whoever is entering TODAY's data — the inline
+  // liveAlerts banner above already shows this every time the entry is
+  // opened (including on later review), but a supervisor mid-entry is
+  // easy to miss a banner from; a popup on the actual day it happens gets
+  // their attention without nagging on every keystroke or on days that
+  // are just being looked back at. S.warnedLiveShort is reset in
+  // loadEntry() whenever a different entry/new entry is loaded.
+  if(c.liveShortWtG>0 && dOf(e.datetime)===todayISO() && !S.warnedLiveShort){
+    S.warnedLiveShort=true;
+    openGen('Live bird weight shortage',
+      '<div class="space-y-3 text-sm">'+
+        '<div class="rounded-lg bg-rose-50 border-l-4 border-rose-600 px-3 py-2 text-rose-800">'+
+          '<p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i>Closing birds worked out to 0</p>'+
+          '<p class="mt-0.5 leading-snug">…but '+fmtW(c.liveShortWtG)+' ≈ '+money0(c.liveShortValue)+' of live bird weight is still unaccounted for.</p>'+
+        '</div>'+
+        '<p class="text-slate-600 leading-snug">This has been recorded as a live bird weight shortage and will <b>not</b> be carried forward — tomorrow’s opening weight starts at 0 kg. Please recheck today’s purchases, live sales, mortality and dressed counts before submitting.</p>'+
+        '<button type="button" data-close class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Understood</button>'+
+      '</div>');
+  }
 }
 
 /* ---------------- dashboard ---------------- */
@@ -1516,6 +1556,41 @@ function renderMeatShortfallReport(list){
     '<td class="px-4 py-2.5 text-right num">'+money0(t.deficitValue)+'</td></tr>' : '';
 }
 
+/* Live bird weight shortage, branch and day wise — the same pattern as the
+   bonus meat / meat shortfall reports above: walks the same `list`
+   (dashEntries()), so it respects whatever branch/category/date-range is
+   currently selected. Lists every day closing birds worked out to 0 while
+   the weight arithmetic still left something over (calc()'s liveShortWtG).
+   Purely informational — the shortage is already zeroed out of closing
+   weight and never carried forward regardless of whether this card is ever
+   opened; see the note on the card itself. */
+function renderLiveShortReport(list){
+  if(!$('lwBody')) return;
+  var rows=list.map(function(e){
+    var c=calc(e);
+    return { date:dOf(e.datetime), branch:e.branch, category:e.category,
+             closeBirds:num(e.closeBirds), shortG:c.liveShortWtG, shortValue:c.liveShortValue };
+  }).filter(function(r){ return r.shortG>0; })
+    .sort(function(a,b){ return a.date<b.date?1:-1; });
+
+  $('lwNote').textContent = rows.length ? rows.length+' day(s) with a live bird weight shortage' : 'no live bird weight shortage in this range';
+
+  $('lwBody').innerHTML = rows.length ? rows.map(function(r){
+    return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+r.date+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500">'+esc(S.branches[r.branch]||r.branch)+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500 capitalize">'+esc(r.category)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+r.closeBirds.toLocaleString('en-IN')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-rose-600">−'+fmtW(r.shortG)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-rose-600">'+money0(r.shortValue)+'</td></tr>';
+  }).join('') : '<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">No day in this range closed with 0 birds and leftover weight.</td></tr>';
+
+  var t={ shortG:0, shortValue:0 };
+  rows.forEach(function(r){ t.shortG+=r.shortG; t.shortValue+=r.shortValue; });
+  $('lwFoot').innerHTML = rows.length ? '<tr><td class="px-4 py-2.5" colspan="4">Totals</td>'+
+    '<td class="px-4 py-2.5 text-right num">−'+fmtW(t.shortG)+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+money0(t.shortValue)+'</td></tr>' : '';
+}
+
 function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
@@ -1572,6 +1647,7 @@ function renderDashboard(){
   renderHotelPanel(a);
   renderBonusMeatReport(list);
   renderMeatShortfallReport(list);
+  renderLiveShortReport(list);
 
   var net=a.bonusG-a.shortG;
   var bEl=$('kBonus'), bd=$('kBonusBadge');
@@ -4583,6 +4659,14 @@ function wire() {
   $('msPrint').addEventListener('click', function () {
     var d = tableData('#msBody');
     printTable('Meat shortfall — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
+  });
+  $('lwExport').addEventListener('click', function () {
+    var d = tableData('#lwBody');
+    toXlsx('VCC_live_bird_shortage_' + todayISO(), 'Live bird weight shortage', d.headers, d.rows);
+  });
+  $('lwPrint').addEventListener('click', function () {
+    var d = tableData('#lwBody');
+    printTable('Live bird weight shortage — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
   });
 
   /* ---- daily entry ---- */

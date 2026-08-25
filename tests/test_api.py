@@ -2745,9 +2745,18 @@ def test_v16_purchase_returns():
     case("Purchase ledger", "Returned birds come off today's closing bird count",
          "80 open - 20 live - 40 dressed - 20 returned = 0", 0,
          lambda: returned["calc"]["expBirds"])
-    case("Purchase ledger", "Returned weight comes off today's closing weight too",
-         "200,000 open - 41,000 live - 82,000 dressed - 51,000 returned = 26,000", 26_000,
+    # This entry's own closing birds also happen to hit exactly 0 here (80
+    # open - 20 returned - 20 live - 40 dressed = 0 — see the case above), so
+    # the 26,000 g the weight side still shows is exactly the "closing birds
+    # is 0 but weight is left over" case handled by liveShortWtG (see
+    # calc.py): it is pulled out as a shortage rather than left as a closing
+    # balance with no bird to carry it, and expCloseWtG is zeroed instead.
+    case("Purchase ledger", "...closing weight is not left non-zero when closing birds is 0",
+         "0 birds left to carry the 26,000 g — it becomes a shortage instead", 0,
          lambda: returned["calc"]["expCloseWtG"])
+    case("Purchase ledger", "...the 26,000 g shows up as a live bird weight shortage instead",
+         "200,000 open - 41,000 live - 82,000 dressed - 51,000 returned = 26,000", 26_000,
+         lambda: returned["calc"]["liveShortWtG"])
     case("Purchase ledger", "The return amount is reported on its own, priced at the original rate",
          "20 birds, 51kg, Rs 9,180", (20, 51_000, 9180.0),
          lambda: (returned["calc"]["returnBirds"], returned["calc"]["returnWtG"],
@@ -2942,6 +2951,57 @@ def test_v18_receipt_edit():
 
 
 # ===========================================================================
+def test_v19_live_bird_weight_shortage():
+    print("\n[30] Live bird weight shortage — closing birds hit 0 with weight left over")
+
+    # Birds and weight are tracked independently through the day, so it's
+    # possible for the BIRD count to balance exactly (every one handled is
+    # sold/dressed/dead — expBirds lands on 0) while the WEIGHT arithmetic
+    # still leaves something over, because the dressed weight entered
+    # doesn't match the average the opening/purchase weights implied.
+    # base_entry(): 80 open + 100 bought = 180 handled; 20 live sold; forcing
+    # dressedCount=160 balances the bird count exactly (180-20-160=0), but
+    # dressedWtG=300,000 leaves 405,000 avail - 41,000 live - 300,000
+    # dressed = 64,000 g unaccounted for — with no bird left to carry it.
+    short = compute_entry(base_entry(dressedCount=160, dressedWtG=300_000), SETTINGS)
+    case("Live bird shortage", "Closing birds still computes to 0",
+         "180 handled - 20 live - 160 dressed", 0, lambda: short["expBirds"])
+    case("Live bird shortage", "The leftover weight is pulled out as a shortage",
+         "405,000 avail - 41,000 live - 300,000 dressed = 64,000", 64_000,
+         lambda: short["liveShortWtG"])
+    case("Live bird shortage", "...and closing weight itself is zeroed, not left at 64,000",
+         "no birds left to carry it", 0, lambda: short["expCloseWtG"])
+    case("Live bird shortage", "...valued at the day's weighted average rate",
+         "64 kg @ ~125.06/kg", 8003.95, lambda: short["liveShortValue"])
+
+    normal = compute_entry(base_entry(), SETTINGS)
+    case("Live bird shortage", "An ordinary day (birds still open) reports no shortage",
+         "expBirds=120, nothing to flag", 0, lambda: normal["liveShortWtG"])
+
+    # ---- round trip through the API: persisted as zero, not carried forward
+    br = ADMIN.post("/api/branches", json={"name": "Shortage Test Branch"}).get_json()
+    bcode = br["code"]
+
+    today_e = ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="broiler", businessDate=D(2),
+        dressedCount=160, dressedWtG=300_000, submit=True)).get_json()
+    case("Live bird shortage", "Submitting the day succeeds despite 0 closing birds",
+         "id present", True, lambda: bool(today_e.get("id")))
+    case("Live bird shortage", "The saved entry's own closing weight is zeroed too",
+         "not left at the raw 64,000", 0, lambda: today_e["closeWtG"])
+    case("Live bird shortage", "...closing birds is 0, as expected",
+         0, 0, lambda: today_e["closeBirds"])
+    case("Live bird shortage", "The shortage is reported on the saved entry's calc",
+         "64,000 g ≈ Rs 8,003.95", (64_000, 8003.95),
+         lambda: (today_e["calc"]["liveShortWtG"], today_e["calc"]["liveShortValue"]))
+
+    ADMIN.post(f"/api/entries/{today_e['id']}/decision", json={"verdict": "approved"})
+    cf = ADMIN.get(f"/api/entries/carry-forward?branch={bcode}&category=broiler").get_json()
+    case("Live bird shortage", "Tomorrow's opening weight carries forward at 0, not 64,000",
+         "closeWtG from carry-forward", 0, lambda: cf["closeWtG"])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3106,6 +3166,7 @@ if __name__ == "__main__":
     test_v16_purchase_returns()
     test_v17_customer_adjustments()
     test_v18_receipt_edit()
+    test_v19_live_bird_weight_shortage()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
