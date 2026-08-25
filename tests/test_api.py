@@ -3243,6 +3243,22 @@ def test_schema_upgrade():
              lambda: sum(len(upgrade_schema(verbose=False)[k])
                          for k in ("tablesCreated", "columnsAdded", "indexesCreated")))
 
+    # Regression: a NOT NULL Boolean column with a Python-side default=False
+    # (Purchase.has_bill) generated "ADD COLUMN ... DEFAULT 0" — fine under
+    # SQLite (booleans are just 0/1 there, so this suite never caught it),
+    # but Postgres's real BOOLEAN type rejects an integer literal default
+    # outright, so every production boot silently failed to add the column,
+    # forever. This never touches a live Postgres server — it only compiles
+    # the ALTER statement against the postgresql dialect and checks the
+    # literal, which is enough to catch the type mismatch.
+    from sqlalchemy.dialects import postgresql as _pg
+    from app.schema import _add_column_sql as _colsql
+    pg_stmt = _colsql("purchases", Purchase.__table__.columns["has_bill"], _pg.dialect())
+    case("Schema", "A boolean column's NOT NULL default is a valid literal under Postgres",
+         "TRUE/FALSE, not 0/1", True,
+         lambda: ("DEFAULT FALSE" in pg_stmt or "DEFAULT TRUE" in pg_stmt)
+                 and "DEFAULT 0" not in pg_stmt and "DEFAULT 1" not in pg_stmt)
+
     # Build a database that looks like an older release: drop the tables added
     # later and strip a column added later, then point the app at it.
     old_db = os.path.join(tf.gettempdir(), "vcc_oldschema.db")

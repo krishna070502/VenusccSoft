@@ -35,18 +35,28 @@ from .extensions import db
 TYPE_DEFAULTS = [
     ("INT", "0"), ("SERIAL", "0"), ("NUMERIC", "0"), ("DECIMAL", "0"),
     ("FLOAT", "0"), ("REAL", "0"), ("DOUBLE", "0"),
-    ("BOOL", "0"),
+    ("BOOL", "FALSE"),
     ("VARCHAR", "''"), ("CHAR", "''"), ("TEXT", "''"),
 ]
 
 
 def _default_literal(column, type_sql: str) -> str:
-    """A literal the database will accept for an existing row."""
+    """
+    A literal the database will accept for an existing row.
+
+    Booleans are checked BEFORE the general int/float branch — under
+    Postgres a real BOOLEAN column rejects `DEFAULT 0` outright ("default
+    expression is of type integer"), unlike SQLite, which just stores
+    booleans as 0/1 and never complained. TRUE/FALSE keywords are valid in
+    both, so those are what gets emitted regardless of which database is
+    live. This bit Purchase.has_bill's first production deploy — the column
+    was skipped every boot with a DatatypeMismatch until this was fixed.
+    """
     default = getattr(column, "default", None)
     if default is not None and getattr(default, "is_scalar", False):
         value = default.arg
         if isinstance(value, bool):
-            return "1" if value else "0"
+            return "TRUE" if value else "FALSE"
         if isinstance(value, (int, float)):
             return str(value)
         if isinstance(value, str):
