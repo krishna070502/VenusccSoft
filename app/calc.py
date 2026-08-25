@@ -297,7 +297,12 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     wt_deficit_value = _d(wt_deficit_g) / Decimal(1000) * avg_rate
 
     photos = entry.get("photos") or []
-    needs_photo = int(entry.get("mortCount") or 0) > 0 and len(photos) == 0
+    # A single dead bird happens too often in the ordinary course of running
+    # a shed to make everyone stop and photograph it; a photo is only
+    # required once mortality is more than 1 bird a day — applies the same
+    # way for every branch, there is no branch-specific exception anywhere
+    # in this rule.
+    needs_photo = int(entry.get("mortCount") or 0) > 1 and len(photos) == 0
 
     return {
         "wastePct": float(waste_pct), "expYield": float(exp_yield),
@@ -415,8 +420,10 @@ def validate_for_submission(entry: dict, is_admin: bool, is_first_entry: bool) -
             if priced["product"] == "live" and priced["birds"] <= 0:
                 missing.append(f"Hotel/hostel line {i} — how many live birds were sold?")
 
-    if int(entry.get("mortCount") or 0) > 0 and not (entry.get("photos") or []):
-        missing.append("Mortality photo (mortality is above zero)")
+    # Required once mortality is more than 1 bird — the same threshold for
+    # every branch, see the matching comment on needsPhoto in compute_entry().
+    if int(entry.get("mortCount") or 0) > 1 and not (entry.get("photos") or []):
+        missing.append("Mortality photo (required when mortality is more than 1 bird)")
 
     return missing
 

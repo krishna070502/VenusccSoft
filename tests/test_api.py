@@ -704,10 +704,19 @@ def test_photos():
          lambda: r.status_code)
     case("Photos", "Both photos are stored", "photos array", 2,
          lambda: len(r.get_json()["photos"]))
-    case("Photos", "Mortality without a photo is refused at the API",
-         "mortCount 1, no photos", 422,
-         lambda: ADMIN.post("/api/entries", json=base_entry(businessDate=D(3), mortCount=1,
+    # A single dead bird happens too often in the ordinary course of running
+    # a shed to make everyone stop and photograph it — the photo is only
+    # required once mortality is MORE than 1 bird, the same threshold for
+    # every branch (there is no branch-specific exception anywhere in this
+    # rule).
+    case("Photos", "Exactly 1 dead bird does NOT require a photo",
+         "mortCount 1, no photos", 201,
+         lambda: ADMIN.post("/api/entries", json=base_entry(businessDate=D(5), mortCount=1,
                                                              mortWtG=2000, submit=True)).status_code)
+    case("Photos", "Mortality above 1 bird without a photo is refused at the API",
+         "mortCount 2, no photos", 422,
+         lambda: ADMIN.post("/api/entries", json=base_entry(businessDate=D(3), mortCount=2,
+                                                             mortWtG=4000, submit=True)).status_code)
     case("Photos", "Non-image payloads are discarded",
          "photos=['javascript:alert(1)']", 0,
          lambda: len(ADMIN.post("/api/entries",

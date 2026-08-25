@@ -361,7 +361,9 @@ function calc(e){
   var wtDeficitValue=wtDeficitG/1000*avgRate;
 
   var photos=e.photos||[];
-  var needsPhoto=num(e.mortCount)>0 && photos.length===0;
+  // A single dead bird is not photo-worthy; required once mortality is more
+  // than 1 bird a day — same threshold for every branch. Mirrors calc.py.
+  var needsPhoto=num(e.mortCount)>1 && photos.length===0;
   var hasData=handled>0||dressedWtG>0||revenue>0;
 
   return { wastePct:wastePct, expYield:expYield, yieldFrac:yieldFrac,
@@ -921,7 +923,7 @@ function validate(showMarks){
     if(g>0 && l.product==='live' && num(l.birds)<=0)
       miss.push('Hotel/hostel line '+(i+1)+' — how many live birds were sold?');
   });
-  if(v('f_mortCount')>0 && !S.photos.length) miss.push('Mortality photo (mortality is above zero)');
+  if(v('f_mortCount')>1 && !S.photos.length) miss.push('Mortality photo (required when mortality is more than 1 bird)');
   if(S.editing && S.editing.status==='rejected' && !tv('f_explanation')) miss.push('Explanation for the returned entry');
   return miss;
 }
@@ -4725,6 +4727,16 @@ function wire() {
 
   /* ---- daily entry ---- */
   $('entryForm').addEventListener('input', recalc);
+  // Native date/datetime-local pickers (especially the calendar-icon tap on
+  // a phone) can commit a new value without ever firing 'input' — only
+  // 'change', once the picker closes. Without this, changing the entry's
+  // own Date & time field left everything downstream of it (that day's
+  // labour/overheads, the "already recorded" duplicate warning, the mortality
+  // photo / validation checks) still showing figures for the PREVIOUS date
+  // until some other field was also touched. recalc() is cheap and
+  // idempotent, so a redundant call here for inputs that already fired
+  // 'input' is harmless.
+  $('entryForm').addEventListener('change', recalc);
   $('entryForm').addEventListener('submit', function (ev) { ev.preventDefault(); });
   /* Auto/manual toggle for closing birds/weight/meat — admin only (the
      buttons themselves are data-admin and hidden from a supervisor, but the

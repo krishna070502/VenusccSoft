@@ -570,12 +570,12 @@
         <fieldset class="card overflow-hidden">
           <div class="sec-head bg-rose-700"><span class="sec-badge !text-rose-900">E</span>Mortality &amp; Damage</div>
           <div class="grid-f">
-            <div><label class="lbl" for="f_mortCount" title="Birds that died today — requires a photo before the entry can be submitted.">Mortality (nos)</label><input type="number" min="0" step="1" id="f_mortCount" class="inp num" placeholder="0" /></div>
+            <div><label class="lbl" for="f_mortCount" title="Birds that died today — a photo is required before the entry can be submitted once this is more than 1.">Mortality (nos)</label><input type="number" min="0" step="1" id="f_mortCount" class="inp num" placeholder="0" /></div>
             <div><label class="lbl" title="Total live weight of the birds that died today.">Mortality weight</label><div class="kgg"><input type="number" min="0" step="1" id="f_mortWt_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_mortWt_g" class="inp num" placeholder="0" /><span>g</span></div></div>
             <div><label class="lbl" title="Meat weight written off as damaged or spoiled today.">Damage meat</label><div class="kgg"><input type="number" min="0" step="1" id="f_damage_kg" class="inp num" placeholder="0" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_damage_g" class="inp num" placeholder="0" /><span>g</span></div></div>
           </div>
           <div class="px-5 pb-5">
-            <label class="lbl">Mortality photos <span class="req">(required when mortality &gt; 0)</span></label>
+            <label class="lbl">Mortality photos <span class="req">(required when mortality &gt; 1)</span></label>
             <div class="flex flex-wrap items-center gap-3">
               <label class="cursor-pointer inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm transition"><i class="fa-solid fa-camera"></i> Upload photos<input type="file" id="f_photos" accept="image/*" multiple capture="environment" class="hidden" /></label>
               <p class="text-xs text-slate-500">Stored against this branch &amp; date. Compressed automatically.</p>
