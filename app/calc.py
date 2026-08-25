@@ -259,6 +259,17 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     meat_var_g = 0
     meat_deficit_g = 0
 
+    # ---- feed purchase -----------------------------------------------------
+    # A single feed purchase for the day — bags bought at a price per bag.
+    # This is a straight cost against the day (chicken feed, not birds), so
+    # it comes off net profit the same way wages and overheads do, rather
+    # than being folded into COGS (which is priced off the bird/meat stock,
+    # not shop supplies) or subtracted from revenue directly (revenue stays
+    # "what was sold"; costs are kept on their own side of the ledger).
+    feed_bags = int(entry.get("feedBags") or 0)
+    feed_rate = _d(entry.get("feedRate"))
+    feed_amt = _d(feed_bags) * feed_rate
+
     # ---- profit & loss (daily; overheads are handled separately) --------
     open_meat_value = _d(entry.get("openMeatG") or 0) / Decimal(1000) * meat_cost_kg
     close_live_value = _d(entry.get("closeWtG") or 0) / Decimal(1000) * avg_rate
@@ -271,10 +282,11 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     advances = _d(labour.get("advances"))
     other_exp = _d(labour.get("other"))
     overheads = _d(labour.get("overheads"))
-    # Wages, shop extras and this day's share of the monthly overheads are all
-    # real costs. An advance is cash moving against wages already counted, so
-    # it is reported for visibility but never deducted again.
-    net_profit = gross_profit - wages - other_exp - overheads
+    # Wages, shop extras, this day's share of the monthly overheads and any
+    # feed bought today are all real costs. An advance is cash moving
+    # against wages already counted, so it is reported for visibility but
+    # never deducted again.
+    net_profit = gross_profit - wages - other_exp - overheads - feed_amt
 
     # ---- loss drivers ----------------------------------------------------
     mort_value = _d(entry.get("mortWtG") or 0) / Decimal(1000) * avg_rate
@@ -329,6 +341,7 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "meatDeficitG": meat_deficit_g, "meatDeficitValue": money(meat_deficit_value),
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),
         "cogs": money(cogs), "grossProfit": money(gross_profit),
+        "feedBags": feed_bags, "feedRate": money(feed_rate), "feedAmt": money(feed_amt),
         "labour": money(wages), "advances": money(advances),
         "otherExp": money(other_exp), "overheads": money(overheads),
         "manDays": float(labour.get("manDays") or 0),
@@ -358,6 +371,8 @@ REQUIRED_FIELDS = [
     ("closeBirds", "Closing birds", lambda e: e.get("closeBirds") is not None, False),
     ("closeWtG", "Closing bird weight",
      lambda e: int(e.get("closeBirds") or 0) == 0 or int(e.get("closeWtG") or 0) > 0, True),
+    ("feedRate", "Feed purchase — price per bag",
+     lambda e: int(e.get("feedBags") or 0) == 0 or float(e.get("feedRate") or 0) > 0, False),
 ]
 
 

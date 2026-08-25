@@ -153,6 +153,18 @@ class DailyEntry(db.Model):
     close_weight_g = Column(Integer, nullable=False, default=0)
     close_meat_g = Column(Integer, nullable=False, default=0)
 
+    # -- feed purchase -------------------------------------------------------
+    # A single feed purchase for the day: bags bought and the price paid per
+    # bag. This is a cost, not a sale — it comes straight off the day's
+    # profit (see compute_entry()'s feedAmt) rather than sitting inside
+    # revenue. Kept as three plain columns on the entry itself, not a
+    # separate line-item table like Purchase, since only one feed purchase
+    # is recorded per day; the Feed Ledger screen reads these straight off
+    # each day's entry.
+    feed_bags = Column(Integer, nullable=False, default=0)
+    feed_rate = Column(Numeric(12, 2), nullable=False, default=0)   # price per bag
+    feed_supplier = Column(String(160))
+
     notes = Column(Text)
     explanation = Column(Text)
 
@@ -224,6 +236,9 @@ class DailyEntry(db.Model):
             "closeBirds": self.close_birds,
             "closeWtG": self.close_weight_g,
             "closeMeatG": self.close_meat_g,
+            "feedBags": self.feed_bags,
+            "feedRate": float(self.feed_rate),
+            "feedSupplier": self.feed_supplier or "",
             "notes": self.notes or "",
             "explanation": self.explanation or "",
             "status": self.status,

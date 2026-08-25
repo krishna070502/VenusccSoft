@@ -3002,6 +3002,64 @@ def test_v19_live_bird_weight_shortage():
 
 
 # ===========================================================================
+def test_v20_feed_purchase():
+    print("\n[31] Feed purchase — bags, price per bag, deducted from net profit, branch ledger")
+
+    # ---- pure calculation ---------------------------------------------------
+    base = compute_entry(base_entry(), SETTINGS)
+    fed = compute_entry(base_entry(feedBags=10, feedRate=1200), SETTINGS)
+    case("Feed purchase", "10 bags @ Rs 1,200 is a Rs 12,000 cost",
+         "10 x 1,200", 12_000.0, lambda: fed["feedAmt"])
+    case("Feed purchase", "...and it comes straight off net profit, not revenue",
+         "base netProfit - 12,000", round(base["netProfit"] - 12_000, 2),
+         lambda: fed["netProfit"])
+    case("Feed purchase", "No feed purchase costs nothing",
+         "feedBags absent", 0.0, lambda: base["feedAmt"])
+
+    # ---- round trip through the API -----------------------------------------
+    br = ADMIN.post("/api/branches", json={"name": "Feed Ledger Test Branch"}).get_json()
+    bcode = br["code"]
+
+    blocked = ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="broiler", businessDate=D(3),
+        feedBags=8, feedRate=0, submit=True))
+    case("Feed purchase", "Bags bought without a price is refused on submit",
+         422, 422, lambda: blocked.status_code)
+    case("Feed purchase", "...and names the feed price as what's missing",
+         "Feed purchase — price per bag", True,
+         lambda: "Feed purchase — price per bag" in blocked.get_json()["missing"])
+
+    day1 = ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="broiler", businessDate=D(3),
+        feedBags=8, feedRate=1150, feedSupplier="Shiva Traders", submit=True)).get_json()
+    case("Feed purchase", "The entry saves with bags/rate/supplier intact",
+         (8, 1150.0, "Shiva Traders"),
+         (day1["feedBags"], day1["feedRate"], day1["feedSupplier"]),
+         lambda: (day1["feedBags"], day1["feedRate"], day1["feedSupplier"]))
+    case("Feed purchase", "The saved entry's calc reports the amount",
+         "8 x 1,150", 9_200.0, lambda: day1["calc"]["feedAmt"])
+
+    ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="parents", businessDate=D(2),
+        feedBags=4, feedRate=1200, feedSupplier="Ganesh Feeds", submit=True))
+
+    case("Feed purchase", "A supervisor cannot reach the feed ledger",
+         403, 403, lambda: SUP.get(f"/api/feed-ledger?branch={bcode}").status_code)
+
+    ledger = ADMIN.get(f"/api/feed-ledger?branch={bcode}&from={D(3)}&to={D(2)}").get_json()
+    case("Feed purchase", "Both suppliers show up in the ledger",
+         2, len(ledger["suppliers"]), lambda: len(ledger["suppliers"]))
+    shiva = next(s for s in ledger["suppliers"] if s["supplier"] == "Shiva Traders")
+    case("Feed purchase", "Shiva Traders totals 8 bags, Rs 9,200",
+         (8, 9_200.0), (shiva["bags"], shiva["amt"]), lambda: (shiva["bags"], shiva["amt"]))
+    ganesh = next(s for s in ledger["suppliers"] if s["supplier"] == "Ganesh Feeds")
+    case("Feed purchase", "Ganesh Feeds totals 4 bags, Rs 4,800",
+         (4, 4_800.0), (ganesh["bags"], ganesh["amt"]), lambda: (ganesh["bags"], ganesh["amt"]))
+    case("Feed purchase", "Both transactions show up in the range",
+         2, len(ledger["transactions"]), lambda: len(ledger["transactions"]))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3167,6 +3225,7 @@ if __name__ == "__main__":
     test_v17_customer_adjustments()
     test_v18_receipt_edit()
     test_v19_live_bird_weight_shortage()
+    test_v20_feed_purchase()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

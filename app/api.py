@@ -395,6 +395,7 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
         "dressedWtG": "dressed_weight_g",
         "skinSoldG": "skin_sold_g", "skinlessSoldG": "skinless_sold_g",
         "liverSoldG": "liver_sold_g", "closeMeatG": "close_meat_g",
+        "feedBags": "feed_bags",
     }
     for src, col in ints.items():
         if src in d:
@@ -405,7 +406,7 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
 
     money = {"rateSkin": "rate_skin", "rateSkinless": "rate_skinless",
              "rateLiver": "rate_liver", "rateLive": "rate_live",
-             "cutCharges": "cutting_charges"}
+             "cutCharges": "cutting_charges", "feedRate": "feed_rate"}
     for src, col in money.items():
         if src in d:
             setattr(entry, col, to_dec(d.get(src), src))
@@ -414,6 +415,8 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
         entry.notes = (d.get("notes") or "")[:2000]
     if "explanation" in d:
         entry.explanation = (d.get("explanation") or "")[:2000]
+    if "feedSupplier" in d:
+        entry.feed_supplier = (d.get("feedSupplier") or "")[:160]
 
     # Opening birds/weight/meat and the buying price are admin-only, in the
     # payload and in the database write — a supervisor's opening figures are
@@ -1990,6 +1993,56 @@ def purchase_ledger():
         agg["netBirds"] = agg["boughtBirds"] - agg["returnedBirds"]
         agg["netWtG"] = agg["boughtWtG"] - agg["returnedWtG"]
         agg["netAmt"] = round(agg["boughtAmt"] - agg["returnedAmt"], 2)
+        suppliers.append(agg)
+    suppliers.sort(key=lambda a: a["supplier"].lower())
+
+    return jsonify({"branch": branch.code, "from": from_day.isoformat(), "to": to_day.isoformat(),
+                    "suppliers": suppliers, "transactions": txns})
+
+
+@bp.get("/feed-ledger")
+@admin_required
+def feed_ledger():
+    """
+    Per-branch, per-supplier feed-purchase ledger. Admin only, mirroring
+    purchase_ledger() above — except there is exactly one feed purchase row
+    per daily entry (feed_bags/feed_rate/feed_supplier are plain columns on
+    DailyEntry, not a separate line-item table like Purchase, since only one
+    feed purchase is recorded a day), and feed is only ever bought, never
+    returned, so there's no bought/returned/net split to carry.
+    """
+    err = require_branch(request.args.get("branch"))
+    if err:
+        return err
+    branch = branch_by_code(request.args["branch"])
+
+    to_day = parse_date(request.args.get("to"), date.today(), field="to")
+    from_day = parse_date(request.args.get("from"), to_day - timedelta(days=90), field="from")
+    if from_day > to_day:
+        from_day, to_day = to_day, from_day
+
+    rows = (DailyEntry.query
+            .filter(DailyEntry.branch_id == branch.id,
+                    DailyEntry.business_date >= from_day,
+                    DailyEntry.business_date <= to_day,
+                    DailyEntry.feed_bags > 0)
+            .order_by(DailyEntry.business_date.asc()).all())
+
+    by_supplier = {}
+    txns = []
+    for e in rows:
+        name = (e.feed_supplier or "Unknown").strip() or "Unknown"
+        amt = float(e.feed_bags) * float(e.feed_rate)
+        agg = by_supplier.setdefault(name.lower(), {"supplier": name, "bags": 0, "amt": 0.0})
+        agg["bags"] += e.feed_bags
+        agg["amt"] += amt
+        txns.append({"id": e.id, "date": e.business_date.isoformat(), "category": e.category,
+                     "supplier": name, "bags": e.feed_bags, "rate": float(e.feed_rate),
+                     "amount": round(amt, 2)})
+
+    suppliers = []
+    for agg in by_supplier.values():
+        agg["amt"] = round(agg["amt"], 2)
         suppliers.append(agg)
     suppliers.sort(key=lambda a: a["supplier"].lower())
 

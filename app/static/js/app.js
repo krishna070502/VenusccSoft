@@ -331,6 +331,14 @@ function calc(e){
   var expCloseMeatG=closeMeatG;
   var meatVarG=0, meatDeficitG=0;
 
+  /* ---- feed purchase ----
+     A single feed purchase for the day, bags @ a price per bag. A straight
+     cost against the day (chicken feed, not birds), so it comes off net
+     profit the same way wages/overheads do — mirrors calc.py. */
+  var feedBags=num(e.feedBags);
+  var feedRate=num(e.feedRate);
+  var feedAmt=feedBags*feedRate;
+
   /* ---- profit & loss ---- */
   var openMeatValue=num(e.openMeatG)/1000*meatCostKg;
   var closeLiveValue=num(e.closeWtG)/1000*avgRate;
@@ -342,7 +350,7 @@ function calc(e){
   var lab=dayCostsFor(dOf(e.datetime), e.branch, e.id, e.category);
   var advances=lab.advances;   /* shown, never deducted: it settles wages already counted */
   var overheads=lab.overheads; /* this day's share of rent, power, salary */
-  var netProfit=grossProfit-lab.wages-lab.other-overheads;
+  var netProfit=grossProfit-lab.wages-lab.other-overheads-feedAmt;
 
   /* ---- loss drivers ---- */
   var mortValue=num(e.mortWtG)/1000*avgRate;
@@ -378,6 +386,7 @@ function calc(e){
     meatDeficitG:meatDeficitG, meatDeficitValue:meatDeficitValue,
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
     closeValue:closeValue, cogs:cogs, grossProfit:grossProfit,
+    feedBags:feedBags, feedRate:feedRate, feedAmt:feedAmt,
     labour:lab.wages, advances:advances, otherExp:lab.other, overheads:overheads,
     manDays:lab.manDays, netProfit:netProfit,
     mortValue:mortValue, damageValue:damageValue, shortValue:shortValue, bonusValue:bonusValue,
@@ -746,6 +755,7 @@ function readForm(){
   e.dressedCount=v('f_dressedCount'); e.dressedWtG=gv('f_dressedWt');
   e.skinSoldG=gv('f_skinSold'); e.skinlessSoldG=gv('f_skinlessSold'); e.liverSoldG=gv('f_liverSold');
   e.closeBirds=v('f_closeBirds'); e.closeWtG=gv('f_closeWt'); e.closeMeatG=gv('f_closeMeat');
+  e.feedBags=v('f_feedBags'); e.feedRate=v('f_feedRate'); e.feedSupplier=tv('f_feedSupplier');
   /* tells the server which (if any) of these two the admin set by hand this
      save, rather than have it recompute them — see _manual_close_keys().
      Closing meat isn't part of this: it's always taken directly from
@@ -769,6 +779,8 @@ function fillForm(e){
   setV('f_dressedCount',e.dressedCount); setG('f_dressedWt',e.dressedWtG); setG('f_actualMeat',e.actualMeatG);
   setG('f_skinSold',e.skinSoldG); setG('f_skinlessSold',e.skinlessSoldG); setG('f_liverSold',e.liverSoldG);
   setV('f_closeBirds',e.closeBirds); setG('f_closeWt',e.closeWtG); setG('f_closeMeat',e.closeMeatG);
+  setV('f_feedBags',e.feedBags); setV('f_feedRate',e.feedRate);
+  setV('f_feedSupplier',e.feedSupplier!==undefined?e.feedSupplier:'Shiva Traders');
   setV('f_notes',e.notes); setV('f_explanation',e.explanation);
   S.photos=(e.photos||[]).slice(); S.purchases=(e.purchases||[]).slice();
   S.photosLoaded = (e.photosLoaded!==false) || !num(e.photoCount);
@@ -881,7 +893,8 @@ var REQUIRED = [
   {id:'f_dressedWt_kg',label:'Live weight of dressed birds',test:function(){ return v('f_dressedCount')===0 || gv('f_dressedWt')>0; }},
   {id:'f_closeMeat_kg',label:'Closing meat (Section G)', test:function(){ return v('f_dressedCount')===0 || filledG('f_closeMeat'); }},
   {id:'f_closeBirds',label:'Closing birds',           test:function(){ return filled('f_closeBirds'); }},
-  {id:'f_closeWt_kg',label:'Closing bird weight',     test:function(){ return v('f_closeBirds')===0 || gv('f_closeWt')>0; }, firstDayOptional:true}
+  {id:'f_closeWt_kg',label:'Closing bird weight',     test:function(){ return v('f_closeBirds')===0 || gv('f_closeWt')>0; }, firstDayOptional:true},
+  {id:'f_feedRate',  label:'Feed purchase — price per bag', test:function(){ return v('f_feedBags')===0 || v('f_feedRate')>0; }}
 ];
 
 function validate(showMarks){
@@ -1200,6 +1213,8 @@ function recalc(){
   if($('o_advances')) $('o_advances').textContent=money(c.advances);
   if($('o_overheads')) $('o_overheads').textContent=money(c.overheads);
   $('o_otherExp').textContent=money(c.otherExp);
+  $('o_feedAmt').textContent=money(c.feedAmt);
+  if($('o_feedAmtSummary')) $('o_feedAmtSummary').textContent=money(c.feedAmt);
   $('o_netProfit').textContent=money(c.netProfit);
   $('o_netProfit').className='font-bold num text-xl '+(c.netProfit<0?'text-rose-600':'text-emerald-700');
   $('o_closeValue').textContent=money(c.closeValue);
@@ -2744,6 +2759,7 @@ function showView(name){
   if(name==='dashboard' && !isAdmin()) name='entry';   /* supervisors have no dashboard */
   if(name==='dayclose' && !isAdmin()) name='entry';    /* nor any view onto Day Close */
   if(name==='purchases' && !isAdmin()) name='entry';   /* nor the supplier purchase ledger */
+  if(name==='feedledger' && !isAdmin()) name='entry';  /* nor the feed purchase ledger */
   runChicken();
   qsa('.view').forEach(function(p){ p.classList.add('hidden'); p.classList.remove('view-enter'); });
   var el=$('view-'+name); el.classList.remove('hidden'); void el.offsetWidth; el.classList.add('view-enter');
@@ -2755,6 +2771,7 @@ function showView(name){
   if(name==='dayclose') renderDayClose();
   if(name==='overheads'){ renderOverheads(); renderOverheadLedger(); }
   if(name==='purchases') renderPurchaseLedger();
+  if(name==='feedledger') renderFeedLedger();
   if(name==='admin') renderAdmin();
   window.scrollTo({top:0,behavior:'smooth'});
   // Remembered so a reload comes back to the same screen instead of always
@@ -4236,6 +4253,43 @@ function renderPurchaseLedger(){
   }).catch(apiFail);
 }
 
+/* Feed purchase ledger — the same by-supplier + transactions shape as the
+   bird purchase ledger above, except there is exactly one feed purchase row
+   per daily entry (feedBags/feedRate/feedSupplier are plain fields on the
+   entry, not a separate line-item list), and feed is only ever bought,
+   never returned, so there's no bought/returned/net split. */
+function renderFeedLedger(){
+  if(!$('flBody') || !isAdmin() || !S.branch) return;
+  $('flBranchLabel').textContent=S.branches[S.branch]||S.branch;
+  var from=$('flFrom').value || monthStart();
+  var to=$('flTo').value || todayISO();
+  api('GET','/feed-ledger?branch='+encodeURIComponent(S.branch)+'&from='+from+'&to='+to).then(function(d){
+    S.feedLedger=d;
+    var sup=d.suppliers||[];
+    $('flBody').innerHTML=sup.length ? sup.map(function(s){
+      return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(s.supplier)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+s.bags+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+money0(s.amt)+'</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="px-4 py-10 text-center text-slate-400">No feed purchases between '+from+' and '+to+'.</td></tr>';
+
+    var tot=sup.reduce(function(a,s){ a.bags+=s.bags; a.amt+=s.amt; return a; }, {bags:0,amt:0});
+    $('flFoot').innerHTML=sup.length ? '<tr><td class="px-4 py-2.5">Totals · '+sup.length+' supplier(s)</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+tot.bags+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+money0(tot.amt)+'</td></tr>' : '';
+    $('flNote').textContent=sup.length ? sup.length+' supplier(s) · '+from+' to '+to : 'Pick a date range to see feed purchases.';
+
+    var txns=d.transactions||[];
+    $('flTxnBody').innerHTML=txns.length ? txns.slice().reverse().map(function(t){
+      return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+t.date+'</td>'+
+        '<td class="px-4 py-2.5 text-xs text-slate-500 capitalize">'+esc(t.category)+'</td>'+
+        '<td class="px-4 py-2.5">'+esc(t.supplier)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+t.bags+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+money0(t.rate)+'</td>'+
+        '<td class="px-4 py-2.5 text-right num">'+money0(t.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
+  }).catch(apiFail);
+}
+
 /* ---------------- labour ---------------- */
 function markAttendance(workerId, days) {
   var date = $('wkDate').value || todayISO();
@@ -4917,6 +4971,21 @@ function wire() {
     var by = tableData('#plBody');
     var d = S.purchaseLedger;
     printTable('Purchase ledger — ' + (S.branches[S.branch] || S.branch),
+      d ? d.from + ' to ' + d.to : '', by.headers, by.rows);
+  });
+  ['flFrom', 'flTo'].forEach(function (id) { $(id).addEventListener('change', renderFeedLedger); });
+  $('flThisMonth').addEventListener('click', function () {
+    $('flFrom').value = monthStart(); $('flTo').value = todayISO(); renderFeedLedger();
+  });
+  $('flExport').addEventListener('click', function () {
+    var by = tableData('#flBody');
+    var d = S.feedLedger;
+    toXlsx('VCC_feed_ledger_' + (d ? d.from + '_to_' + d.to : todayISO()), 'By supplier', by.headers, by.rows);
+  });
+  $('flPrint').addEventListener('click', function () {
+    var by = tableData('#flBody');
+    var d = S.feedLedger;
+    printTable('Feed ledger — ' + (S.branches[S.branch] || S.branch),
       d ? d.from + ' to ' + d.to : '', by.headers, by.rows);
   });
   ['dwFrom', 'dwTo'].forEach(function (id) { $(id).addEventListener('change', renderDayWise); });
