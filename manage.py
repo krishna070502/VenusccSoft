@@ -103,12 +103,15 @@ def seed():
     print("Demo data loaded:", counts)
 
 
-def recompute_closing_stock():
+def recompute_closing_stock(apply_changes=None):
     """
     One-time backfill: re-derive close_birds/close_weight_g/close_meat_g —
     and the opening figures on the FOLLOWING day that carry them forward —
     for every APPROVED entry, under the corrected formula (see calc.py's
-    birdDeficit/wtDeficitG/meatDeficitG comments), without touching any
+    birdDeficit/wtDeficitG/meatDeficitG comments, and its liveShortWtG
+    comment — closing birds hitting exactly 0 while the weight side still
+    shows something left over, which used to carry that phantom weight into
+    the next day's opening instead of zeroing it), without touching any
     figure an admin ever physically typed in by hand.
 
     There is no persisted flag recording whether a historical close_* value
@@ -120,8 +123,14 @@ def recompute_closing_stock():
     match is strong evidence the field was never touched by hand — and a
     mismatch is left completely alone, on the assumption it is a deliberate
     manual figure. Every historical entry was computed under the same one
-    formula (this app has only ever had the one, until today's fix), so
-    there is no ambiguity about which "old formula" to reconstruct.
+    lineage of formulas (birdDeficit/wtDeficitG clamping, then liveShortWtG
+    on top of that), so there is no ambiguity about which "old formula" to
+    reconstruct — old_pred_wt below adds liveShortWtG back onto expCloseWtG
+    before subtracting wtDeficitG, undoing BOTH clamps in one step: as long
+    as exactly one of expCloseWtG/liveShortWtG is ever nonzero for a given
+    entry (which compute_entry() guarantees), expCloseWtG + liveShortWtG
+    always equals max(raw, 0), the same quantity the original pre-fix
+    formula would have stored as closing weight.
 
     Each branch+category is its own independent day-to-day chain, walked
     oldest to newest, because a corrected entry's closing figures change
@@ -129,9 +138,11 @@ def recompute_closing_stock():
     each chain is never touched (nothing to carry forward from).
 
     Dry run by default — prints every change it would make and a summary,
-    writes nothing. Pass --apply to actually commit.
+    writes nothing. Pass --apply to actually commit (or call with
+    apply_changes=True directly, e.g. from a test).
     """
-    apply_changes = "--apply" in sys.argv
+    if apply_changes is None:
+        apply_changes = "--apply" in sys.argv
     from app.api import get_settings
     from app.calc import compute_entry
 
@@ -178,7 +189,14 @@ def recompute_closing_stock():
             # always satisfies old_raw = new - deficit. Meat's old formula
             # also folded opening meat in, so that's added back on here.
             old_pred_birds = calc_orig["expBirds"] - calc_orig["birdDeficit"]
-            old_pred_wt = calc_orig["expCloseWtG"] - calc_orig["wtDeficitG"]
+            # expCloseWtG and liveShortWtG are mutually exclusive (see the
+            # docstring above) — adding liveShortWtG back on undoes the
+            # newer "0 closing birds means 0 closing weight" clamp before
+            # wtDeficitG undoes the older "never negative" clamp, so this
+            # reconstructs the same raw figure regardless of which fix (if
+            # either) actually touched this particular entry.
+            old_pred_wt = (calc_orig["expCloseWtG"] + calc_orig["liveShortWtG"]
+                          - calc_orig["wtDeficitG"])
             old_pred_meat = (calc_orig["expCloseMeatG"] - calc_orig["meatDeficitG"]) + orig_open[2]
 
             close_birds_auto = orig_close[0] == old_pred_birds

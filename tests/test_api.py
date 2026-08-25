@@ -3069,6 +3069,87 @@ def test_v20_feed_purchase():
 
 
 # ===========================================================================
+def test_v21_recompute_closing_stock_cascade():
+    print("\n[32] recompute-closing-stock: legacy zero-bird weight cascade")
+    from manage import recompute_closing_stock
+
+    br = ADMIN.post("/api/branches", json={"name": "Recompute Cascade Test Branch"}).get_json()
+    bcode = br["code"]
+    day1_date, day2_date = D(10), D(9)
+
+    # Directly write two APPROVED rows the way the app would have saved them
+    # BEFORE the liveShortWtG fix — bypassing the API (which now corrects
+    # this on every save) to reproduce a genuinely legacy, already-approved
+    # pair of rows. Day 1's own closing birds works out to 0 (80 open - 20
+    # live - 60 dressed) while its weight side still shows 59,000 g left
+    # over (200,000 open - 41,000 live - 100,000 dressed) — exactly the bug
+    # this session's earlier fix targets, and exactly what compute_entry()
+    # would have stored before that fix existed. Day 2 then inherited that
+    # 59,000 g as ITS OWN opening weight (the actual mechanism the bug
+    # leaked through — entries_carry_forward() reads the previous day's
+    # close_weight_g directly) and went on to buy 10 more birds, ending the
+    # day with a perfectly ordinary-looking NONZERO closing bird count of
+    # 10 — so the simple "closing birds is 0" signature alone could never
+    # have caught day 2's own inflated closing weight of 79,000 g.
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+        day1 = DailyEntry(branch=branch, category="broiler",
+                          business_date=date.fromisoformat(day1_date),
+                          created_by_id=admin_user.id, status="approved",
+                          open_birds=80, open_weight_g=200_000, open_rate=120,
+                          live_sold_count=20, live_sold_weight_g=41_000,
+                          dressed_count=60, dressed_weight_g=100_000,
+                          close_birds=0, close_weight_g=59_000)
+        db.session.add(day1)
+        db.session.flush()
+        day2 = DailyEntry(branch=branch, category="broiler",
+                          business_date=date.fromisoformat(day2_date),
+                          created_by_id=admin_user.id, status="approved",
+                          open_birds=0, open_weight_g=59_000,
+                          close_birds=10, close_weight_g=79_000)
+        db.session.add(day2)
+        db.session.flush()
+        db.session.add(Purchase(entry_id=day2.id, supplier="Test Feed Co",
+                                birds=10, weight_g=20_000, rate=100, kind="buy"))
+        db.session.commit()
+
+    def _fetch():
+        with app.app_context():
+            b = Branch.query.filter_by(code=bcode).first()
+            d1 = DailyEntry.query.filter_by(branch_id=b.id, business_date=date.fromisoformat(day1_date)).first()
+            d2 = DailyEntry.query.filter_by(branch_id=b.id, business_date=date.fromisoformat(day2_date)).first()
+            return (d1.close_weight_g, d2.open_weight_g, d2.close_weight_g)
+
+    before = _fetch()
+    case("Recompute cascade", "Before recomputing: both legacy rows still carry the inflated weight",
+         (59_000, 59_000, 79_000), before, lambda: before)
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=False)
+    after_dry_run = _fetch()
+    case("Recompute cascade", "Dry run changes nothing",
+         before, after_dry_run, lambda: after_dry_run)
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=True)
+    after_apply = _fetch()
+    case("Recompute cascade", "Day 1's own closing weight is corrected to 0",
+         0, after_apply[0], lambda: after_apply[0])
+    case("Recompute cascade", "Day 2's opening weight cascades to 0, not the inherited 59,000",
+         0, after_apply[1], lambda: after_apply[1])
+    case("Recompute cascade", "Day 2's own closing weight is recomputed from the corrected "
+                              "opening (0 + 20,000 bought, nothing sold/dressed)",
+         20_000, after_apply[2], lambda: after_apply[2])
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=True)
+    after_second_run = _fetch()
+    case("Recompute cascade", "Running it again is a no-op — idempotent",
+         (0, 0, 20_000), after_second_run, lambda: after_second_run)
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3235,6 +3316,7 @@ if __name__ == "__main__":
     test_v18_receipt_edit()
     test_v19_live_bird_weight_shortage()
     test_v20_feed_purchase()
+    test_v21_recompute_closing_stock_cascade()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
