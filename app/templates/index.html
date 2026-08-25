@@ -1319,6 +1319,18 @@
         </div>
       </div>
 
+      <div class="card overflow-hidden lg:col-span-2">
+        <div class="px-5 py-3 bg-amber-600 text-white flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i><h3 class="font-bold text-sm uppercase tracking-wide">Fix carried-forward closing stock</h3></div>
+        <div class="p-5">
+          <p class="text-sm text-slate-600 mb-3">A few old entries — saved before a fix went in — can still show a leftover closing weight even though closing birds is 0, and that phantom weight carries into the next day's opening. This checks every branch and category for exactly that pattern and, only for figures nothing was manually overridden by, corrects them. Nothing is deleted; unaffected entries and any figure an admin typed in by hand are left untouched.</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <button id="btnRecomputePreview" class="inline-flex items-center gap-2 border border-amber-500 text-amber-700 bg-white text-sm font-bold px-4 py-2.5 rounded-lg hover:bg-amber-50"><i class="fa-solid fa-magnifying-glass text-xs"></i> Check for affected entries</button>
+            <button id="btnRecomputeApply" class="hidden inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold px-4 py-2.5 rounded-lg"><i class="fa-solid fa-wrench text-xs"></i> Apply the fix</button>
+          </div>
+          <div id="recomputeResult" class="text-sm"></div>
+        </div>
+      </div>
+
       <div class="card overflow-hidden border-2 border-rose-200 lg:col-span-2">
         <div class="px-5 py-3 bg-rose-700 text-white flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-amber-300"></i><h3 class="font-bold text-sm uppercase tracking-wide">Danger zone</h3></div>
         <div class="p-5">

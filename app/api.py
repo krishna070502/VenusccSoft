@@ -2988,3 +2988,32 @@ def admin_wipe():
     return jsonify({"ok": True, "deleted": counts})
 
 
+@bp.get("/admin/recompute-closing-stock")
+@admin_required
+def recompute_closing_stock_preview():
+    """
+    Dry-run preview for the one-time closing-stock backfill (see
+    manage.py's recompute_closing_stock() for the full explanation) — an
+    admin with no shell/SSH access to the production box has no way to run
+    `python manage.py recompute-closing-stock` themselves, so this and the
+    POST below wrap the exact same function for the Admin screen's "Fix
+    carried-forward closing stock" panel. Read-only: writes nothing.
+    """
+    from manage import recompute_closing_stock
+    return jsonify(recompute_closing_stock(apply_changes=False, verbose=False))
+
+
+@bp.post("/admin/recompute-closing-stock")
+@admin_required
+def recompute_closing_stock_apply():
+    """Actually writes the corrected opening/closing figures — see the
+    preview endpoint above and manage.py's recompute_closing_stock()."""
+    from manage import recompute_closing_stock
+    result = recompute_closing_stock(apply_changes=True, verbose=False)
+    if result["changedEntries"]:
+        log_activity("Recomputed closing stock (backfill)",
+                     f"{result['changedEntries']} entry(ies), {result['changedFields']} field(s)")
+        db.session.commit()
+    return jsonify(result)
+
+

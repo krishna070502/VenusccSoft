@@ -3227,6 +3227,77 @@ def test_v22_purchase_bill_photo():
 
 
 # ===========================================================================
+# 20f. Closing-stock backfill, reachable from the Admin screen (no shell
+# access to production required)
+# ===========================================================================
+def test_v23_recompute_closing_stock_api():
+    print("\n[34] Closing-stock backfill — admin API")
+
+    br = ADMIN.post("/api/branches", json={"name": "Recompute API Test Branch"}).get_json()
+    bcode = br["code"]
+    day1_date, day2_date = D(100), D(99)
+
+    # Same legacy shape as the manage.py-level cascade test: day 1's own
+    # closing birds is 0 but its weight side still shows 59,000 g left over
+    # (the pre-fix bug), and day 2 inherited that as its own opening weight.
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+        day1 = DailyEntry(branch=branch, category="broiler",
+                          business_date=date.fromisoformat(day1_date),
+                          created_by_id=admin_user.id, status="approved",
+                          open_birds=80, open_weight_g=200_000, open_rate=120,
+                          live_sold_count=20, live_sold_weight_g=41_000,
+                          dressed_count=60, dressed_weight_g=100_000,
+                          close_birds=0, close_weight_g=59_000)
+        db.session.add(day1)
+        db.session.flush()
+        day2 = DailyEntry(branch=branch, category="broiler",
+                          business_date=date.fromisoformat(day2_date),
+                          created_by_id=admin_user.id, status="approved",
+                          open_birds=0, open_weight_g=59_000,
+                          close_birds=10, close_weight_g=79_000)
+        db.session.add(day2)
+        db.session.commit()
+
+    def _fetch():
+        with app.app_context():
+            b = Branch.query.filter_by(code=bcode).first()
+            d1 = DailyEntry.query.filter_by(branch_id=b.id, business_date=date.fromisoformat(day1_date)).first()
+            d2 = DailyEntry.query.filter_by(branch_id=b.id, business_date=date.fromisoformat(day2_date)).first()
+            return (d1.close_weight_g, d2.open_weight_g, d2.close_weight_g)
+
+    case("Recompute API", "A supervisor cannot preview it",
+         403, 403, lambda: SUP.get("/api/admin/recompute-closing-stock").status_code)
+    case("Recompute API", "A supervisor cannot apply it",
+         403, 403, lambda: SUP.post("/api/admin/recompute-closing-stock").status_code)
+
+    preview = ADMIN.get("/api/admin/recompute-closing-stock").get_json()
+    case("Recompute API", "The admin preview finds the affected branch",
+         True, True,
+         lambda: any(c["branchCode"] == bcode for c in preview["changes"]))
+    case("Recompute API", "...and marks itself as a dry run",
+         False, preview["applied"], lambda: preview["applied"])
+    case("Recompute API", "...which writes nothing",
+         (59_000, 59_000, 79_000), _fetch(), lambda: _fetch())
+
+    applied = ADMIN.post("/api/admin/recompute-closing-stock").get_json()
+    case("Recompute API", "Applying it via the API reports applied=true",
+         True, applied["applied"], lambda: applied["applied"])
+    case("Recompute API", "...and actually corrects the stored figures",
+         (0, 0, 20_000), _fetch(), lambda: _fetch())
+    case("Recompute API", "...and records an activity log entry",
+         True, True,
+         lambda: len(ADMIN.get("/api/activity?action=Recomputed closing stock (backfill)")
+                          .get_json()) > 0)
+
+    again = ADMIN.get("/api/admin/recompute-closing-stock").get_json()
+    case("Recompute API", "Running the preview again finds nothing left for this branch",
+         False, any(c["branchCode"] == bcode for c in again["changes"]),
+         lambda: any(c["branchCode"] == bcode for c in again["changes"]))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3411,6 +3482,7 @@ if __name__ == "__main__":
     test_v20_feed_purchase()
     test_v21_recompute_closing_stock_cascade()
     test_v22_purchase_bill_photo()
+    test_v23_recompute_closing_stock_api()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

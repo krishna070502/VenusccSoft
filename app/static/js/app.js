@@ -5449,6 +5449,55 @@ function wire() {
       });
     }).catch(apiFail);
   });
+  /* ---- carried-forward closing-stock backfill (admin only) — an admin
+     with no shell access to production has no other way to run what used
+     to be a CLI-only tool (manage.py recompute-closing-stock). Preview is
+     read-only; Apply writes, and only appears once a preview has run. */
+  function renderRecomputeResult(r) {
+    var box = $('recomputeResult');
+    if (!r.changedEntries) {
+      box.innerHTML = '<p class="text-emerald-700 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>' +
+        'Nothing to change — every approved entry already matches the corrected formula.</p>';
+      $('btnRecomputeApply').classList.add('hidden');
+      return;
+    }
+    var verb = r.applied ? 'Changed' : 'Would change';
+    var rows = r.changes.map(function (c) {
+      return '<tr class="rowhover"><td class="px-3 py-2 whitespace-nowrap">' + c.date + '</td>' +
+        '<td class="px-3 py-2">' + esc(c.branchName) + '</td>' +
+        '<td class="px-3 py-2 capitalize">' + esc(c.category) + '</td>' +
+        '<td class="px-3 py-2 text-right num">' + c.oldOpen[0] + ' birds / ' + fmtW(c.oldOpen[1]) +
+        ' &rarr; ' + c.newOpen[0] + ' birds / ' + fmtW(c.newOpen[1]) + '</td>' +
+        '<td class="px-3 py-2 text-right num">' + c.oldClose[0] + ' birds / ' + fmtW(c.oldClose[1]) +
+        ' &rarr; ' + c.newClose[0] + ' birds / ' + fmtW(c.newClose[1]) + '</td></tr>';
+    }).join('');
+    box.innerHTML = '<p class="font-semibold mb-2">' + verb + ' ' + r.changedEntries + ' entry(ies), ' +
+      r.changedFields + ' field(s) total' + (r.applied ? ' — committed.' : '.') + '</p>' +
+      '<div class="overflow-x-auto border border-slate-200 rounded-lg"><table class="min-w-full text-xs">' +
+      '<thead class="bg-slate-50 text-slate-600"><tr class="text-left">' +
+      '<th class="px-3 py-2 font-bold uppercase">Date</th><th class="px-3 py-2 font-bold uppercase">Branch</th>' +
+      '<th class="px-3 py-2 font-bold uppercase">Category</th>' +
+      '<th class="px-3 py-2 font-bold uppercase text-right">Opening (birds/wt)</th>' +
+      '<th class="px-3 py-2 font-bold uppercase text-right">Closing (birds/wt)</th></tr></thead>' +
+      '<tbody class="divide-y divide-slate-100">' + rows + '</tbody></table></div>';
+    $('btnRecomputeApply').classList.toggle('hidden', !!r.applied);
+  }
+  $('btnRecomputePreview').addEventListener('click', function () {
+    $('recomputeResult').innerHTML = '<p class="text-slate-400">Checking every branch and category…</p>';
+    $('btnRecomputeApply').classList.add('hidden');
+    api('GET', '/admin/recompute-closing-stock').then(renderRecomputeResult).catch(apiFail);
+  });
+  $('btnRecomputeApply').addEventListener('click', function () {
+    if (!confirm('This permanently corrects the auto-computed opening/closing figures listed above, ' +
+      'across every branch. Any figure an admin typed in by hand is left untouched. Continue?')) return;
+    api('POST', '/admin/recompute-closing-stock').then(function (r) {
+      renderRecomputeResult(r);
+      return bootstrap();
+    }).then(function () {
+      refreshAllViews(); loadEntry(null);
+      toast('Closing stock corrected.', 'warn');
+    }).catch(apiFail);
+  });
   /* ---- modals ---- */
   ['reviewModal', 'genModal', 'lightbox'].forEach(function (id) {
     $(id).addEventListener('click', function (ev) { if (ev.target.closest('[data-close]')) closeModal(id); });

@@ -103,7 +103,7 @@ def seed():
     print("Demo data loaded:", counts)
 
 
-def recompute_closing_stock(apply_changes=None):
+def recompute_closing_stock(apply_changes=None, verbose=True):
     """
     One-time backfill: re-derive close_birds/close_weight_g/close_meat_g —
     and the opening figures on the FOLLOWING day that carry them forward —
@@ -137,9 +137,17 @@ def recompute_closing_stock(apply_changes=None):
     what the NEXT entry's opening should be. Only the very first entry in
     each chain is never touched (nothing to carry forward from).
 
-    Dry run by default — prints every change it would make and a summary,
-    writes nothing. Pass --apply to actually commit (or call with
-    apply_changes=True directly, e.g. from a test).
+    Dry run by default — reports every change it would make, writes
+    nothing. Pass --apply on the command line (or apply_changes=True
+    directly, e.g. from a test or the admin-only API endpoint that wraps
+    this for admins who have no shell access to the production box) to
+    actually commit. verbose=False suppresses the print()s — the API
+    endpoint reads the returned dict instead of console output.
+
+    Returns {"changedEntries", "changedFields", "applied", "changes": [...]}
+    — one dict per entry actually different, in the same oldest-to-newest
+    order they were walked, each carrying branch/category/date and the
+    before/after (birds, weightG, meatG) triples for both open and close.
     """
     if apply_changes is None:
         apply_changes = "--apply" in sys.argv
@@ -153,6 +161,7 @@ def recompute_closing_stock(apply_changes=None):
 
     changed_entries = 0
     changed_fields = 0
+    changes = []
 
     for branch_id, category in combos:
         branch = db.session.get(Branch, branch_id)
@@ -217,13 +226,22 @@ def recompute_closing_stock(apply_changes=None):
             )
 
             if new_open != orig_open or new_close != orig_close:
-                if not header_shown:
+                if verbose and not header_shown:
                     print(f"\n{branch.name if branch else branch_id} ({branch.code if branch else '?'}) · {category}")
                     header_shown = True
-                print(f"  {entry.business_date}  open birds/wt/meat {orig_open} -> {new_open}"
-                      f"   close birds/wt/meat {orig_close} -> {new_close}")
+                if verbose:
+                    print(f"  {entry.business_date}  open birds/wt/meat {orig_open} -> {new_open}"
+                          f"   close birds/wt/meat {orig_close} -> {new_close}")
                 changed_entries += 1
                 changed_fields += sum(a != b for a, b in zip(orig_open + orig_close, new_open + new_close))
+                changes.append({
+                    "branchCode": branch.code if branch else str(branch_id),
+                    "branchName": branch.name if branch else str(branch_id),
+                    "category": category,
+                    "date": entry.business_date.isoformat(),
+                    "oldOpen": list(orig_open), "newOpen": list(new_open),
+                    "oldClose": list(orig_close), "newClose": list(new_close),
+                })
                 if apply_changes:
                     entry.open_birds, entry.open_weight_g, entry.open_meat_g = new_open
                     entry.close_birds, entry.close_weight_g, entry.close_meat_g = new_close
@@ -231,17 +249,23 @@ def recompute_closing_stock(apply_changes=None):
             prev_orig_close = orig_close
             prev_new_close = new_close
 
-    print()
-    if not changed_entries:
-        print("Nothing to change — every approved entry already matches the corrected formula.")
-        return
-    verb = "Changed" if apply_changes else "Would change"
-    print(f"{verb} {changed_entries} entry(ies), {changed_fields} field(s) total.")
-    if apply_changes:
+    if verbose:
+        print()
+        if not changed_entries:
+            print("Nothing to change — every approved entry already matches the corrected formula.")
+        else:
+            verb = "Changed" if apply_changes else "Would change"
+            print(f"{verb} {changed_entries} entry(ies), {changed_fields} field(s) total.")
+            if apply_changes:
+                print("Committed.")
+            else:
+                print("Dry run only — nothing written. Re-run with --apply to write these changes.")
+
+    if apply_changes and changed_entries:
         db.session.commit()
-        print("Committed.")
-    else:
-        print("Dry run only — nothing written. Re-run with --apply to write these changes.")
+
+    return {"changedEntries": changed_entries, "changedFields": changed_fields,
+            "applied": bool(apply_changes), "changes": changes}
 
 
 COMMANDS = {"init-db": init_db, "upgrade-db": upgrade_db, "reset-db": reset_db,
