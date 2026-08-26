@@ -2722,12 +2722,30 @@ def test_v16_purchase_returns():
     # ever reaching the kind=return check this is actually testing for.
     for stale in ADMIN.get(f"/api/entries?branch=B01&category=parents&from={D(0)}&to={D(0)}").get_json():
         ADMIN.delete(f"/api/entries/{stale['id']}")
-    case("Purchase ledger", "A supervisor cannot record a return",
-         "422 — admin only", 422,
-         lambda: SUP.post("/api/entries", json=base_entry(
-             branch="B01", category="parents", businessDate=D(55),
-             purchases=[{"kind": "return", "returnOf": buy_id, "birds": 5, "wtG": 12_000}],
-         )).status_code)
+    # Returning birds is a physical event (they physically leave the shed),
+    # not a costing figure like the rate — any user filling the entry can
+    # record one, same as the bill photo. A separate small purchase (not
+    # buy_id) keeps this from disturbing the remaining-birds arithmetic the
+    # rest of this test relies on.
+    sup_supply = ADMIN.post("/api/entries", json=base_entry(
+        branch="B01", category="broiler", businessDate=D(54),
+        purchases=[{"supplier": "Supervisor Return Test Co", "birds": 12, "wtG": 24_000, "rate": 140}],
+    )).get_json()
+    sup_buy_id = sup_supply["purchases"][0]["id"]
+    sup_return = SUP.post("/api/entries", json=base_entry(
+        branch="B01", category="parents", businessDate=D(55),
+        purchases=[{"kind": "return", "returnOf": sup_buy_id, "birds": 5, "wtG": 10_000,
+                   "rate": 999}],  # a client-sent rate must be ignored, even from a supervisor
+    ))
+    case("Purchase ledger", "A supervisor can record a return — it's a physical event, not a costing figure",
+         201, 201, lambda: sup_return.status_code)
+    # The rate is stripped from a supervisor's own response (same cost-hiding
+    # as everywhere else) — fetch back as ADMIN to see what actually got
+    # stored, and confirm the client-sent 999 was ignored either way.
+    sup_return_id = sup_return.get_json()["id"]
+    case("Purchase ledger", "...still priced at the ORIGINAL purchase's rate, not 999, whoever recorded it",
+         140, 140.0,
+         lambda: ADMIN.get(f"/api/entries/{sup_return_id}").get_json()["purchases"][0]["rate"])
 
     returned = ADMIN.post("/api/entries", json=base_entry(
         branch="B01", category="parents", businessDate=D(55),
@@ -2789,10 +2807,15 @@ def test_v16_purchase_returns():
          "20 birds, 51kg, Rs 9,180 net", (20, 51_000, 9_180.0),
          lambda: (shiva["netBirds"], shiva["netWtG"], shiva["netAmt"]))
 
-    case("Purchase ledger", "A supervisor cannot reach the purchase ledger",
+    case("Purchase ledger", "A supervisor cannot reach the by-supplier purchase ledger report",
          403, 403, lambda: SUP.get(f"/api/purchase-ledger?branch=B01").status_code)
-    case("Purchase ledger", "...nor the open-purchases picker",
-         403, 403, lambda: SUP.get("/api/purchases/open?branch=B01").status_code)
+    sup_open = SUP.get("/api/purchases/open?branch=B01")
+    case("Purchase ledger", "...but CAN reach the open-purchases picker, needed to record a return",
+         200, 200, lambda: sup_open.status_code)
+    case("Purchase ledger", "...with the buying rate stripped from every row, like everywhere else",
+         True, True, lambda: all(r["rate"] is None for r in sup_open.get_json()["rows"]))
+    case("Purchase ledger", "A supervisor cannot reach another branch's open-purchases picker",
+         403, 403, lambda: SUP.get("/api/purchases/open?branch=B02").status_code)
 
     # Regression: buying from a supplier and returning some of that SAME
     # purchase in the same daily entry (bought 300, 20 turned out unfit,

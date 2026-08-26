@@ -500,12 +500,13 @@ def _replace_purchases(entry: DailyEntry, rows: list) -> None:
         kind = "return" if r.get("kind") == "return" else "buy"
         return_of_id = None
         if kind == "return":
-            # Returns are admin-only (they need the rate, which is admin-only
-            # to begin with) and are always priced at the ORIGINAL purchase's
-            # rate — never a rate typed on the return day — so the ledger
-            # nets out to what was actually paid.
-            if not g.user.is_admin:
-                raise FieldError(f"purchase[{i}].kind", "Only an admin can record a return.")
+            # Any user filling the entry can record a return — like the bill
+            # photo, this is a physical event (birds physically leaving the
+            # shed), not a costing figure. It is always priced at the
+            # ORIGINAL purchase's rate — never a rate typed on the return
+            # day, and never anything a supervisor could set even if they
+            # wanted to — so the ledger nets out to what was actually paid
+            # regardless of who recorded the return.
             orig = db.session.get(Purchase, to_int(r.get("returnOf"), f"purchase[{i}].returnOf"))
             # Branch check via orig.entry_id (a plain column) rather than the
             # orig.entry relationship — the entry.purchases.clear() just above
@@ -1897,14 +1898,19 @@ def list_ledger():
 
 
 @bp.get("/purchases/open")
-@admin_required
+@login_required
 def list_open_purchases():
     """
     Buy-kind purchase lines still available to return against, for the
-    "Return against" picker on a purchase row. Only the last 60 days are
-    offered — enough to cover "bought yesterday, returned today" without
-    dragging in the whole purchase history — and any line already fully
-    returned is left out.
+    "Return against" picker on a purchase row — any user filling the entry
+    can reach this, same as recording the return itself (see
+    _replace_purchases()); require_branch() below still keeps a supervisor
+    to their own assigned branch(es). Only the last 60 days are offered —
+    enough to cover "bought yesterday, returned today" without dragging in
+    the whole purchase history — and any line already fully returned is
+    left out. The buying rate is a costing figure like anywhere else in the
+    app, so it is only included for an admin; a supervisor sees enough
+    (date, supplier, what's left) to pick the right line without it.
     """
     err = require_branch(request.args.get("branch"))
     if err:
@@ -1938,8 +1944,8 @@ def list_open_purchases():
             continue
         out.append({"id": p.id, "date": p.entry.business_date.isoformat(),
                     "supplier": p.supplier or "", "birds": p.birds, "wtG": p.weight_g,
-                    "rate": float(p.rate), "remainingBirds": remaining_birds,
-                    "remainingWtG": remaining_wt})
+                    "rate": float(p.rate) if g.user.is_admin else None,
+                    "remainingBirds": remaining_birds, "remainingWtG": remaining_wt})
     return jsonify({"rows": out})
 
 

@@ -600,10 +600,12 @@ function refreshBranchSelects(){
 /* ---------------- purchases ---------------- */
 /* Buy-kind purchase lines still open to return against, for the current
    branch — fetched lazily the first time a row is switched to "Return"
-   and cached until explicitly refreshed. Admin only, like returns
-   themselves (see _replace_purchases() in api.py). */
+   and cached until explicitly refreshed. Any user filling the entry can
+   reach this, same as recording the return itself (see _replace_purchases()
+   in api.py) — the server strips the rate out of each row for a
+   supervisor, same as everywhere else the buying rate would otherwise leak. */
 function loadOpenPurchases(branch){
-  if(!branch || !isAdmin()) return Promise.resolve([]);
+  if(!branch) return Promise.resolve([]);
   if(S.openPurchases[branch]) return Promise.resolve(S.openPurchases[branch]);
   return api('GET','/purchases/open?branch='+encodeURIComponent(branch)).then(function(d){
     S.openPurchases[branch]=d.rows||[];
@@ -627,9 +629,14 @@ function billPhotoRow(p,i,locked){
       : (required
           ? '<span class="text-[11px] font-bold text-rose-600"><i class="fa-solid fa-triangle-exclamation mr-1"></i>No bill uploaded — required</span>'
           : '<span class="text-[11px] text-slate-400 italic">No bill uploaded</span>'))+
-    (locked?'':'<label class="ml-auto cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg">'+
-      '<i class="fa-solid fa-camera"></i> '+(p.billPhoto?'Replace':'Upload bill')+
-      '<input type="file" accept="image/*" capture="environment" class="hidden" data-pbillfile="'+i+'" /></label>')+
+    (locked?'':'<span class="ml-auto flex items-center gap-1.5">'+
+      '<label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg" title="Take a photo with the camera">'+
+        '<i class="fa-solid fa-camera"></i> '+(p.billPhoto?'Retake':'Camera')+
+        '<input type="file" accept="image/*" capture="environment" class="hidden" data-pbillfile="'+i+'" /></label>'+
+      '<label class="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold bg-slate-500 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg" title="Choose an existing photo from the gallery">'+
+        '<i class="fa-solid fa-images"></i> Gallery'+
+        '<input type="file" accept="image/*" class="hidden" data-pbillfile="'+i+'" /></label>'+
+    '</span>')+
   '</div>';
 }
 
@@ -645,18 +652,20 @@ function renderPurchases(){
     var isReturn=p.kind==='return';
     var against=isReturn ? open.filter(function(o){ return o.id===p.returnOf; })[0] : null;
     return '<div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end '+(isReturn?'bg-rose-50 border-rose-200':'bg-slate-50 border-slate-200')+' border rounded-lg p-3 pop">'+
-      (isAdmin() ? '<div class="sm:col-span-12 flex items-center gap-2">'+
+      '<div class="sm:col-span-12 flex items-center gap-2">'+
         '<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(isReturn?'bg-rose-600 text-white':'bg-emerald-100 text-emerald-800')+'">'+(isReturn?'Return to supplier':'Purchase')+'</span>'+
         (locked?'':'<button type="button" data-pret="'+i+'" class="text-[11px] font-bold text-slate-500 hover:text-emerald-700 underline">'+(isReturn?'Switch to purchase':'Mark as a return')+'</button>')+
-      '</div>' : '')+
+      '</div>'+
       (isReturn ?
         ('<div class="sm:col-span-5"><label class="lbl">Return against</label><select data-p="returnOf" data-i="'+i+'" class="inp" '+(locked?'disabled':'')+'>'+
           '<option value="">Choose the original purchase…</option>'+
-          open.map(function(o){ return '<option value="'+o.id+'" '+(o.id===p.returnOf?'selected':'')+'>'+o.date+' · '+esc(o.supplier||'—')+' · '+o.remainingBirds+' birds / '+fmtW(o.remainingWtG)+' left @ '+money(o.rate)+'/kg</option>'; }).join('')+
+          open.map(function(o){ return '<option value="'+o.id+'" '+(o.id===p.returnOf?'selected':'')+'>'+o.date+' · '+esc(o.supplier||'—')+' · '+o.remainingBirds+' birds / '+fmtW(o.remainingWtG)+' left'+(o.rate!=null?' @ '+money(o.rate)+'/kg':'')+'</option>'; }).join('')+
         '</select>'+(open.length?'':'<p class="text-[11px] text-slate-400 mt-1">No open purchases in the last 60 days for this branch.</p>')+'</div>'+
         '<div class="sm:col-span-2"><label class="lbl">Birds returned</label><input type="number" min="0" step="1" data-p="birds" data-i="'+i+'" class="inp num" value="'+(p.birds||'')+'" '+(locked?'disabled':'')+' /></div>'+
         '<div class="sm:col-span-3"><label class="lbl">Weight returned</label><div class="kgg"><input type="number" min="0" step="1" data-p="kg" data-i="'+i+'" class="inp num" value="'+(p.wtG?Math.floor(p.wtG/1000):'')+'" '+(locked?'disabled':'')+' /><span>kg</span><input type="number" min="0" max="999" step="1" data-p="g" data-i="'+i+'" class="inp num" value="'+(p.wtG?p.wtG%1000:'')+'" '+(locked?'disabled':'')+' /><span>g</span></div></div>'+
-        '<div class="sm:col-span-1"><label class="lbl">Rate ₹/kg</label><p class="inp !bg-slate-100 text-slate-500 text-xs">'+(against?money(against.rate):(p.rate?money(p.rate):'—'))+'</p></div>')
+        (isAdmin()
+          ? '<div class="sm:col-span-1"><label class="lbl">Rate ₹/kg</label><p class="inp !bg-slate-100 text-slate-500 text-xs">'+(against&&against.rate!=null?money(against.rate):(p.rate?money(p.rate):'—'))+'</p></div>'
+          : '<div class="sm:col-span-1"><label class="lbl">Rate</label><p class="inp !bg-slate-100 text-slate-400 text-xs italic">admin only</p></div>'))
       :
         ('<div class="sm:col-span-4"><label class="lbl">Supplier</label><input data-p="supplier" data-i="'+i+'" class="inp" value="'+esc(p.supplier||'')+'" placeholder="Supplier name" '+(locked?'disabled':'')+' /></div>'+
         '<div class="sm:col-span-2"><label class="lbl">Birds</label><input type="number" min="0" step="1" data-p="birds" data-i="'+i+'" class="inp num" value="'+(p.birds||'')+'" '+(locked?'disabled':'')+' /></div>'+
@@ -4923,13 +4932,20 @@ function wire() {
   // Closing birds/weight/meat are always server-computed and the inputs are
   // readonly — no manual-entry toggle any more.
 
-  $('f_photos').addEventListener('change', function () {
+  // One handler shared by the Camera input (capture="environment", jumps
+  // straight to the camera app on mobile) and the Gallery input (no
+  // capture, so the OS's normal file/photo picker opens instead) — both
+  // feed the same mortality-photo list, the split is only about which
+  // picker opens first.
+  function onMortalityPhotos() {
     var files = Array.prototype.slice.call(this.files || []), left = files.length; if (!left) return;
     files.forEach(function (f) {
       compress(f, function (u) { S.photos.push(u); if (--left === 0) { renderPhotos(); recalc(); toast(files.length + ' photo(s) attached.'); } });
     });
     this.value = '';
-  });
+  }
+  $('f_photos').addEventListener('change', onMortalityPhotos);
+  $('f_photos_gallery').addEventListener('change', onMortalityPhotos);
   $('photoStrip').addEventListener('click', function (ev) {
     var rm = ev.target.closest('[data-rm]');
     if (rm) { S.photos.splice(+rm.getAttribute('data-rm'), 1); renderPhotos(); recalc(); return; }
