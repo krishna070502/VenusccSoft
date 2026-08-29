@@ -125,9 +125,21 @@ SETTINGS = {"waste_broiler": 31, "waste_parents": 21, "tolerance": 2, "day_wage"
 # ===========================================================================
 def test_infrastructure():
     print("\n[1] Infrastructure & schema")
-    case("Infrastructure", "Health endpoint reports the database",
+    case("Infrastructure", "Liveness check answers, anonymously, with no DB access needed",
          "GET /healthz", "ok",
-         lambda: ADMIN.get("/healthz").get_json()["status"])
+         lambda: ANON.get("/healthz").get_json()["status"])
+    # /healthz is deliberately liveness-only now — see app/__init__.py's
+    # healthz() docstring — so it must NOT run a query. This is what the
+    # platform's and container's own health checks poll every 30 seconds
+    # forever; a database check on that schedule is what exhausted a
+    # month's Neon compute-hour quota in days despite genuinely low traffic.
+    case("Infrastructure", "...and does not report a database field any more",
+         False, "database" in ANON.get("/healthz").get_json(),
+         lambda: "database" in ANON.get("/healthz").get_json())
+    case("Infrastructure", "The separate DB-reachability check still works",
+         "GET /healthz/db", ("ok", "reachable"),
+         lambda: (ANON.get("/healthz/db").get_json()["status"],
+                  ANON.get("/healthz/db").get_json()["database"]))
     case("Infrastructure", "All tables created",
          "db.create_all()", 16,
          lambda: len(db.metadata.tables))

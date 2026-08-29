@@ -90,6 +90,41 @@ def create_app(config_object=Config) -> Flask:
 
     @app.get("/healthz")
     def healthz():
+        """
+        Liveness only — is the web process itself up and answering. Does
+        NOT touch the database, deliberately: this is what render.yaml's
+        healthCheckPath and both the Dockerfile's and docker-compose.yml's
+        HEALTHCHECK point at, which poll every 30 seconds, forever, for as
+        long as the container exists — whether or not anyone is actually
+        using the app. Neon (and most serverless/autosuspend Postgres)
+        scales its compute to zero after 5 minutes with no queries at all;
+        a query every 30 seconds never leaves that gap, so the database
+        never sleeps and burns compute-hours around the clock regardless of
+        real traffic. That is exactly what happened here: a genuinely
+        low-traffic app blew through an entire month's free compute-hour
+        quota in days, and Neon suspended the project until upgraded or
+        the billing cycle rolled over — every request then failing with a
+        503 it had no way to prevent. See healthz_db() below for the
+        DB-aware check this used to be; point a deliberately infrequent,
+        opt-in external monitor at that one instead, if you want one at
+        all — not an infrastructure platform's own automated healthcheck.
+        """
+        return jsonify({"status": "ok"})
+
+    @app.get("/healthz/db")
+    def healthz_db():
+        """
+        The database-reachability check /healthz used to be. Kept for
+        manual troubleshooting (`curl` this when something seems wrong) and
+        for a human-configured uptime monitor that specifically wants to
+        know about database connectivity — just not for anything that polls
+        every few seconds/minutes on its own, which is precisely what
+        defeats a serverless database's ability to ever scale to zero (see
+        healthz() above). Every real request already surfaces a database
+        outage on its own, as a clean 503 (see the OperationalError/
+        ProgrammingError handler below) — this endpoint is a convenience
+        for confirming that diagnosis, not something to poll routinely.
+        """
         try:
             db.session.execute(db.text("SELECT 1"))
             return jsonify({"status": "ok", "database": "reachable"})

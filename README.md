@@ -141,7 +141,13 @@ the administrator for you.
 
 The image is multi-stage, so no compiler ships in the runtime layer. It runs as
 an unprivileged user on a read-only filesystem with `no-new-privileges`, and
-`/healthz` backs the container healthcheck.
+`/healthz` backs the container healthcheck — deliberately a liveness check
+only (is the process up), not a database check, so the 30-second polling
+this and the platform's own health check do around the clock never touches
+the database. On a serverless/autosuspend Postgres like Neon, a health check
+that queried the database on that schedule would keep it permanently awake
+and burn through a compute-hour quota in days regardless of real traffic —
+see `/healthz/db` below for the check this used to be.
 
 There is deliberately no `depends_on` on the web service. The entrypoint waits
 for the database itself, which means the same file works whether the database
@@ -161,8 +167,17 @@ is the bundled container or your own, and on every Compose v2 rather than only
 | `waitress-serve --port=%PORT% wsgi:app` | Production server on Windows |
 | `gunicorn wsgi:app -b 0.0.0.0:$PORT -w $WEB_CONCURRENCY` | Production server on Linux |
 
-`GET /healthz` reports whether the database is reachable — point your uptime
-monitor at it.
+`GET /healthz` reports only whether the web process itself is up — it does
+not touch the database, so it is safe for a platform or container health
+check to poll every few seconds forever. `GET /healthz/db` is the actual
+database-reachability check; use it for manual troubleshooting (`curl` it
+when something seems wrong) or a deliberately infrequent, human-configured
+uptime monitor — never for anything that polls automatically and often, or
+it will defeat a serverless database's ability to ever scale to zero (this
+is exactly what exhausted a month's Neon free-tier compute-hour quota in a
+few days: the old `/healthz` ran `SELECT 1` and both the platform's and the
+container's own health checks polled it every 30 seconds, so the database
+never went idle long enough to suspend).
 
 ---
 

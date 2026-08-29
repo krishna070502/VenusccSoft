@@ -37,6 +37,16 @@ class Config:
 
     # Connection pooling matters on Neon: it closes idle connections, so we
     # recycle before that happens and check liveness before handing one out.
+    # pool_pre_ping means a real user request that lands after Neon has
+    # scaled its compute to zero (autosuspend — see healthz() in
+    # app/__init__.py for how that gets triggered far more than it should)
+    # is not itself a failure: the stale pooled connection fails its ping,
+    # SQLAlchemy transparently discards it and opens a fresh one, and the
+    # request just carries a bit of extra latency while Neon wakes back up
+    # — normally under a second or two — rather than erroring out. No data
+    # is lost or left half-written; the request either waits and succeeds,
+    # or (only if the database is genuinely unreachable, not merely asleep)
+    # surfaces as the clean 503 the OperationalError handler returns.
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 280,
@@ -44,6 +54,15 @@ class Config:
         "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", 20)),
         "pool_timeout": 30,
     }
+    # connect_timeout is a psycopg2-only keyword (SQLite's DBAPI has no such
+    # argument and raises TypeError if it's handed one), so this only
+    # applies when actually talking to Postgres. A bound here is about
+    # predictability, not working around Neon's wake-up time specifically —
+    # 10 seconds is generously above any normal autosuspend wake (well
+    # under a second in practice) and just stops a genuinely unreachable
+    # database from hanging a request indefinitely instead of failing fast.
+    if SQLALCHEMY_DATABASE_URI.startswith("postgresql"):
+        SQLALCHEMY_ENGINE_OPTIONS["connect_args"] = {"connect_timeout": 10}
 
     # Session cookies
     SESSION_COOKIE_HTTPONLY = True
