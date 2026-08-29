@@ -31,11 +31,18 @@ from .extensions import db
 
 # What to seed an existing row with when a NOT NULL column is added. Adding a
 # NOT NULL column to a table that already has rows is rejected unless a default
-# comes with it, so every type needs an answer here.
+# comes with it, so every type needs an answer here. TIMESTAMP/DATETIME map to
+# CURRENT_TIMESTAMP — valid, unquoted, "now" in both SQLite and Postgres as a
+# plain SQL value — for the many audit columns (created_at, entered_at,
+# uploaded_at, declared_at...) whose model default is the utcnow function, not
+# a fixed value (see _default_literal's docstring below). It is NOT always
+# usable directly inside an ADD COLUMN's DEFAULT clause, though — see
+# _add_column_statements(), which is where that distinction actually matters.
 TYPE_DEFAULTS = [
     ("INT", "0"), ("SERIAL", "0"), ("NUMERIC", "0"), ("DECIMAL", "0"),
     ("FLOAT", "0"), ("REAL", "0"), ("DOUBLE", "0"),
     ("BOOL", "FALSE"),
+    ("TIMESTAMP", "CURRENT_TIMESTAMP"), ("DATETIME", "CURRENT_TIMESTAMP"),
     ("VARCHAR", "''"), ("CHAR", "''"), ("TEXT", "''"),
 ]
 
@@ -51,6 +58,18 @@ def _default_literal(column, type_sql: str) -> str:
     both, so those are what gets emitted regardless of which database is
     live. This bit Purchase.has_bill's first production deploy — the column
     was skipped every boot with a DatatypeMismatch until this was fixed.
+
+    A column whose default is a CALLABLE (every *_at audit timestamp uses
+    `default=utcnow`, a function, not a fixed value) is not "scalar" as far
+    as SQLAlchemy is concerned, so it never enters the branch below at all —
+    it falls straight through to the TYPE_DEFAULTS table, which used to have
+    no TIMESTAMP/DATETIME entry and so fell all the way to the final "NULL"
+    fallback: `ADD COLUMN entered_at TIMESTAMP ... NOT NULL DEFAULT NULL`, a
+    self-contradicting clause any database rejects outright the moment the
+    table already has a row. Never hit in practice yet only because none of
+    these audit columns has ever been added post-hoc to a table that already
+    existed — but the exact same latent failure as has_bill's, waiting for
+    the next one. CURRENT_TIMESTAMP is what every existing row backfills to.
     """
     default = getattr(column, "default", None)
     if default is not None and getattr(default, "is_scalar", False):
@@ -76,16 +95,49 @@ def _already_there(exc) -> bool:
             or "duplicate_object" in text_)
 
 
-def _add_column_sql(table_name: str, column, dialect) -> str:
+def _add_column_statements(table_name: str, column, dialect) -> list:
+    """
+    One or more statements, in order, to bring a single missing column onto
+    an existing table. Almost always exactly one ALTER TABLE.
+
+    The one exception: a NOT NULL column whose default is a CALLABLE (every
+    *_at audit timestamp — default=utcnow, a function, not a fixed value)
+    under SQLite specifically. SQLite's ALTER TABLE ADD COLUMN rejects ANY
+    non-constant default outright — "Cannot add a column with non-constant
+    default" — including CURRENT_TIMESTAMP, regardless of nullability; a
+    restriction Postgres does not share (confirmed directly: Postgres
+    accepts `ADD COLUMN ... NOT NULL DEFAULT CURRENT_TIMESTAMP` against a
+    table that already has rows without complaint). So under SQLite only,
+    the column goes on nullable and bare first, then a follow-up UPDATE
+    backfills every existing row to CURRENT_TIMESTAMP (a plain UPDATE has
+    none of ADD COLUMN's constant-only restriction). The NOT NULL
+    constraint itself is not retroactively enforced at the SQLite level —
+    SQLite cannot add one without rebuilding the whole table, which this
+    module deliberately never does (see the module docstring) — but every
+    existing row ends up fully populated regardless, and the application
+    always supplies the value on every new INSERT going forward no matter
+    what the database itself enforces.
+    """
     type_sql = column.type.compile(dialect=dialect)
     name = dialect.identifier_preparer.quote(column.name)
     table = dialect.identifier_preparer.quote(table_name)
+
+    default = getattr(column, "default", None)
+    callable_default = (default is not None and not getattr(default, "is_scalar", False)
+                        and callable(getattr(default, "arg", None)))
+
+    if not column.nullable and callable_default and dialect.name == "sqlite":
+        return [
+            f"ALTER TABLE {table} ADD COLUMN {name} {type_sql}",
+            f"UPDATE {table} SET {name} = CURRENT_TIMESTAMP WHERE {name} IS NULL",
+        ]
+
     clause = f"ALTER TABLE {table} ADD COLUMN {name} {type_sql}"
     if not column.nullable:
         clause += f" NOT NULL DEFAULT {_default_literal(column, type_sql)}"
     elif column.server_default is not None:
         clause += f" DEFAULT {column.server_default.arg}"
-    return clause
+    return [clause]
 
 
 def upgrade_schema(verbose: bool = True) -> dict:
@@ -115,10 +167,11 @@ def upgrade_schema(verbose: bool = True) -> dict:
         for column in table.columns:
             if column.name in present:
                 continue
-            statement = _add_column_sql(table.name, column, dialect)
+            statements = _add_column_statements(table.name, column, dialect)
             try:
                 with engine.begin() as conn:
-                    conn.execute(text(statement))
+                    for statement in statements:
+                        conn.execute(text(statement))
                 report["columnsAdded"].append(f"{table.name}.{column.name}")
                 if verbose:
                     print(f"  + column {table.name}.{column.name}")

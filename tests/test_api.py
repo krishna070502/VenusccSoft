@@ -3346,12 +3346,50 @@ def test_schema_upgrade():
     # the ALTER statement against the postgresql dialect and checks the
     # literal, which is enough to catch the type mismatch.
     from sqlalchemy.dialects import postgresql as _pg
-    from app.schema import _add_column_sql as _colsql
-    pg_stmt = _colsql("purchases", Purchase.__table__.columns["has_bill"], _pg.dialect())
+    from app.schema import _add_column_statements as _colstmts
+    pg_stmt = _colstmts("purchases", Purchase.__table__.columns["has_bill"], _pg.dialect())[0]
     case("Schema", "A boolean column's NOT NULL default is a valid literal under Postgres",
          "TRUE/FALSE, not 0/1", True,
          lambda: ("DEFAULT FALSE" in pg_stmt or "DEFAULT TRUE" in pg_stmt)
                  and "DEFAULT 0" not in pg_stmt and "DEFAULT 1" not in pg_stmt)
+
+    # Regression: every *_at audit column (created_at, entered_at,
+    # uploaded_at, declared_at...) has default=utcnow — a FUNCTION, not a
+    # fixed value, so it is never "scalar" as far as SQLAlchemy is concerned
+    # and used to fall all the way through to the final "NULL" fallback:
+    # `ADD COLUMN entered_at TIMESTAMP ... NOT NULL DEFAULT NULL`, which any
+    # database rejects the moment the table already has a row (a NOT NULL
+    # column cannot default to NULL). Never actually hit in production only
+    # because no such column had ever been added post-hoc — the identical
+    # class of bug as has_bill's, caught here before it could repeat.
+    pg_ts_stmt = _colstmts("daily_entries", DailyEntry.__table__.columns["entered_at"],
+                          _pg.dialect())[0]
+    case("Schema", "A timestamp column's NOT NULL default is never a bare NULL under Postgres",
+         True, True,
+         lambda: "DEFAULT NULL" not in pg_ts_stmt and "CURRENT_TIMESTAMP" in pg_ts_stmt)
+    # SQLite refuses ANY non-constant ADD COLUMN default outright (including
+    # CURRENT_TIMESTAMP itself) — confirmed by actually trying it, not just
+    # assumed — so this path is a real end-to-end round trip: add the
+    # column to a live table that already has a row, and confirm it doesn't
+    # raise and the row ends up with a real timestamp, not NULL.
+    with app.app_context():
+        db.session.execute(db.text(
+            "CREATE TABLE IF NOT EXISTS ts_regression_test (id INTEGER PRIMARY KEY)"))
+        db.session.execute(db.text("DELETE FROM ts_regression_test"))
+        db.session.execute(db.text("INSERT INTO ts_regression_test (id) VALUES (1)"))
+        db.session.commit()
+        from sqlalchemy import Table, MetaData
+        fake_table = Table("ts_regression_test", MetaData(),
+                           DailyEntry.__table__.columns["entered_at"].copy())
+        sq_stmts = _colstmts("ts_regression_test", fake_table.columns["entered_at"],
+                            db.engine.dialect)
+        for stmt in sq_stmts:
+            db.session.execute(db.text(stmt))
+        db.session.commit()
+        row = db.session.execute(db.text(
+            "SELECT entered_at FROM ts_regression_test WHERE id=1")).fetchone()
+    case("Schema", "...and the SQLite round trip actually succeeds, with every row backfilled",
+         "a real timestamp, not NULL", True, lambda: row[0] is not None)
 
     # Build a database that looks like an older release: drop the tables added
     # later and strip a column added later, then point the app at it.
