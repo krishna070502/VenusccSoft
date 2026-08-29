@@ -3333,6 +3333,69 @@ def test_v23_recompute_closing_stock_api():
 
 
 # ===========================================================================
+def test_v24_waste_meat_sold():
+    print("\n[35] Waste meat sold — half/full buckets, added to net profit")
+
+    # ---- pure calculation ---------------------------------------------------
+    base = compute_entry(base_entry(), SETTINGS)
+    case("Waste meat sold", "No buckets sold costs/earns nothing",
+         "wasteHalfBuckets/wasteFullBuckets absent", 0.0, lambda: base["wasteMeatAmt"])
+
+    full_only = compute_entry(base_entry(wasteFullBuckets=3, wasteMeatRate=250), SETTINGS)
+    case("Waste meat sold", "3 full buckets @ Rs 250 is a Rs 750 sale",
+         "3 x 250", 750.0, lambda: full_only["wasteMeatAmt"])
+    case("Waste meat sold", "...reported as 3 bucket-equivalents",
+         3, 3, lambda: full_only["wasteBucketsEquiv"])
+    case("Waste meat sold", "...and it ADDS to net profit, not subtracts",
+         "base netProfit + 750", round(base["netProfit"] + 750, 2),
+         lambda: full_only["netProfit"])
+
+    halves = compute_entry(base_entry(wasteHalfBuckets=3, wasteFullBuckets=1, wasteMeatRate=250), SETTINGS)
+    case("Waste meat sold", "2 half buckets = 1 full bucket: 3 halves + 1 full = 2.5 buckets",
+         "1 + 3/2", 2.5, lambda: halves["wasteBucketsEquiv"])
+    case("Waste meat sold", "...priced at 2.5 x 250 = Rs 625",
+         "2.5 x 250", 625.0, lambda: halves["wasteMeatAmt"])
+
+    # ---- round trip through the API -----------------------------------------
+    br = ADMIN.post("/api/branches", json={"name": "Waste Meat Test Branch"}).get_json()
+    bcode = br["code"]
+
+    blocked = ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="broiler", businessDate=D(3),
+        wasteHalfBuckets=2, wasteMeatRate=0, submit=True))
+    case("Waste meat sold", "Buckets sold without a price is refused on submit",
+         422, 422, lambda: blocked.status_code)
+    case("Waste meat sold", "...and names the waste meat price as what's missing",
+         "Waste meat sold — price per bucket", True,
+         lambda: "Waste meat sold — price per bucket" in blocked.get_json()["missing"])
+
+    day1 = ADMIN.post("/api/entries", json=base_entry(
+        branch=bcode, category="broiler", businessDate=D(3),
+        wasteHalfBuckets=1, wasteFullBuckets=2, wasteMeatRate=300, submit=True)).get_json()
+    case("Waste meat sold", "The entry saves with half/full buckets and rate intact",
+         (1, 2, 300.0),
+         (day1["wasteHalfBuckets"], day1["wasteFullBuckets"], day1["wasteMeatRate"]),
+         lambda: (day1["wasteHalfBuckets"], day1["wasteFullBuckets"], day1["wasteMeatRate"]))
+    case("Waste meat sold", "The saved entry's calc reports 2.5 buckets @ Rs 300 = Rs 750",
+         (2.5, 750.0),
+         (day1["calc"]["wasteBucketsEquiv"], day1["calc"]["wasteMeatAmt"]),
+         lambda: (day1["calc"]["wasteBucketsEquiv"], day1["calc"]["wasteMeatAmt"]))
+
+    # A supervisor can also record waste meat sold — it's a selling figure,
+    # like the Section C rates, not a buying cost like the purchase rate.
+    # Uses a day far outside the range any other test in this suite touches
+    # on B02, to avoid colliding with that branch's unique-per-day entries.
+    day2 = SUP2.post("/api/entries", json=base_entry(
+        branch="B02", category="broiler", businessDate=D(200),
+        wasteHalfBuckets=0, wasteFullBuckets=1, wasteMeatRate=280, submit=True))
+    day2_json = day2.get_json() or {}
+    case("Waste meat sold", "A supervisor can record it too",
+         201, day2.status_code, lambda: day2.status_code)
+    case("Waste meat sold", "...and the amount is visible in their own response, unlike a buying rate",
+         280.0, day2_json.get("wasteMeatRate"), lambda: day2_json.get("wasteMeatRate"))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3556,6 +3619,7 @@ if __name__ == "__main__":
     test_v21_recompute_closing_stock_cascade()
     test_v22_purchase_bill_photo()
     test_v23_recompute_closing_stock_api()
+    test_v24_waste_meat_sold()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

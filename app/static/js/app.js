@@ -339,6 +339,18 @@ function calc(e){
   var feedRate=num(e.feedRate);
   var feedAmt=feedBags*feedRate;
 
+  /* ---- waste meat sold ----
+     The shrinkage/byproduct meat (wasteMeatG above) doesn't all go to waste
+     — some is sold off by the bucket. Unlike feed purchase this is a SALE,
+     so it ADDS to net profit rather than coming off it. Two half buckets =
+     one full bucket, for both pricing and the reported bucket count.
+     Mirrors calc.py. */
+  var wasteHalfBuckets=num(e.wasteHalfBuckets);
+  var wasteFullBuckets=num(e.wasteFullBuckets);
+  var wasteMeatRate=num(e.wasteMeatRate);
+  var wasteBucketsEquiv=wasteFullBuckets+wasteHalfBuckets/2;
+  var wasteMeatAmt=wasteBucketsEquiv*wasteMeatRate;
+
   /* ---- profit & loss ---- */
   var openMeatValue=num(e.openMeatG)/1000*meatCostKg;
   var closeLiveValue=num(e.closeWtG)/1000*avgRate;
@@ -350,7 +362,7 @@ function calc(e){
   var lab=dayCostsFor(dOf(e.datetime), e.branch, e.id, e.category);
   var advances=lab.advances;   /* shown, never deducted: it settles wages already counted */
   var overheads=lab.overheads; /* this day's share of rent, power, salary */
-  var netProfit=grossProfit-lab.wages-lab.other-overheads-feedAmt;
+  var netProfit=grossProfit-lab.wages-lab.other-overheads-feedAmt+wasteMeatAmt;
 
   /* ---- loss drivers ---- */
   var mortValue=num(e.mortWtG)/1000*avgRate;
@@ -394,6 +406,8 @@ function calc(e){
     openMeatValue:openMeatValue, closeLiveValue:closeLiveValue, closeMeatValue:closeMeatValue,
     closeValue:closeValue, cogs:cogs, grossProfit:grossProfit,
     feedBags:feedBags, feedRate:feedRate, feedAmt:feedAmt,
+    wasteHalfBuckets:wasteHalfBuckets, wasteFullBuckets:wasteFullBuckets, wasteMeatRate:wasteMeatRate,
+    wasteBucketsEquiv:wasteBucketsEquiv, wasteMeatAmt:wasteMeatAmt,
     labour:lab.wages, advances:advances, otherExp:lab.other, overheads:overheads,
     manDays:lab.manDays, netProfit:netProfit,
     mortValue:mortValue, damageValue:damageValue, shortValue:shortValue, bonusValue:bonusValue,
@@ -796,6 +810,8 @@ function readForm(){
   e.skinSoldG=gv('f_skinSold'); e.skinlessSoldG=gv('f_skinlessSold'); e.liverSoldG=gv('f_liverSold');
   e.closeBirds=v('f_closeBirds'); e.closeWtG=gv('f_closeWt'); e.closeMeatG=gv('f_closeMeat');
   e.feedBags=v('f_feedBags'); e.feedRate=v('f_feedRate'); e.feedSupplier=tv('f_feedSupplier');
+  e.wasteHalfBuckets=v('f_wasteHalfBuckets'); e.wasteFullBuckets=v('f_wasteFullBuckets');
+  e.wasteMeatRate=v('f_wasteMeatRate');
   /* tells the server which (if any) of these two the admin set by hand this
      save, rather than have it recompute them — see _manual_close_keys().
      Closing meat isn't part of this: it's always taken directly from
@@ -821,6 +837,8 @@ function fillForm(e){
   setV('f_closeBirds',e.closeBirds); setG('f_closeWt',e.closeWtG); setG('f_closeMeat',e.closeMeatG);
   setV('f_feedBags',e.feedBags); setV('f_feedRate',e.feedRate);
   setV('f_feedSupplier',e.feedSupplier!==undefined?e.feedSupplier:'Shiva Traders');
+  setV('f_wasteHalfBuckets',e.wasteHalfBuckets); setV('f_wasteFullBuckets',e.wasteFullBuckets);
+  setV('f_wasteMeatRate',e.wasteMeatRate);
   setV('f_notes',e.notes); setV('f_explanation',e.explanation);
   S.photos=(e.photos||[]).slice(); S.purchases=(e.purchases||[]).slice();
   S.photosLoaded = (e.photosLoaded!==false) || !num(e.photoCount);
@@ -934,7 +952,8 @@ var REQUIRED = [
   {id:'f_closeMeat_kg',label:'Closing meat (Section G)', test:function(){ return v('f_dressedCount')===0 || filledG('f_closeMeat'); }},
   {id:'f_closeBirds',label:'Closing birds',           test:function(){ return filled('f_closeBirds'); }},
   {id:'f_closeWt_kg',label:'Closing bird weight',     test:function(){ return v('f_closeBirds')===0 || gv('f_closeWt')>0; }, firstDayOptional:true},
-  {id:'f_feedRate',  label:'Feed purchase — price per bag', test:function(){ return v('f_feedBags')===0 || v('f_feedRate')>0; }}
+  {id:'f_feedRate',  label:'Feed purchase — price per bag', test:function(){ return v('f_feedBags')===0 || v('f_feedRate')>0; }},
+  {id:'f_wasteMeatRate', label:'Waste meat sold — price per bucket', test:function(){ return (v('f_wasteHalfBuckets')===0 && v('f_wasteFullBuckets')===0) || v('f_wasteMeatRate')>0; }}
 ];
 
 function validate(showMarks){
@@ -1256,6 +1275,8 @@ function recalc(){
   $('o_otherExp').textContent=money(c.otherExp);
   $('o_feedAmt').textContent=money(c.feedAmt);
   if($('o_feedAmtSummary')) $('o_feedAmtSummary').textContent=money(c.feedAmt);
+  if($('o_wasteMeatAmt')) $('o_wasteMeatAmt').textContent=money(c.wasteMeatAmt);
+  if($('o_wasteMeatAmtSummary')) $('o_wasteMeatAmtSummary').textContent=money(c.wasteMeatAmt);
   $('o_netProfit').textContent=money(c.netProfit);
   $('o_netProfit').className='font-bold num text-xl '+(c.netProfit<0?'text-rose-600':'text-emerald-700');
   $('o_closeValue').textContent=money(c.closeValue);
@@ -1647,6 +1668,46 @@ function renderLiveShortReport(list){
     '<td class="px-4 py-2.5 text-right num">'+money0(t.shortValue)+'</td></tr>' : '';
 }
 
+/* Waste meat sold, branch and day wise — the same pattern as the bonus
+   meat / meat shortfall / live bird weight shortage reports above: walks
+   the same `list` (dashEntries()), so it respects whatever branch/category/
+   date-range is currently selected. Lists every day any waste meat was sold
+   (calc()'s wasteBucketsEquiv > 0). Unlike the other three report cards,
+   this one is not a discrepancy — it's a genuine sale already folded into
+   that day's own netProfit (see calc()'s wasteMeatAmt); this card exists so
+   the total profit and bucket count are visible at a glance without adding
+   up every day in Daily Entry by hand. */
+function renderWasteMeatReport(list){
+  if(!$('wmBody')) return;
+  var rows=list.map(function(e){
+    var c=calc(e);
+    return { date:dOf(e.datetime), branch:e.branch, category:e.category,
+             halfBuckets:c.wasteHalfBuckets, fullBuckets:c.wasteFullBuckets,
+             bucketsEquiv:c.wasteBucketsEquiv, amt:c.wasteMeatAmt };
+  }).filter(function(r){ return r.bucketsEquiv>0; })
+    .sort(function(a,b){ return a.date<b.date?1:-1; });
+
+  $('wmNote').textContent = rows.length ? rows.length+' day(s) with waste meat sold' : 'no waste meat sold in this range';
+
+  $('wmBody').innerHTML = rows.length ? rows.map(function(r){
+    return '<tr class="rowhover"><td class="px-4 py-2.5 whitespace-nowrap">'+r.date+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500">'+esc(S.branches[r.branch]||r.branch)+'</td>'+
+      '<td class="px-4 py-2.5 text-xs text-slate-500 capitalize">'+esc(r.category)+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+r.halfBuckets.toLocaleString('en-IN')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num">'+r.fullBuckets.toLocaleString('en-IN')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold">'+r.bucketsEquiv.toLocaleString('en-IN')+'</td>'+
+      '<td class="px-4 py-2.5 text-right num font-bold text-emerald-700">+'+money0(r.amt)+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400">No waste meat sold in this range.</td></tr>';
+
+  var t={ halfBuckets:0, fullBuckets:0, bucketsEquiv:0, amt:0 };
+  rows.forEach(function(r){ t.halfBuckets+=r.halfBuckets; t.fullBuckets+=r.fullBuckets; t.bucketsEquiv+=r.bucketsEquiv; t.amt+=r.amt; });
+  $('wmFoot').innerHTML = rows.length ? '<tr><td class="px-4 py-2.5" colspan="3">Totals</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+t.halfBuckets.toLocaleString('en-IN')+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+t.fullBuckets.toLocaleString('en-IN')+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">'+t.bucketsEquiv.toLocaleString('en-IN')+'</td>'+
+    '<td class="px-4 py-2.5 text-right num">+'+money0(t.amt)+'</td></tr>' : '';
+}
+
 function renderDashboard(){
   if(!isAdmin()) return;          /* dashboard is admin-only */
   if(!S.branch) return;
@@ -1704,6 +1765,7 @@ function renderDashboard(){
   renderBonusMeatReport(list);
   renderMeatShortfallReport(list);
   renderLiveShortReport(list);
+  renderWasteMeatReport(list);
 
   var net=a.bonusG-a.shortG;
   var bEl=$('kBonus'), bd=$('kBonusBadge');
@@ -4763,6 +4825,14 @@ function wire() {
   $('lwPrint').addEventListener('click', function () {
     var d = tableData('#lwBody');
     printTable('Live bird weight shortage — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
+  });
+  $('wmExport').addEventListener('click', function () {
+    var d = tableData('#wmBody');
+    toXlsx('VCC_waste_meat_sold_' + todayISO(), 'Waste meat sold', d.headers, d.rows);
+  });
+  $('wmPrint').addEventListener('click', function () {
+    var d = tableData('#wmBody');
+    printTable('Waste meat sold — by branch & day', dashRange().from + ' to ' + dashRange().to, d.headers, d.rows);
   });
 
   /* ---- daily entry ---- */

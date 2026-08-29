@@ -396,6 +396,7 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
         "skinSoldG": "skin_sold_g", "skinlessSoldG": "skinless_sold_g",
         "liverSoldG": "liver_sold_g", "closeMeatG": "close_meat_g",
         "feedBags": "feed_bags",
+        "wasteHalfBuckets": "waste_half_buckets", "wasteFullBuckets": "waste_full_buckets",
     }
     for src, col in ints.items():
         if src in d:
@@ -406,7 +407,8 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
 
     money = {"rateSkin": "rate_skin", "rateSkinless": "rate_skinless",
              "rateLiver": "rate_liver", "rateLive": "rate_live",
-             "cutCharges": "cutting_charges", "feedRate": "feed_rate"}
+             "cutCharges": "cutting_charges", "feedRate": "feed_rate",
+             "wasteMeatRate": "waste_meat_rate"}
     for src, col in money.items():
         if src in d:
             setattr(entry, col, to_dec(d.get(src), src))

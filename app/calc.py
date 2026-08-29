@@ -270,6 +270,18 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     feed_rate = _d(entry.get("feedRate"))
     feed_amt = _d(feed_bags) * feed_rate
 
+    # ---- waste meat sold ---------------------------------------------------
+    # The shrinkage/byproduct meat (waste_meat_g above) doesn't all go to
+    # waste — some of it is sold off by the bucket. Unlike feed purchase this
+    # is a SALE, so it adds to the day's profit rather than coming off it. A
+    # half bucket counts as half a full bucket for both pricing and the
+    # reported bucket count — two half buckets = one full bucket.
+    waste_half_buckets = int(entry.get("wasteHalfBuckets") or 0)
+    waste_full_buckets = int(entry.get("wasteFullBuckets") or 0)
+    waste_meat_rate = _d(entry.get("wasteMeatRate"))
+    waste_buckets_equiv = _d(waste_full_buckets) + _d(waste_half_buckets) / Decimal(2)
+    waste_meat_amt = waste_buckets_equiv * waste_meat_rate
+
     # ---- profit & loss (daily; overheads are handled separately) --------
     open_meat_value = _d(entry.get("openMeatG") or 0) / Decimal(1000) * meat_cost_kg
     close_live_value = _d(entry.get("closeWtG") or 0) / Decimal(1000) * avg_rate
@@ -285,8 +297,10 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
     # Wages, shop extras, this day's share of the monthly overheads and any
     # feed bought today are all real costs. An advance is cash moving
     # against wages already counted, so it is reported for visibility but
-    # never deducted again.
-    net_profit = gross_profit - wages - other_exp - overheads - feed_amt
+    # never deducted again. Waste meat sold is the opposite of feed — a real
+    # sale, not tracked in COGS/revenue since it isn't part of the ordinary
+    # dressed-bird pool — so it is ADDED here instead of subtracted.
+    net_profit = gross_profit - wages - other_exp - overheads - feed_amt + waste_meat_amt
 
     # ---- loss drivers ----------------------------------------------------
     mort_value = _d(entry.get("mortWtG") or 0) / Decimal(1000) * avg_rate
@@ -354,6 +368,9 @@ def compute_entry(entry: dict, settings: dict, labour: dict | None = None) -> di
         "openMeatValue": money(open_meat_value), "closeValue": money(close_value),
         "cogs": money(cogs), "grossProfit": money(gross_profit),
         "feedBags": feed_bags, "feedRate": money(feed_rate), "feedAmt": money(feed_amt),
+        "wasteHalfBuckets": waste_half_buckets, "wasteFullBuckets": waste_full_buckets,
+        "wasteMeatRate": money(waste_meat_rate),
+        "wasteBucketsEquiv": float(waste_buckets_equiv), "wasteMeatAmt": money(waste_meat_amt),
         "labour": money(wages), "advances": money(advances),
         "otherExp": money(other_exp), "overheads": money(overheads),
         "manDays": float(labour.get("manDays") or 0),
@@ -385,6 +402,9 @@ REQUIRED_FIELDS = [
      lambda e: int(e.get("closeBirds") or 0) == 0 or int(e.get("closeWtG") or 0) > 0, True),
     ("feedRate", "Feed purchase — price per bag",
      lambda e: int(e.get("feedBags") or 0) == 0 or float(e.get("feedRate") or 0) > 0, False),
+    ("wasteMeatRate", "Waste meat sold — price per bucket",
+     lambda e: (int(e.get("wasteHalfBuckets") or 0) == 0 and int(e.get("wasteFullBuckets") or 0) == 0)
+     or float(e.get("wasteMeatRate") or 0) > 0, False),
 ]
 
 

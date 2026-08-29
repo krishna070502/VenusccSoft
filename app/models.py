@@ -165,6 +165,20 @@ class DailyEntry(db.Model):
     feed_rate = Column(Numeric(12, 2), nullable=False, default=0)   # price per bag
     feed_supplier = Column(String(160))
 
+    # -- waste meat sold -----------------------------------------------------
+    # The shrinkage/byproduct meat (see waste_meat_g in compute_entry) does
+    # not have to be thrown away — some of it is sold off in buckets. This is
+    # a SALE, so unlike feed purchase it ADDS to the day's profit rather than
+    # coming off it. Sold by the bucket, half or full; two half buckets count
+    # as one full bucket for both pricing and the reported bucket count (see
+    # compute_entry's waste_buckets_equiv). Like the selling rates in Section
+    # C (not the buying rate), this is visible/editable by every role, not
+    # just admin — it's what the shop charges a customer, not what it paid a
+    # supplier.
+    waste_half_buckets = Column(Integer, nullable=False, default=0)
+    waste_full_buckets = Column(Integer, nullable=False, default=0)
+    waste_meat_rate = Column(Numeric(12, 2), nullable=False, default=0)   # price per full bucket
+
     notes = Column(Text)
     explanation = Column(Text)
 
@@ -239,6 +253,9 @@ class DailyEntry(db.Model):
             "feedBags": self.feed_bags,
             "feedRate": float(self.feed_rate),
             "feedSupplier": self.feed_supplier or "",
+            "wasteHalfBuckets": self.waste_half_buckets,
+            "wasteFullBuckets": self.waste_full_buckets,
+            "wasteMeatRate": float(self.waste_meat_rate),
             "notes": self.notes or "",
             "explanation": self.explanation or "",
             "status": self.status,
