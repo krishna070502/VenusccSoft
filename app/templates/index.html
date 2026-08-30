@@ -658,20 +658,9 @@
           </div>
         </fieldset>
 
-        <!-- I: Closing -->
+        <!-- I: Feed purchase -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">I</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">birds &amp; weight computed automatically — closing meat is entered in Section G</span></div>
-          <div class="grid-f">
-            <div><label class="lbl flex items-center gap-2" for="f_closeBirds">Closing birds<button type="button" data-auto="closeBirds" data-admin="1" class="autoBtn ml-auto">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" readonly tabindex="-1" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
-            <div><label class="lbl flex items-center gap-2">Closing bird weight<button type="button" data-auto="closeWt" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
-            <div><label class="lbl">Closing meat<span class="ml-auto text-[10px] uppercase tracking-wide text-slate-400 normal-case">from Section G</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeatMirror_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeatMirror_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div></div>
-            <div class="sm:col-span-2"><label class="lbl" for="f_notes" title="Optional remarks for anyone reviewing this entry later.">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
-          </div>
-        </fieldset>
-
-        <!-- J: Feed purchase -->
-        <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-amber-600"><span class="sec-badge">J</span>Feed Purchase<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">deducted from today's profit, not from revenue</span></div>
+          <div class="sec-head bg-amber-600"><span class="sec-badge">I</span>Feed Purchase<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">deducted from today's profit, not from revenue</span></div>
           <div class="grid-f">
             <div><label class="lbl" for="f_feedBags" title="Number of feed bags bought today. Leave at 0 if none were bought.">Bags bought</label><input type="number" min="0" step="1" id="f_feedBags" class="inp num" placeholder="0" /></div>
             <div><label class="lbl" for="f_feedRate" title="Price paid per bag. Only required if bags bought is above 0.">Price per bag</label><input type="number" min="0" step="0.01" id="f_feedRate" class="inp num" placeholder="0.00" /></div>
@@ -680,15 +669,26 @@
           <div class="px-5 pb-5"><div class="calcbox bg-amber-50 border border-amber-200"><span class="text-amber-800">Feed purchase amount</span><span class="ml-auto font-bold num text-amber-900" id="o_feedAmt">₹0.00</span></div></div>
         </fieldset>
 
-        <!-- K: Waste meat sold -->
+        <!-- J: Waste meat sold -->
         <fieldset class="card overflow-hidden">
-          <div class="sec-head bg-emerald-600"><span class="sec-badge">K</span>Waste Meat Sold<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">added to today's profit — 2 half buckets = 1 full bucket</span></div>
+          <div class="sec-head bg-emerald-600"><span class="sec-badge">J</span>Waste Meat Sold<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">added to today's profit — 2 half buckets = 1 full bucket</span></div>
           <div class="grid-f">
             <div><label class="lbl" for="f_wasteHalfBuckets" title="Number of half buckets of waste meat sold today. Leave at 0 if none.">Half buckets sold</label><input type="number" min="0" step="1" id="f_wasteHalfBuckets" class="inp num" placeholder="0" /></div>
             <div><label class="lbl" for="f_wasteFullBuckets" title="Number of full buckets of waste meat sold today. Leave at 0 if none.">Full buckets sold</label><input type="number" min="0" step="1" id="f_wasteFullBuckets" class="inp num" placeholder="0" /></div>
             <div><label class="lbl" for="f_wasteMeatRate" title="Price charged per full bucket. Only required if any buckets were sold.">Price per bucket</label><input type="number" min="0" step="0.01" id="f_wasteMeatRate" class="inp num" placeholder="0.00" /></div>
           </div>
           <div class="px-5 pb-5"><div class="calcbox bg-emerald-50 border border-emerald-200"><span class="text-emerald-800">Waste meat sold amount</span><span class="ml-auto font-bold num text-emerald-900" id="o_wasteMeatAmt">₹0.00</span></div></div>
+        </fieldset>
+
+        <!-- K: Closing -->
+        <fieldset class="card overflow-hidden">
+          <div class="sec-head bg-slate-600"><span class="sec-badge !text-slate-900">K</span>Closing Balance (carried to tomorrow)<span class="ml-auto text-[11px] font-semibold normal-case tracking-normal opacity-80">birds &amp; weight computed automatically — closing meat is entered in Section G</span></div>
+          <div class="grid-f">
+            <div><label class="lbl flex items-center gap-2" for="f_closeBirds">Closing birds<button type="button" data-auto="closeBirds" data-admin="1" class="autoBtn ml-auto">auto</button></label><input type="number" min="0" step="1" id="f_closeBirds" class="inp num" placeholder="0" readonly tabindex="-1" /><p class="text-[11px] text-slate-400 mt-1" id="hint_closeBirds"></p></div>
+            <div><label class="lbl flex items-center gap-2">Closing bird weight<button type="button" data-auto="closeWt" data-admin="1" class="autoBtn ml-auto">auto</button></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeWt_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeWt_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div><p class="text-[11px] text-slate-400 mt-1" id="hint_closeWt"></p></div>
+            <div><label class="lbl">Closing meat<span class="ml-auto text-[10px] uppercase tracking-wide text-slate-400 normal-case">from Section G</span></label><div class="kgg"><input type="number" min="0" step="1" id="f_closeMeatMirror_kg" class="inp num" placeholder="0" readonly tabindex="-1" /><span>kg</span><input type="number" min="0" max="999" step="1" id="f_closeMeatMirror_g" class="inp num" placeholder="0" readonly tabindex="-1" /><span>g</span></div></div>
+            <div class="sm:col-span-2"><label class="lbl" for="f_notes" title="Optional remarks for anyone reviewing this entry later.">Supervisor remarks</label><input type="text" id="f_notes" class="inp" placeholder="Optional" /></div>
+          </div>
         </fieldset>
 
         <div id="validationBox" class="hidden card border-rose-300 bg-rose-50 p-4">
@@ -720,7 +720,7 @@
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Advances paid <span class="text-[10px] uppercase tracking-wide text-slate-400">memo</span></dt><dd class="font-bold num text-slate-500" id="o_advances">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Other expenses</dt><dd class="font-bold num text-rose-600" id="o_otherExp">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Feed purchase</dt><dd class="font-bold num text-rose-600" id="o_feedAmtSummary">₹0.00</dd></div>
-            <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Waste meat sold</dt><dd class="font-bold num text-emerald-600" id="o_wasteMeatAmtSummary">₹0.00</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">Waste meat sold</dt><dd class="font-bold num text-emerald-600" id="o_wasteMeatAmtSummary">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between"><dt class="text-slate-500">Overheads (day&rsquo;s share)</dt><dd class="font-bold num text-rose-600" id="o_overheads">₹0.00</dd></div>
             <div data-admin="1" class="border-t-2 border-slate-200 pt-3 flex justify-between items-baseline"><dt class="font-bold text-slate-700">Net profit / loss</dt><dd class="font-bold num text-xl" id="o_netProfit">₹0.00</dd></div>
             <div data-admin="1" class="flex justify-between text-xs"><dt class="text-slate-400">Closing stock value (carried)</dt><dd class="font-semibold num text-slate-500" id="o_closeValue">₹0.00</dd></div>

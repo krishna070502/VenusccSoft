@@ -549,7 +549,7 @@ function applyAutoFill(c){
   setCloseReadonly(['f_closeWt_kg','f_closeWt_g'],S.auto.closeWt);
   // Closing meat has no auto/manual toggle any more — it's always a direct
   // physical count, entered in Section G. Mirror it (read-only) into
-  // Section I alongside birds/weight, and mirror the reconciled actual
+  // Section K alongside birds/weight, and mirror the reconciled actual
   // meat obtained (Section G's skin+skinless+liver+closing, plus hotel and
   // damage) back up into Section F's read-only display.
   setG('f_closeMeatMirror', Math.round(c.expCloseMeatG));
