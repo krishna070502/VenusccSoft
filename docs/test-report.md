@@ -1,6 +1,6 @@
 # Venus Chicken Centers — Test Report
 
-**Run:** 2026-08-30  
+**Run:** 2026-08-31  
 **Database:** throwaway SQLite file, deleted after the run  
 **Result:** 626/626 passed, 0 failed
 
@@ -176,18 +176,18 @@
 | TC-099 | Approval | Resubmitting with an explanation succeeds | submit + explanation | pending | pending | PASS |
 | TC-100 | Daily entry | Another supervisor cannot see this branch's entries | priya lists entries | 0 | 0 | PASS |
 | TC-101 | Daily entry | Supervisor sees only entries they created | ravi lists entries | True | as expected | PASS |
-| TC-102 | Daily entry | Date range filter works | from=2026-08-21&to=2026-08-21 | True | as expected | PASS |
+| TC-102 | Daily entry | Date range filter works | from=2026-08-22&to=2026-08-22 | True | as expected | PASS |
 | TC-103 | Daily entry | Status filter works | status=approved | True | as expected | PASS |
 | TC-104 | Daily entry | Admin can delete an entry | DELETE | 200 | 200 | PASS |
 | TC-105 | Daily entry | Deleting a missing entry returns 404 | DELETE bogus | 404 | 404 | PASS |
 | TC-106 | Date permission | Supervisor can still edit their draft's fields | PUT notes on own draft | 200 | 200 | PASS |
 | TC-107 | Date permission | Supervisor cannot move a saved entry to another date | PUT businessDate as supervisor | 403 | 403 | PASS |
-| TC-108 | Date permission | The date is left untouched after the refusal | re-read the record | 2026-08-30 | 2026-08-30 | PASS |
+| TC-108 | Date permission | The date is left untouched after the refusal | re-read the record | 2026-08-31 | 2026-08-31 | PASS |
 | TC-109 | Date permission | The attempt is written to the audit log | action 'Blocked date change' | True | as expected | PASS |
-| TC-110 | Date permission | A supervisor's chosen date is silently overridden to today | POST with businessDate | 2026-08-30 | 2026-08-30 | PASS |
-| TC-111 | Date permission | Admin moves an entry from the approval panel | PUT /costing businessDate | 2026-08-10 | 2026-08-10 | PASS |
-| TC-112 | Date permission | Admin moves it on the edit path too | PUT businessDate | 2026-08-11 | 2026-08-11 | PASS |
-| TC-113 | Date permission | Admin can move and approve in one call | POST decision with businessDate | ('2026-08-12', 'approved') | ('2026-08-12', 'approved') | PASS |
+| TC-110 | Date permission | A supervisor's chosen date is silently overridden to today | POST with businessDate | 2026-08-31 | 2026-08-31 | PASS |
+| TC-111 | Date permission | Admin moves an entry from the approval panel | PUT /costing businessDate | 2026-08-11 | 2026-08-11 | PASS |
+| TC-112 | Date permission | Admin moves it on the edit path too | PUT businessDate | 2026-08-12 | 2026-08-12 | PASS |
+| TC-113 | Date permission | Admin can move and approve in one call | POST decision with businessDate | ('2026-08-13', 'approved') | ('2026-08-13', 'approved') | PASS |
 | TC-114 | Date permission | The move is recorded with both dates | activity detail | True | as expected | PASS |
 | TC-115 | Date permission | Moving onto an occupied day is refused | collide with an existing entry | 409 | 409 | PASS |
 | TC-116 | Date permission | A malformed date is a 422, not a crash | businessDate='31-02-2026' | 422 | 422 | PASS |
@@ -338,7 +338,7 @@
 | TC-261 | Overhead ledger | Branch-scoped ledger returns day rows | GET /api/overheads?branch=B01 | True | as expected | PASS |
 | TC-262 | Overhead ledger | The dated ₹500 lands on its own day in full | today's row | True | as expected | PASS |
 | TC-263 | Overhead ledger | A ₹3,000 monthly rent is divided across the month | 3000/31 on each day | True | as expected | PASS |
-| TC-264 | Overhead ledger | Every day of the month in range carries a share | one row per day so far | 30 | 30 | PASS |
+| TC-264 | Overhead ledger | Every day of the month in range carries a share | one row per day so far | 31 | 31 | PASS |
 | TC-265 | Overhead ledger | It totals by branch | byBranch | True | as expected | PASS |
 | TC-266 | Overhead ledger | Dated and spread are reported separately | byBranch split | True | as expected | PASS |
 | TC-267 | Overhead ledger | All branches at once | no branch filter | True | as expected | PASS |
@@ -441,10 +441,10 @@
 | TC-364 | Manual closing stock | ...while closing birds (kept manual, value re-sent) holds at 111 | 111 | 111 | 111 | PASS |
 | TC-365 | Manual closing stock | Switching back to auto recomputes it, discarding 111 | server's own figure again | 160 | 160 | PASS |
 | TC-366 | Manual closing stock | Sending a value with no closeAuto flag at all is not treated as manual | still computed, ignores 555 | 160 | 160 | PASS |
-| TC-367 | Today-only | A supervisor's POST date is silently overridden to today | businessDate sent D(9) | 2026-08-30 | 2026-08-30 | PASS |
-| TC-368 | Today-only | An admin's POST date is left exactly as sent | businessDate sent D(600) | 2025-01-07 | 2025-01-07 | PASS |
+| TC-367 | Today-only | A supervisor's POST date is silently overridden to today | businessDate sent D(9) | 2026-08-31 | 2026-08-31 | PASS |
+| TC-368 | Today-only | An admin's POST date is left exactly as sent | businessDate sent D(600) | 2025-01-08 | 2025-01-08 | PASS |
 | TC-369 | Today-only | A supervisor cannot GET another user's past-dated entry, even in their own branch | GET as ravi | 403 | 403 | PASS |
-| TC-370 | Today-only | The admin's move actually lands the entry in the past | businessDate | 2026-08-21 | 2026-08-21 | PASS |
+| TC-370 | Today-only | The admin's move actually lands the entry in the past | businessDate | 2026-08-22 | 2026-08-22 | PASS |
 | TC-371 | Today-only | A supervisor cannot GET even their own entry once it is dated in the past | GET as priya | 403 | 403 | PASS |
 | TC-372 | Today-only | A supervisor cannot PUT their own draft once it is dated in the past | PUT as priya, still draft, still theirs | 403 | 403 | PASS |
 | TC-373 | Today-only | ...with the same 'locked' shape used for any other edit lock | error field | locked | locked | PASS |
@@ -461,10 +461,10 @@
 | TC-384 | Carry-forward | The going sale rates carry forward too | rateSkin/rateSkinless/rateLiver/rateLive | [200.0, 230.0, 130.0, 150.0] | [200.0, 230.0, 130.0, 150.0] | PASS |
 | TC-385 | Carry-forward | An admin gets the same closeBirds figure as a supervisor | ADMIN vs SUP | 120 | 120 | PASS |
 | TC-386 | Carry-forward | found is false when nothing has ever been approved for that combo | B02/parents, no approvals | False | False | PASS |
-| TC-387 | Today-only | A supervisor's ledger POST date is also overridden to today | date sent D(9) | 2026-08-30 | 2026-08-30 | PASS |
+| TC-387 | Today-only | A supervisor's ledger POST date is also overridden to today | date sent D(9) | 2026-08-31 | 2026-08-31 | PASS |
 | TC-388 | Today-only | A supervisor cannot edit a 'work' row dated in the past | PUT as ravi | 403 | 403 | PASS |
 | TC-389 | Today-only | A supervisor cannot delete a ledger row at all any more | DELETE as ravi | 403 | 403 | PASS |
-| TC-390 | Overhead edit | A supervisor's dated overhead is pinned to today, not D(9) | date | 2026-08-30 | 2026-08-30 | PASS |
+| TC-390 | Overhead edit | A supervisor's dated overhead is pinned to today, not D(9) | date | 2026-08-31 | 2026-08-31 | PASS |
 | TC-391 | Overhead edit | ...and they can correct it while it's still pending | 650 | 650.0 | 650.0 | PASS |
 | TC-392 | Overhead edit | Another supervisor cannot touch someone else's overhead | PUT as priya | 403 | 403 | PASS |
 | TC-393 | Overhead edit | Once approved, the supervisor can no longer edit it | PUT after approval | 403 | 403 | PASS |
@@ -527,7 +527,7 @@
 | TC-450 | Purchase ledger | ...and off the closing weight | 200,000 open + 600,000 bought - 41,000 live - 82,000 dressed - 40,000 returned = 637,000 | 637000 | 637000 | PASS |
 | TC-451 | Billing adjustment | A supervisor cannot create one | 403 | 403 | 403 | PASS |
 | TC-452 | Billing adjustment | A zero amount is refused | 422 | 422 | 422 | PASS |
-| TC-453 | Billing adjustment | A cash adjustment saves with the fields sent | (300.0, True, '2026-06-11') | (300.0, True, '2026-06-11') | (300.0, True, '2026-06-11') | PASS |
+| TC-453 | Billing adjustment | A cash adjustment saves with the fields sent | (300.0, True, '2026-06-12') | (300.0, True, '2026-06-12') | (300.0, True, '2026-06-12') | PASS |
 | TC-454 | Billing adjustment | A negative, on-account adjustment saves too | (-150.0, False) | (-150.0, False) | (-150.0, False) | PASS |
 | TC-455 | Billing adjustment | A cash adjustment lands in the 'cash' bucket | 300.0 | 300.0 | 300.0 | PASS |
 | TC-456 | Billing adjustment | A credit adjustment lands in the 'credit' bucket | -150.0 | -150.0 | -150.0 | PASS |

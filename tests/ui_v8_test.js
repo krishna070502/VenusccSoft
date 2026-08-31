@@ -755,6 +755,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         w.document.activeElement !== wheelBox);
   check('the value itself is untouched', wheelBox.value === '42');
 
+  console.log('\n[23] grams must be entered in full — no truncated shorthand like 8 for 840');
+  nav('entry'); await sleep(300);
+  setVal($('f_mortWt_g'), '8');
+  click($('actSubmit')); await sleep(300);
+  check('a single-digit grams entry is refused on submit',
+        $('validationList').textContent.includes('Mortality weight — grams'),
+        $('validationList').textContent);
+  check('...and the message explains what to do',
+        /full 3 digits/.test($('validationList').textContent));
+  check('...the box itself is marked missing', $('f_mortWt_g').classList.contains('missing'));
+
+  setVal($('f_mortWt_g'), '45');
+  click($('actSubmit')); await sleep(300);
+  check('a two-digit shorthand is refused too',
+        $('validationList').textContent.includes('Mortality weight — grams'));
+
+  setVal($('f_mortWt_g'), '840');
+  click($('actSubmit')); await sleep(300);
+  check('the full three digits is accepted — the grams message is gone',
+        !$('validationList').textContent.includes('Mortality weight — grams'),
+        $('validationList').textContent);
+
+  setVal($('f_mortWt_g'), '0');
+  click($('actSubmit')); await sleep(300);
+  check('zeroing it back out is accepted too (no remainder, nothing ambiguous)',
+        !$('validationList').textContent.includes('Mortality weight — grams'));
+
+  // A value that arrives programmatically (carry-forward, auto-compute) —
+  // never typed, so no 'input' event — must NOT be flagged even if its own
+  // remainder happens to be small. Set .value directly, skipping setVal()'s
+  // dispatchEvent, to simulate exactly that.
+  $('f_openWt_g').value = '8';
+  click($('actSubmit')); await sleep(300);
+  check('a value set programmatically (not typed) is trusted, even if small',
+        !$('validationList').textContent.includes('Opening bird weight — grams'),
+        $('validationList').textContent);
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));

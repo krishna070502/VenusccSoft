@@ -91,7 +91,7 @@ var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[]
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
-          purchaseLedger:null, openPurchases:{} };
+          purchaseLedger:null, openPurchases:{}, gramsTouched:{} };
 
 /* ---------------- helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -827,6 +827,7 @@ function readForm(){
 }
 
 function fillForm(e){
+  S.gramsTouched={};   /* a freshly loaded/blank form starts with nothing typed yet */
   setV('f_datetime',e.datetime||nowLocal());
   setV('f_openBirds',e.openBirds); setG('f_openWt',e.openWtG); setV('f_openRate',e.openRate); setG('f_openMeat',e.openMeatG);
   setV('f_rateSkin',e.rateSkin); setV('f_rateSkinless',e.rateSkinless); setV('f_rateLiver',e.rateLiver); setV('f_rateLive',e.rateLive);
@@ -956,6 +957,51 @@ var REQUIRED = [
   {id:'f_wasteMeatRate', label:'Waste meat sold — price per bucket', test:function(){ return (v('f_wasteHalfBuckets')===0 && v('f_wasteFullBuckets')===0) || v('f_wasteMeatRate')>0; }}
 ];
 
+/* ---------------- grams must be entered in full (no truncated shorthand) ----------------
+   A grams box next to a kg box is easy to under-type — "8" when the scale
+   actually read 840 g, "45" when it read 450 g — because the missing zeros
+   never show up as an error, they just quietly become a wrong weight. The
+   server only ever receives the two boxes already combined into one total
+   (see gv()), so it has no way to tell a genuine 8 g remainder from a typo
+   after the fact — this has to be caught here, at the point of typing.
+
+   Only fields the person actually TYPES into are checked (see the 'input'
+   listener below, which is how a box gets into S.gramsTouched) — a value
+   that arrived via carry-forward or an auto-computed closing figure
+   (setG()/setV() do not fire an 'input' event) is trusted as-is, however
+   small its remainder, since that came from real arithmetic, not a guess.
+   Once a box is touched, it must be left at 0 (or blank) or contain the
+   full three digits — 008, 045, 840 — never a bare 8 or 45. */
+var GRAMS_FIELDS = [
+  {id:'f_openWt_g',        label:'Opening bird weight — grams'},
+  {id:'f_openMeat_g',      label:'Open meat (previous day) — grams'},
+  {id:'f_liveSoldWt_g',    label:'Live sold weight — grams'},
+  {id:'f_mortWt_g',        label:'Mortality weight — grams'},
+  {id:'f_damage_g',        label:'Damage meat — grams'},
+  {id:'f_dressedWt_g',     label:'Live weight dressed — grams'},
+  {id:'f_skinSold_g',      label:'Skin sold — grams'},
+  {id:'f_skinlessSold_g',  label:'Skinless sold — grams'},
+  {id:'f_liverSold_g',     label:'Liver sold — grams'},
+  {id:'f_closeMeat_g',     label:'Closing meat — grams'},
+  {id:'f_closeWt_g',       label:'Closing bird weight — grams'}
+];
+function gramsIncomplete(id){
+  if(!S.gramsTouched[id]) return false;
+  var el=$(id); if(!el) return false;
+  var raw=String(el.value||'').trim();
+  if(raw===''||raw==='0') return false;
+  return !/^\d{3}$/.test(raw);
+}
+
+/* delegated once at load, so it survives every re-render of the entry form
+   and needs no per-field wiring; a programmatic setV()/setG() never fires
+   'input', only real typing does, which is exactly the distinction this
+   needs (see the comment on GRAMS_FIELDS above). */
+document.addEventListener('input', function(ev){
+  var id=ev.target && ev.target.id;
+  if(id && /_g$/.test(id) && GRAMS_FIELDS.some(function(f){ return f.id===id; })) S.gramsTouched[id]=true;
+});
+
 function validate(showMarks){
   var miss=[];
   qsa('#entryForm .inp').forEach(function(el){ el.classList.remove('missing'); });
@@ -963,6 +1009,12 @@ function validate(showMarks){
   REQUIRED.forEach(function(r){
     if(first && r.firstDayOptional) return;          /* day one: no history to draw on */
     if(!r.test()){ miss.push(r.label); if(showMarks && $(r.id)) $(r.id).classList.add('missing'); }
+  });
+  GRAMS_FIELDS.forEach(function(f){
+    if(gramsIncomplete(f.id)){
+      miss.push(f.label+' looks incomplete — enter the full 3 digits (e.g. 008 or 840), not a shorthand like 8.');
+      if(showMarks && $(f.id)) $(f.id).classList.add('missing');
+    }
   });
   S.purchases.forEach(function(p,i){
     /* the purchase RATE is the admin's to enter at approval, never the supervisor's */
