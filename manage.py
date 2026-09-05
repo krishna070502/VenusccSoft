@@ -8,6 +8,13 @@ Database and account management.
     python manage.py reset-db             DROP everything, then recreate
     python manage.py recompute-closing-stock          dry run — report only
     python manage.py recompute-closing-stock --apply  write the changes
+    python manage.py check-continuity [branch]        read-only: reports every day
+                                                       whose opening birds/weight/meat
+                                                       don't match the previous day's
+                                                       closing, plus any date gaps.
+                                                       branch is a code or name substring,
+                                                       e.g. "check-continuity reddigudem".
+                                                       Omit it to check every branch.
 """
 import getpass
 import sys
@@ -268,9 +275,121 @@ def recompute_closing_stock(apply_changes=None, verbose=True):
             "applied": bool(apply_changes), "changes": changes}
 
 
+def check_continuity(branch_query=None, verbose=True):
+    """
+    Read-only audit: for every branch + category, walk APPROVED entries
+    oldest to newest and check that each day's own opening birds/weight/meat
+    match the PREVIOUS approved day's closing figures — exactly what
+    carry-forward assumes going forward (see entries_carry_forward() in
+    api.py), and exactly the kind of thing a supervisor typo or a manual
+    admin edit can quietly break without either of them noticing, since nothing
+    in the UI stops an admin from typing an opening figure that doesn't
+    match yesterday's close.
+
+    This makes NO changes — it only reads and prints/returns what it finds.
+    Unlike recompute_closing_stock() above, which only touches a closing
+    figure it can prove was auto-computed under the old formula, this has no
+    opinion on which side (yesterday's close or today's open) is the wrong
+    one — a human has to look at both and decide, which is exactly why this
+    stops at reporting rather than fixing anything.
+
+    branch_query, case-insensitive: matches a branch CODE exactly, or a
+    branch NAME as a substring — so "reddigudem" finds a branch named
+    "Reddigudem" or "Reddigudem Branch" alike. None/empty checks every
+    branch.
+
+    Also flags a gap: two approved entries for the same branch+category with
+    one or more calendar days between them and no approved entry on any of
+    those in-between dates — a day that was simply never submitted/approved,
+    which carry-forward would silently step over.
+
+    Returns {"branchesChecked", "mismatches": [...], "gaps": [...]} — each
+    mismatch/gap a plain dict, in the same oldest-to-newest order walked.
+    """
+    from datetime import timedelta
+
+    branches = Branch.query.order_by(Branch.code).all()
+    if branch_query:
+        q = branch_query.strip().lower()
+        branches = [b for b in branches
+                    if b.code.lower() == q or q in b.name.lower()]
+        if not branches:
+            print(f"No branch matches '{branch_query}'. "
+                  f"Known branches: " + ", ".join(f"{b.code} ({b.name})" for b in Branch.query.all()))
+            return {"branchesChecked": 0, "mismatches": [], "gaps": []}
+
+    mismatches = []
+    gaps = []
+
+    for branch in branches:
+        combos = (db.session.query(DailyEntry.category)
+                  .filter_by(branch_id=branch.id, status="approved")
+                  .distinct().all())
+        for (category,) in combos:
+            entries = (DailyEntry.query
+                       .filter_by(branch_id=branch.id, category=category, status="approved")
+                       .order_by(DailyEntry.business_date.asc(), DailyEntry.entered_at.asc())
+                       .all())
+            header_shown = False
+
+            def _header():
+                nonlocal header_shown
+                if verbose and not header_shown:
+                    print(f"\n{branch.name} ({branch.code}) · {category}")
+                    header_shown = True
+
+            for i in range(1, len(entries)):
+                prev, cur = entries[i - 1], entries[i]
+
+                gap_days = (cur.business_date - prev.business_date).days
+                if gap_days > 1:
+                    _header()
+                    if verbose:
+                        print(f"  gap: no approved entry between {prev.business_date} and "
+                              f"{cur.business_date} ({gap_days - 1} day(s) missing)")
+                    gaps.append({"branchCode": branch.code, "branchName": branch.name,
+                                "category": category, "from": prev.business_date.isoformat(),
+                                "to": cur.business_date.isoformat(), "missingDays": gap_days - 1})
+
+                prev_close = (prev.close_birds, prev.close_weight_g, prev.close_meat_g)
+                cur_open = (cur.open_birds, cur.open_weight_g, cur.open_meat_g)
+                if prev_close != cur_open:
+                    _header()
+                    if verbose:
+                        print(f"  {prev.business_date} -> {cur.business_date}: closing "
+                              f"birds/weightG/meatG {prev_close} does not match the next "
+                              f"day's opening {cur_open}  "
+                              f"(birds off by {cur_open[0] - prev_close[0]:+d}, "
+                              f"weight off by {cur_open[1] - prev_close[1]:+d} g, "
+                              f"meat off by {cur_open[2] - prev_close[2]:+d} g)")
+                    mismatches.append({
+                        "branchCode": branch.code, "branchName": branch.name,
+                        "category": category,
+                        "prevDate": prev.business_date.isoformat(),
+                        "date": cur.business_date.isoformat(),
+                        "prevClose": list(prev_close), "curOpen": list(cur_open),
+                        "birdsOff": cur_open[0] - prev_close[0],
+                        "weightOffG": cur_open[1] - prev_close[1],
+                        "meatOffG": cur_open[2] - prev_close[2],
+                    })
+
+    if verbose:
+        print()
+        if not mismatches and not gaps:
+            print("No continuity problems found — every approved day's opening matches "
+                  "the previous day's closing, with no gaps." +
+                  (f" (checked: {', '.join(b.code for b in branches)})" if branch_query else ""))
+        else:
+            print(f"{len(mismatches)} opening/closing mismatch(es), {len(gaps)} date gap(s) found. "
+                  "Nothing was changed — this is a read-only report.")
+
+    return {"branchesChecked": len(branches), "mismatches": mismatches, "gaps": gaps}
+
+
 COMMANDS = {"init-db": init_db, "upgrade-db": upgrade_db, "reset-db": reset_db,
             "create-admin": create_admin, "seed": seed,
-            "recompute-closing-stock": recompute_closing_stock}
+            "recompute-closing-stock": recompute_closing_stock,
+            "check-continuity": lambda: check_continuity(sys.argv[2] if len(sys.argv) > 2 else None)}
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""

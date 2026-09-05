@@ -3396,6 +3396,87 @@ def test_v24_waste_meat_sold():
 
 
 # ===========================================================================
+def test_v25_check_continuity():
+    print("\n[36] check-continuity — read-only opening/closing audit")
+    from manage import check_continuity
+
+    br = ADMIN.post("/api/branches", json={"name": "Reddigudem"}).get_json()
+    bcode = br["code"]
+    d1, d2, d5 = D(30), D(29), D(26)   # d2 and d5 are 3 calendar days apart — a gap
+
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+        e1 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(d1),
+                        created_by_id=admin_user.id, status="approved",
+                        close_birds=100, close_weight_g=200_000, close_meat_g=5_000)
+        db.session.add(e1); db.session.flush()
+        # opens 10 birds light of what day 1 actually closed at — the mistake
+        e2 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(d2),
+                        created_by_id=admin_user.id, status="approved",
+                        open_birds=90, open_weight_g=200_000, open_meat_g=5_000,
+                        close_birds=140, close_weight_g=300_000, close_meat_g=6_000)
+        db.session.add(e2); db.session.flush()
+        # correct open, but 3 days after e2 with nothing approved in between
+        e5 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(d5),
+                        created_by_id=admin_user.id, status="approved",
+                        open_birds=140, open_weight_g=300_000, open_meat_g=6_000,
+                        close_birds=150, close_weight_g=310_000, close_meat_g=6_200)
+        db.session.add(e5); db.session.commit()
+
+    def _snapshot():
+        with app.app_context():
+            rows = (DailyEntry.query.join(Branch).filter(Branch.code == bcode)
+                    .order_by(DailyEntry.business_date).all())
+            return [(r.business_date.isoformat(), r.open_birds, r.close_birds) for r in rows]
+
+    before = _snapshot()
+
+    with app.app_context():
+        result = check_continuity("reddigudem", verbose=False)
+    case("Continuity check", "Matching by a lowercase name substring finds the branch",
+         1, result["branchesChecked"], lambda: result["branchesChecked"])
+    case("Continuity check", "Finds exactly the one opening/closing mismatch",
+         1, len(result["mismatches"]), lambda: len(result["mismatches"]))
+    case("Continuity check", "...reports it as 10 birds short",
+         -10, result["mismatches"][0]["birdsOff"], lambda: result["mismatches"][0]["birdsOff"])
+    case("Continuity check", "Finds exactly the one date gap",
+         1, len(result["gaps"]), lambda: len(result["gaps"]))
+    case("Continuity check", "...reports 2 missing day(s) between d2 and d5",
+         2, result["gaps"][0]["missingDays"], lambda: result["gaps"][0]["missingDays"])
+
+    with app.app_context():
+        result_code = check_continuity(bcode, verbose=False)
+    case("Continuity check", "Matching by the exact branch code works the same way",
+         1, len(result_code["mismatches"]), lambda: len(result_code["mismatches"]))
+
+    with app.app_context():
+        no_match = check_continuity("no-such-branch-xyz", verbose=False)
+    case("Continuity check", "An unknown branch name/code checks nothing, not everything",
+         0, no_match["branchesChecked"], lambda: no_match["branchesChecked"])
+
+    case("Continuity check", "It is read-only — the rows are untouched after running it",
+         before, _snapshot(), lambda: _snapshot())
+
+    # A clean chain (opens exactly match yesterday's close, no gaps) reports nothing.
+    br2 = ADMIN.post("/api/branches", json={"name": "Continuity Clean Branch"}).get_json()
+    ADMIN.post("/api/entries", json=base_entry(
+        branch=br2["code"], category="broiler", businessDate=D(50),
+        closeBirds=80, closeWtG=160_000, closeMeatG=0, purchases=[]))
+    ADMIN.post("/api/entries", json=base_entry(
+        branch=br2["code"], category="broiler", businessDate=D(49),
+        openBirds=80, openWtG=160_000, openMeatG=0,
+        closeBirds=90, closeWtG=170_000, closeMeatG=0, purchases=[]))
+    # neither entry above was submitted/approved, so it shouldn't show up at all —
+    # only APPROVED entries carry forward and are worth auditing.
+    with app.app_context():
+        clean = check_continuity(br2["code"], verbose=False)
+    case("Continuity check", "Draft entries aren't audited — nothing approved yet, nothing to report",
+         (0, 0), (len(clean["mismatches"]), len(clean["gaps"])),
+         lambda: (len(clean["mismatches"]), len(clean["gaps"])))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3620,6 +3701,7 @@ if __name__ == "__main__":
     test_v22_purchase_bill_photo()
     test_v23_recompute_closing_stock_api()
     test_v24_waste_meat_sold()
+    test_v25_check_continuity()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
