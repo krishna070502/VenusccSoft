@@ -792,6 +792,49 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         !$('validationList').textContent.includes('Opening bird weight — grams'),
         $('validationList').textContent);
 
+  console.log('\n[24] a modal confirms every save, not just a toast that can be missed');
+  nav('entry'); await sleep(300);
+  // section [23] may have left this form editing a just-submitted (pending)
+  // record, in which case renderActions() shows actSave instead of actDraft —
+  // force back to a blank, unsaved 'new' entry so actDraft is guaranteed to
+  // exist, same as a supervisor starting a fresh entry for the day.
+  if ($('actNew')) { click($('actNew')); await sleep(300); }
+  // close whatever savedModal state earlier steps in this file may have left,
+  // so this section starts from a known, hidden baseline
+  $('savedModal').classList.add('hidden');
+  check('starts hidden', $('savedModal').classList.contains('hidden'));
+
+  check('a blank new entry shows the Save draft button', !!$('actDraft'));
+  // by this point in the suite an approved entry already exists for
+  // today/this branch/this category — the server refuses a second one for
+  // the same date (409 duplicate), same as it would for a real supervisor.
+  // Pick a date nothing else in this run touches so the draft save actually
+  // goes through, same as any other never-before-used day would.
+  setVal($('f_datetime'), '2030-01-01T10:00');
+  click($('actDraft'));
+  await sleep(700);
+  check('saving the entry opens the saved-confirmation modal, not just a toast',
+        !$('savedModal').classList.contains('hidden'));
+  check('...with a clear, specific message',
+        /saved|approval/i.test($('savedModalMsg').textContent), $('savedModalMsg').textContent);
+
+  click($('savedModalOk'));
+  await sleep(150);
+  check('clicking OK dismisses it', $('savedModal').classList.contains('hidden'));
+
+  // reopen it and dismiss via the backdrop instead, same as every other modal
+  $('savedModalMsg').textContent = 'Draft saved.';
+  $('savedModal').classList.remove('hidden');
+  click(q('#savedModal .absolute.inset-0'));
+  await sleep(150);
+  check('clicking the backdrop dismisses it too', $('savedModal').classList.contains('hidden'));
+
+  // reopen it and dismiss via Escape, same as every other modal
+  $('savedModal').classList.remove('hidden');
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(150);
+  check('pressing Escape dismisses it too', $('savedModal').classList.contains('hidden'));
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));

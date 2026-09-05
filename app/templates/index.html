@@ -1426,6 +1426,16 @@
   </div>
 </div>
 
+<div id="savedModal" class="fixed inset-0 z-[71] hidden print:hidden">
+  <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" data-close="1"></div>
+  <div class="relative mx-auto mt-40 w-[92%] max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden pop text-center p-6">
+    <div class="h-16 w-16 rounded-full bg-emerald-100 text-emerald-600 grid place-items-center mx-auto mb-3"><i class="fa-solid fa-circle-check text-2xl"></i></div>
+    <h2 class="font-bold text-lg text-slate-900">Saved Successfully</h2>
+    <p class="text-sm text-slate-500 mt-1" id="savedModalMsg">Your data has been saved.</p>
+    <button type="button" data-close="1" id="savedModalOk" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-lg mt-4">OK</button>
+  </div>
+</div>
+
 <div id="printArea"></div>
 <div id="toast" class="fixed bottom-6 right-6 z-[70] hidden print:hidden"></div>
 

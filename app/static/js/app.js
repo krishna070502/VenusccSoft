@@ -126,6 +126,22 @@ function toast(msg,type){
   el.classList.remove('hidden'); clearTimeout(el._t); el._t=setTimeout(function(){el.classList.add('hidden');},3600);
 }
 
+/* A toast fades on its own after a few seconds — fine for a minor notice,
+   but easy to miss entirely on a phone glanced at mid-task, which is exactly
+   the moment "did that actually save?" matters most. Every genuine save
+   (Daily Entry, a worker, a customer, an overhead, settings, and so on)
+   shows this instead: a modal that stays up until the person actually
+   dismisses it (OK, the backdrop, or Escape — same as every other modal in
+   this app), so there is no doubt the save went through. Validation
+   failures and errors still use toast(); this is only for confirming
+   something genuinely saved. */
+function savedModal(msg){
+  var el=$('savedModal');
+  if(!el){ toast(msg||'Saved.'); return; }   /* defensive fallback, never expected to run */
+  if($('savedModalMsg')) $('savedModalMsg').textContent=msg||'Your data has been saved.';
+  el.classList.remove('hidden');
+}
+
 /* ---------------- running chicken ---------------- */
 function runChicken(){
   var o=$('runOverlay'), t=$('runTrack'); if(!o||!t) return;
@@ -3554,7 +3570,7 @@ function saveEntry(status) {
   p.then(function (rec) {
     upsertEntry(rec);
     clearDraft(savedDraftKey);   // it's on the server now — nothing left to recover
-    toast(status === 'draft' ? 'Draft saved.' : status === 'pending' ? 'Sent to admin for approval.' : 'Changes saved.');
+    savedModal(status === 'draft' ? 'Draft saved.' : status === 'pending' ? 'Sent to admin for approval.' : 'Changes saved.');
     /* hotel lines move customer balances, so pull the fresh totals back */
     return (hadHotel || (rec.hotelSales || []).length ? bootstrap() : Promise.resolve())
       .then(function () {
@@ -3573,8 +3589,8 @@ function decide(id, verdict, reason) {
   }
   api('POST', '/entries/' + id + '/decision', payload).then(function (rec) {
     upsertEntry(rec);
-    toast(verdict === 'approved' ? 'Approved and saved as a record.' : 'Returned to supervisor.',
-      verdict === 'approved' ? 'success' : 'warn');
+    if (verdict === 'approved') savedModal('Approved and saved as a record.');
+    else toast('Returned to supervisor.', 'warn');
     closeModal('reviewModal');
     /* approving turns pending hotel bills into real debt */
     return ((rec.hotelSales || []).length ? bootstrap() : Promise.resolve()).then(function () {
@@ -3786,7 +3802,7 @@ function customerModal(c) {
       .then(function () {
         closeModal('genModal');
         renderCustomers(); renderHotelRows(); recalc(); renderDashboard();
-        toast(c.id ? 'Saved.' : name + ' added.');
+        savedModal(c.id ? 'Saved.' : name + ' added.');
       }).catch(apiFail).then(function () { done('cuSave'); });
   });
 }
@@ -3818,7 +3834,7 @@ function receiptModal(cid) {
       .then(function () { return bootstrap(); })
       .then(function () {
         closeModal('genModal'); renderCustomers(); renderDashboard();
-        toast(money0(v('rcAmt')) + ' received from ' + c.name + '.');
+        savedModal(money0(v('rcAmt')) + ' received from ' + c.name + '.');
       }).catch(apiFail);
   });
 }
@@ -3852,7 +3868,7 @@ function editReceiptModal(cid, r) {
       .then(function () {
         renderCustomers(); renderDashboard();
         openCustomerLedger(cid);
-        toast('Receipt updated.');
+        savedModal('Receipt updated.');
       }).catch(apiFail).then(function () { done('rcESave'); });
   });
 }
@@ -3891,7 +3907,7 @@ function adjustBillModal(cid) {
       .then(function () { return bootstrap(); })
       .then(function () {
         closeModal('genModal'); renderCustomers(); renderDashboard();
-        toast((amt > 0 ? 'Added ' : 'Reduced by ') + money0(Math.abs(amt)) + ' for ' + c.name + '.');
+        savedModal((amt > 0 ? 'Added ' : 'Reduced by ') + money0(Math.abs(amt)) + ' for ' + c.name + '.');
       }).catch(apiFail).then(function () { done('adjSave'); });
   });
 }
@@ -4479,7 +4495,7 @@ function adjustWage(workerId) {
   api('POST', '/ledger', { branch: w.branch, workerId: workerId, date: date, type: 'work',
     days: days || 1, wageOverride: amt })
     .then(function () { return bootstrap(); })
-    .then(function () { renderWorkers(); recalc(); renderDashboard(); toast('Wage set to ' + money0(amt) + ' for ' + date + '.'); })
+    .then(function () { renderWorkers(); recalc(); renderDashboard(); savedModal('Wage set to ' + money0(amt) + ' for ' + date + '.'); })
     .catch(apiFail)
     .then(function () { done(key); });
 }
@@ -4510,7 +4526,7 @@ function editLedgerRow(id) {
   if (row.type === 'work') body.days = row.days;
   api('PUT', '/ledger/' + id, body)
     .then(function () { return bootstrap(); })
-    .then(function () { renderWorkers(); recalc(); renderDashboard(); toast('Entry updated.'); })
+    .then(function () { renderWorkers(); recalc(); renderDashboard(); savedModal('Entry updated.'); })
     .catch(apiFail)
     .then(function () { done(key); });
 }
@@ -4550,7 +4566,7 @@ function workerModal(w) {
     if (!once('wkSave')) return;
     var p = w.id ? api('PUT', '/workers/' + w.id, body) : api('POST', '/workers', body);
     p.then(function () { return bootstrap(); })
-      .then(function () { closeModal('genModal'); renderWorkers(); toast('Worker saved.'); })
+      .then(function () { closeModal('genModal'); renderWorkers(); savedModal('Worker saved.'); })
       .catch(function (err) {
         if (err && err.payload && err.payload.error === 'duplicate') {
           toast(err.message, 'warn');
@@ -4593,7 +4609,7 @@ function advanceModal(workerId) {
       .then(function () { return bootstrap(); })
       .then(function () {
         closeModal('genModal'); renderWorkers(); recalc(); renderDashboard();
-        toast('Advance of ' + money0(amt) + ' recorded.');
+        savedModal('Advance of ' + money0(amt) + ' recorded.');
       })
       .catch(dupAware('advSave'))
       .then(function () { done('advSave'); });
@@ -4629,7 +4645,7 @@ function ledgerModal(kind, preWorker) {
     api('POST', '/ledger', { branch: S.branch, workerId: tv('lgWorker'), date: tv('lgDate'),
       type: tv('lgType'), amount: v('lgAmt'), note: tv('lgNote') })
       .then(function () { return bootstrap(); })
-      .then(function () { closeModal('genModal'); renderWorkers(); recalc(); renderDashboard(); toast('Saved.'); })
+      .then(function () { closeModal('genModal'); renderWorkers(); recalc(); renderDashboard(); savedModal('Saved.'); })
       .catch(dupAware('lgSave'))
       .then(function () { done('lgSave'); });
   });
@@ -4679,7 +4695,7 @@ function overheadModal() {
         S.overheads.push(rec);
         closeModal('genModal'); $('ovhMonth').value = rec.month;
         renderOverheads(); renderOverheadLedger(); renderDashboard();
-        toast(isAdmin() ? 'Overhead recorded.' : 'Sent to admin for approval.');
+        savedModal(isAdmin() ? 'Overhead recorded.' : 'Sent to admin for approval.');
       }).catch(apiFail).then(function () { done('ovSave'); });
   });
 }
@@ -4690,8 +4706,8 @@ function decideOverhead(id, verdict, reason) {
       var i = S.overheads.findIndex(function (x) { return x.id === rec.id; });
       if (i >= 0) S.overheads[i] = rec;
       renderOverheads(); renderDashboard();
-      toast(verdict === 'approved' ? 'Overhead approved — charged at month end.' : 'Overhead returned.',
-        verdict === 'approved' ? 'success' : 'warn');
+      if (verdict === 'approved') savedModal('Overhead approved — charged at month end.');
+      else toast('Overhead returned.', 'warn');
     }).catch(apiFail);
 }
 
@@ -5294,7 +5310,7 @@ function wire() {
       api('POST', '/dayclose/' + ver.getAttribute('data-dcverify') + '/verify', { reopen: reopen })
         .then(function () {
           renderDayClose();          // already refreshes the history table + closeBadge
-          toast(reopen ? 'Reopened.' : 'Verified.');
+          savedModal(reopen ? 'Reopened.' : 'Verified.');
         })
         .catch(apiFail)
         .then(function () { spinRelease(vkey, vctx); });
@@ -5438,7 +5454,7 @@ function wire() {
         .then(function (rec) {
           var i = S.overheads.findIndex(function (x) { return x.id === rec.id; });
           if (i >= 0) S.overheads[i] = rec;
-          renderOverheads(); renderDashboard(); toast('Overhead updated.');
+          renderOverheads(); renderDashboard(); savedModal('Overhead updated.');
         })
         .catch(apiFail).then(function () { done(key); });
     } else if (act === 'del' && confirm('Delete this overhead entry?')) {
@@ -5458,7 +5474,7 @@ function wire() {
         setV('newBranchName', ''); setV('newBranchCode', '');
         return bootstrap();
       })
-      .then(function () { renderAdmin(); refreshBranchSelects(); toast('Branch created.'); })
+      .then(function () { renderAdmin(); refreshBranchSelects(); savedModal('Branch created.'); })
       .catch(apiFail);
   });
   $('branchBody').addEventListener('input', function (ev) {
@@ -5489,7 +5505,7 @@ function wire() {
         setV('newUserName', ''); setV('newUserLogin', ''); setV('newUserPass', '');
         return bootstrap();
       })
-      .then(function () { renderAdmin(); toast('Account created.'); })
+      .then(function () { renderAdmin(); savedModal('Account created.'); })
       .catch(apiFail);
   });
   $('userBody').addEventListener('click', function (ev) {
@@ -5498,7 +5514,7 @@ function wire() {
     if (b.getAttribute('data-uact') === 'pass') {
       var p = prompt('New password for ' + u.name + ':');
       if (p) api('PUT', '/users/' + id + '/password', { password: p })
-        .then(function () { toast('Password updated.'); }).catch(apiFail);
+        .then(function () { savedModal('Password updated.'); }).catch(apiFail);
     } else if (confirm('Delete account "' + u.username + '"?')) {
       api('DELETE', '/users/' + id).then(function () { return bootstrap(); })
         .then(function () { renderAdmin(); toast('Account deleted.', 'warn'); }).catch(apiFail);
@@ -5508,7 +5524,7 @@ function wire() {
     api('PUT', '/settings', { wasteBroiler: v('setWasteBroiler'), wasteParents: v('setWasteParents'),
       tolerance: v('setTolerance'), dayWage: v('setDayWage') })
       .then(function () { return bootstrap(); })
-      .then(function () { recalc(); renderDashboard(); renderRecords(); toast('Settings saved.'); })
+      .then(function () { recalc(); renderDashboard(); renderRecords(); savedModal('Settings saved.'); })
       .catch(apiFail);
   });
 
@@ -5637,12 +5653,12 @@ function wire() {
     }).catch(apiFail);
   });
   /* ---- modals ---- */
-  ['reviewModal', 'genModal', 'lightbox'].forEach(function (id) {
+  ['reviewModal', 'genModal', 'lightbox', 'savedModal'].forEach(function (id) {
     $(id).addEventListener('click', function (ev) { if (ev.target.closest('[data-close]')) closeModal(id); });
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Escape') return;
-    ['lightbox', 'genModal', 'reviewModal'].forEach(function (id) { if (!$(id).classList.contains('hidden')) closeModal(id); });
+    ['lightbox', 'genModal', 'reviewModal', 'savedModal'].forEach(function (id) { if (!$(id).classList.contains('hidden')) closeModal(id); });
   });
   window.addEventListener('online', net);
   window.addEventListener('offline', net);
