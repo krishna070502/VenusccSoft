@@ -435,16 +435,40 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
             entry.open_rate = to_dec(d.get("openRate"), "openRate")
 
 
-def _previous_approved(branch_id: int, category: str) -> DailyEntry | None:
-    """The most recent APPROVED entry for this branch+category, or None."""
-    return (DailyEntry.query.filter_by(branch_id=branch_id, category=category, status="approved")
-            .order_by(DailyEntry.business_date.desc()).first())
+def _previous_for_carry_forward(branch_id: int, category: str) -> DailyEntry | None:
+    """
+    The most recent entry for this branch+category that a next day's opening
+    figures can safely be based on — the physical closing count as it stood
+    the last time anyone touched this branch+category, or None on the very
+    first entry.
+
+    This used to be APPROVED entries only. That silently broke carry-forward
+    the moment an admin fell even one day behind on reviewing a branch+
+    category — a submitted (pending) entry's closing figures were already
+    validated and computed the same way an approved one's are (see
+    create_entry()/validate_for_submission()), but _previous_approved()
+    skipped straight past it to whatever approval WAS on file, which could be
+    several days stale. Every day created after that inherited the same wrong
+    opening figures, compounding for as long as the backlog lasted — reported
+    as "parents closing birds/weight not carrying forward", though it applies
+    to any branch+category an admin doesn't approve same-day.
+    DRAFT is excluded (never submitted — may be incomplete or abandoned) and
+    REJECTED is excluded (admin found a problem with it, so its own closing
+    figures are exactly what's in question); PENDING and APPROVED are both
+    fair game, ordered by business_date then entered_at so a same-day PUT
+    that arrived after another entry still sorts correctly.
+    """
+    return (DailyEntry.query
+            .filter(DailyEntry.branch_id == branch_id, DailyEntry.category == category,
+                    DailyEntry.status.in_(("approved", "pending")))
+            .order_by(DailyEntry.business_date.desc(), DailyEntry.entered_at.desc())
+            .first())
 
 
 def _carry_forward_opening(entry: DailyEntry) -> None:
     """
     Set a brand-new entry's opening birds/weight/meat from the previous
-    approved day, server-side — a supervisor never gets to type these in (see
+    day, server-side — a supervisor never gets to type these in (see
     _apply_entry_fields above), so this is what actually carries them
     forward for a supervisor-created entry. An admin's own submission already
     carries the same client-fetched figures in the payload (see
@@ -456,7 +480,7 @@ def _carry_forward_opening(entry: DailyEntry) -> None:
     # `branch=branch` (see create_entry()), so the relationship is populated
     # immediately but the FK column only resolves at flush; entry.branch is
     # the one that's safe to read before that.
-    prev = _previous_approved(entry.branch.id, entry.category)
+    prev = _previous_for_carry_forward(entry.branch.id, entry.category)
     if prev:
         # Floored at 0 — compute_entry() now floors newly-computed
         # close_birds/close_weight_g/close_meat_g the same way (see the
@@ -1138,13 +1162,17 @@ def delete_entry(entry_id):
 @login_required
 def entries_carry_forward():
     """
-    Just enough of the most recent APPROVED day for this branch+category to
-    start tomorrow's entry — closing stock and the going rates — without
-    handing over the whole record. This is what lets a supervisor's opening
-    figures still carry forward from yesterday even though they can no
-    longer see or open yesterday's entry itself (today-only, see can_edit()
-    and get_entry()); an admin uses the same endpoint so there is only one
-    code path to keep correct.
+    Just enough of the most recent day for this branch+category to start
+    tomorrow's entry — closing stock and the going rates — without handing
+    over the whole record. This is what lets a supervisor's opening figures
+    still carry forward from yesterday even though they can no longer see or
+    open yesterday's entry itself (today-only, see can_edit() and
+    get_entry()); an admin uses the same endpoint so there is only one code
+    path to keep correct.
+
+    "Most recent" means the newest PENDING or APPROVED entry, not APPROVED
+    only — see _previous_for_carry_forward() for why an admin's approval
+    backlog must not stall this.
     """
     branch_code = request.args.get("branch")
     err = require_branch(branch_code)
@@ -1153,7 +1181,7 @@ def entries_carry_forward():
     branch = branch_by_code(branch_code)
     category = request.args.get("category") if request.args.get("category") in ("broiler", "parents") else "broiler"
 
-    prev = _previous_approved(branch.id, category)
+    prev = _previous_for_carry_forward(branch.id, category)
     if not prev:
         return jsonify({"found": False})
 

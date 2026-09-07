@@ -3477,6 +3477,77 @@ def test_v25_check_continuity():
 
 
 # ===========================================================================
+# 22. Carry-forward must not stall behind an approval backlog
+# ===========================================================================
+def test_v26_carry_forward_pending():
+    print("\n[37] carry-forward uses the latest PENDING entry too, not approved-only")
+
+    br = ADMIN.post("/api/branches", json={"name": "Carryforward Test Branch"}).get_json()
+    bcode = br["code"]
+
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+        branch_id = branch.id
+        admin_user_id = admin_user.id
+        # Day 0: approved -- the old baseline, several days back.
+        e0 = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(D(10)),
+                        created_by_id=admin_user.id, status="approved",
+                        close_birds=500, close_weight_g=1_000_000, close_meat_g=0)
+        db.session.add(e0); db.session.flush()
+        # Day 1: submitted (pending) -- admin hasn't reviewed it yet, but its
+        # closing figures are already validated and computed, same as an
+        # approved entry's (see create_entry()/validate_for_submission()).
+        e1 = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(D(9)),
+                        created_by_id=admin_user.id, status="pending",
+                        open_birds=500, open_weight_g=1_000_000, open_meat_g=0,
+                        close_birds=489, close_weight_g=978_000, close_meat_g=0)
+        db.session.add(e1); db.session.commit()
+        e1_id = e1.id
+
+    cf = ADMIN.get(f"/api/entries/carry-forward?branch={bcode}&category=parents").get_json()
+    case("Carry-forward backlog", "A backlogged (pending) day's closing birds are used, not the older approval",
+         489, cf["closeBirds"], lambda: cf["closeBirds"])
+    case("Carry-forward backlog", "...and its closing weight",
+         978_000, cf["closeWtG"], lambda: cf["closeWtG"])
+
+    # Reject day 1 — its own closing figures are exactly what's in question,
+    # so the next day must fall back past it to the last APPROVED day.
+    ADMIN.post(f"/api/entries/{e1_id}/decision", json={"verdict": "rejected"})
+    cf_after_reject = ADMIN.get(f"/api/entries/carry-forward?branch={bcode}&category=parents").get_json()
+    case("Carry-forward backlog", "A rejected day is skipped — falls back to the last approval",
+         500, cf_after_reject["closeBirds"], lambda: cf_after_reject["closeBirds"])
+
+    # A draft is never submitted (may be incomplete), so it must be skipped too.
+    with app.app_context():
+        e2 = DailyEntry(branch_id=branch_id, category="parents", business_date=date.fromisoformat(D(8)),
+                        created_by_id=admin_user_id, status="draft",
+                        close_birds=999, close_weight_g=999_000, close_meat_g=0)
+        db.session.add(e2); db.session.commit()
+    cf_with_draft = ADMIN.get(f"/api/entries/carry-forward?branch={bcode}&category=parents").get_json()
+    case("Carry-forward backlog", "A later draft is skipped too — still falls back to the last approval",
+         500, cf_with_draft["closeBirds"], lambda: cf_with_draft["closeBirds"])
+
+    # Full end-to-end: a supervisor creating the next day's entry actually
+    # receives the pending day's closing figures as their opening ones —
+    # this is the real path a live app takes, not just the preview endpoint.
+    with app.app_context():
+        e1_row = db.session.get(DailyEntry, e1_id)
+        e1_row.status = "pending"   # undo the rejection above for this half of the test
+        ravi = User.query.filter_by(username="ravi").first()
+        branch_row = db.session.get(Branch, branch_id)
+        if branch_row not in ravi.branches:
+            ravi.branches.append(branch_row)
+        db.session.commit()
+    created = SUP.post("/api/entries", json=base_entry(
+        branch=bcode, category="parents", businessDate=D(0),
+        openBirds=1, openWtG=1, openMeatG=1)).get_json()
+    case("Carry-forward backlog", "A brand-new supervisor entry opens with the pending day's close, not the stale approval",
+         (489, 978_000), (created["openBirds"], created["openWtG"]),
+         lambda: (created["openBirds"], created["openWtG"]))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3702,6 +3773,7 @@ if __name__ == "__main__":
     test_v23_recompute_closing_stock_api()
     test_v24_waste_meat_sold()
     test_v25_check_continuity()
+    test_v26_carry_forward_pending()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
