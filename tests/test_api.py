@@ -3548,6 +3548,41 @@ def test_v26_carry_forward_pending():
 
 
 # ===========================================================================
+# 23. Same fix, broiler category, across branches, and a genuine date gap
+#     (days nobody entered at all, not just an approval backlog)
+# ===========================================================================
+def test_v27_carry_forward_broiler_and_gaps():
+    print("\n[38] carry-forward fix covers broiler too, on every branch, "
+          "and survives days nobody entered at all")
+
+    for label in ("Broiler Gap Branch A", "Broiler Gap Branch B"):
+        br = ADMIN.post("/api/branches", json={"name": label}).get_json()
+        bcode = br["code"]
+
+        with app.app_context():
+            branch = Branch.query.filter_by(code=bcode).first()
+            admin_user = User.query.filter_by(role="admin").first()
+            # Approved 10 days ago -- then NOTHING recorded for a full week
+            # (a genuine missed-entry gap, not just an unapproved backlog).
+            e0 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(D(10)),
+                            created_by_id=admin_user.id, status="approved",
+                            close_birds=300, close_weight_g=600_000, close_meat_g=0)
+            db.session.add(e0); db.session.flush()
+            # Submitted 2 days ago, still awaiting review -- the backlog half
+            # of the same bug, layered on top of the gap.
+            e1 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(D(2)),
+                            created_by_id=admin_user.id, status="pending",
+                            open_birds=300, open_weight_g=600_000, open_meat_g=0,
+                            close_birds=250, close_weight_g=500_000, close_meat_g=0)
+            db.session.add(e1); db.session.commit()
+
+        cf = ADMIN.get(f"/api/entries/carry-forward?branch={bcode}&category=broiler").get_json()
+        case("Carry-forward broiler", f"{label}: an 8-day gap doesn't stop the pending day from being used",
+             (250, 500_000), (cf["closeBirds"], cf["closeWtG"]),
+             lambda: (cf["closeBirds"], cf["closeWtG"]))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3774,6 +3809,7 @@ if __name__ == "__main__":
     test_v24_waste_meat_sold()
     test_v25_check_continuity()
     test_v26_carry_forward_pending()
+    test_v27_carry_forward_broiler_and_gaps()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
