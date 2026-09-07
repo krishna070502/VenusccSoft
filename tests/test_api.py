@@ -3583,6 +3583,100 @@ def test_v27_carry_forward_broiler_and_gaps():
 
 
 # ===========================================================================
+# 24. recompute-closing-stock backfills the carry-forward-source bug too,
+#     not just the old closing-formula bug — for historical rows already
+#     sitting on it before the api.py fix was deployed.
+# ===========================================================================
+def test_v28_recompute_fixes_carry_forward_backlog():
+    print("\n[39] recompute-closing-stock repairs a historical carry-forward "
+          "backlog-skip, cascades it forward, and leaves an admin's own figures alone")
+    from manage import recompute_closing_stock
+
+    br = ADMIN.post("/api/branches", json={"name": "Recompute Backlog Test Branch"}).get_json()
+    bcode = br["code"]
+    dA, dB, dC, dD = D(20), D(19), D(18), D(17)
+
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+        sup_user = User.query.filter_by(role="supervisor").first()
+
+        # Day A: approved -- the old, stale baseline the pre-fix bug would
+        # have kept reusing.
+        eA = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(dA),
+                        created_by_id=admin_user.id, status="approved",
+                        close_birds=500, close_weight_g=1_000_000, close_meat_g=0)
+        db.session.add(eA); db.session.flush()
+
+        # Day B: submitted (pending), correctly opened from Day A, still
+        # awaiting review -- exactly the kind of entry the old bug skipped
+        # right past.
+        eB = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(dB),
+                        created_by_id=sup_user.id, status="pending",
+                        open_birds=500, open_weight_g=1_000_000, open_meat_g=0,
+                        live_sold_count=50, live_sold_weight_g=100_000,
+                        close_birds=450, close_weight_g=900_000, close_meat_g=0)
+        db.session.add(eB); db.session.flush()
+
+        # Day C: a SUPERVISOR's entry, written the way the OLD bug actually
+        # produced it -- opening copied from Day A's approved close (500 /
+        # 1,000,000), skipping right past Day B's pending 450 / 900,000, with
+        # its own closing figures computed off that same wrong opening at
+        # the time (mirrors exactly what the live app would have stored).
+        eC = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(dC),
+                        created_by_id=sup_user.id, status="approved",
+                        open_birds=500, open_weight_g=1_000_000, open_meat_g=0,
+                        live_sold_count=100, live_sold_weight_g=200_000,
+                        close_birds=400, close_weight_g=800_000, close_meat_g=0)
+        db.session.add(eC); db.session.flush()
+
+        # Day D: an ADMIN's entry, with the exact same stale-looking opening
+        # (500 / 1,000,000) -- but an admin can set opening figures to
+        # anything on purpose, so this must be left alone even though it
+        # matches the same suspicious pattern.
+        eD = DailyEntry(branch=branch, category="parents", business_date=date.fromisoformat(dD),
+                        created_by_id=admin_user.id, status="approved",
+                        open_birds=500, open_weight_g=1_000_000, open_meat_g=0,
+                        live_sold_count=10, live_sold_weight_g=20_000,
+                        close_birds=490, close_weight_g=980_000, close_meat_g=0)
+        db.session.add(eD); db.session.commit()
+        eC_id, eD_id = eC.id, eD.id
+
+    def _fetch(eid):
+        with app.app_context():
+            e = db.session.get(DailyEntry, eid)
+            return (e.open_birds, e.open_weight_g, e.close_birds, e.close_weight_g)
+
+    before_c, before_d = _fetch(eC_id), _fetch(eD_id)
+    case("Recompute backlog", "Before recomputing: Day C still shows the bug's stale opening",
+         (500, 1_000_000, 400, 800_000), before_c, lambda: before_c)
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=False)
+    case("Recompute backlog", "Dry run changes nothing",
+         before_c, _fetch(eC_id), lambda: _fetch(eC_id))
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=True)
+    after_c = _fetch(eC_id)
+    case("Recompute backlog", "Day C's opening is corrected to Day B's actual close, "
+                              "not Day A's stale approval",
+         (450, 900_000), after_c[:2], lambda: after_c[:2])
+    case("Recompute backlog", "...and Day C's own closing cascades from the corrected opening "
+                              "(450 - 100 sold = 350; 900,000 - 200,000 = 700,000)",
+         (350, 700_000), after_c[2:], lambda: after_c[2:])
+
+    after_d = _fetch(eD_id)
+    case("Recompute backlog", "Day D (admin-created, same-looking opening) is left completely alone",
+         before_d, after_d, lambda: after_d)
+
+    with app.app_context():
+        recompute_closing_stock(apply_changes=True)
+    case("Recompute backlog", "Running it again is a no-op — idempotent",
+         after_c, _fetch(eC_id), lambda: _fetch(eC_id))
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3810,6 +3904,7 @@ if __name__ == "__main__":
     test_v25_check_continuity()
     test_v26_carry_forward_pending()
     test_v27_carry_forward_broiler_and_gaps()
+    test_v28_recompute_fixes_carry_forward_backlog()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

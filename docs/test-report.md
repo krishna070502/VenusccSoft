@@ -2,7 +2,7 @@
 
 **Run:** 2026-09-07  
 **Database:** throwaway SQLite file, deleted after the run  
-**Result:** 642/642 passed, 0 failed
+**Result:** 648/648 passed, 0 failed
 
 ## Summary by module
 
@@ -59,6 +59,7 @@
 | RBAC | 17 | 17 | 0 |
 | Receipt edit | 7 | 7 | 0 |
 | Recompute API | 9 | 9 | 0 |
+| Recompute backlog | 6 | 6 | 0 |
 | Recompute cascade | 6 | 6 | 0 |
 | Robustness | 9 | 9 | 0 |
 | Scale | 2 | 2 | 0 |
@@ -72,7 +73,7 @@
 | Waste meat sold | 12 | 12 | 0 |
 | Window | 4 | 4 | 0 |
 | Workers rename | 1 | 1 | 0 |
-| **Total** | **642** | **642** | **0** |
+| **Total** | **648** | **648** | **0** |
 
 ## Test cases
 
@@ -631,92 +632,98 @@
 | TC-551 | Carry-forward backlog | A brand-new supervisor entry opens with the pending day's close, not the stale approval | (489, 978000) | (489, 978000) | (489, 978000) | PASS |
 | TC-552 | Carry-forward broiler | Broiler Gap Branch A: an 8-day gap doesn't stop the pending day from being used | (250, 500000) | (250, 500000) | (250, 500000) | PASS |
 | TC-553 | Carry-forward broiler | Broiler Gap Branch B: an 8-day gap doesn't stop the pending day from being used | (250, 500000) | (250, 500000) | (250, 500000) | PASS |
-| TC-554 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
-| TC-555 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
-| TC-556 | Schema | A boolean column's NOT NULL default is a valid literal under Postgres | TRUE/FALSE, not 0/1 | True | as expected | PASS |
-| TC-557 | Schema | A timestamp column's NOT NULL default is never a bare NULL under Postgres | True | True | as expected | PASS |
-| TC-558 | Schema | ...and the SQLite round trip actually succeeds, with every row backfilled | a real timestamp, not NULL | True | as expected | PASS |
-| TC-559 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
-| TC-560 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
-| TC-561 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
-| TC-562 | Schema | and says exactly what to run | message | True | as expected | PASS |
-| TC-563 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
-| TC-564 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
-| TC-565 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
-| TC-566 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
-| TC-567 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
-| TC-568 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
-| TC-569 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
-| TC-570 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
-| TC-571 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
-| TC-572 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
-| TC-573 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
-| TC-574 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
-| TC-575 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
-| TC-576 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
-| TC-577 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
-| TC-578 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
-| TC-579 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
-| TC-580 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
-| TC-581 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
-| TC-582 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
-| TC-583 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
-| TC-584 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
-| TC-585 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
-| TC-586 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
-| TC-587 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
-| TC-588 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
-| TC-589 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
-| TC-590 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
-| TC-591 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
-| TC-592 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
-| TC-593 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
-| TC-594 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
-| TC-595 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
-| TC-596 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
-| TC-597 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
-| TC-598 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
-| TC-599 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
-| TC-600 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
-| TC-601 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
-| TC-602 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
-| TC-603 | Activity log | Captures who did it | userName present | True | as expected | PASS |
-| TC-604 | Activity log | Captures the role | role present | True | as expected | PASS |
-| TC-605 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
-| TC-606 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
-| TC-607 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
-| TC-608 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
-| TC-609 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
-| TC-610 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
-| TC-611 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
-| TC-612 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
-| TC-613 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
-| TC-614 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
-| TC-615 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
-| TC-616 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
-| TC-617 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
-| TC-618 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
-| TC-619 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
-| TC-620 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
-| TC-621 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
-| TC-622 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 39 | 39 | PASS |
-| TC-623 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
-| TC-624 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
-| TC-625 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
-| TC-626 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
-| TC-627 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 39 | 39 | PASS |
-| TC-628 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
-| TC-629 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
-| TC-630 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
-| TC-631 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
-| TC-632 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
-| TC-633 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
-| TC-634 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
-| TC-635 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
-| TC-636 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
-| TC-637 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
-| TC-638 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
-| TC-639 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
-| TC-640 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
-| TC-641 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
-| TC-642 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |
+| TC-554 | Recompute backlog | Before recomputing: Day C still shows the bug's stale opening | (500, 1000000, 400, 800000) | (500, 1000000, 400, 800000) | (500, 1000000, 400, 800000) | PASS |
+| TC-555 | Recompute backlog | Dry run changes nothing | (500, 1000000, 400, 800000) | (500, 1000000, 400, 800000) | (500, 1000000, 400, 800000) | PASS |
+| TC-556 | Recompute backlog | Day C's opening is corrected to Day B's actual close, not Day A's stale approval | (450, 900000) | (450, 900000) | (450, 900000) | PASS |
+| TC-557 | Recompute backlog | ...and Day C's own closing cascades from the corrected opening (450 - 100 sold = 350; 900,000 - 200,000 = 700,000) | (350, 700000) | (350, 700000) | (350, 700000) | PASS |
+| TC-558 | Recompute backlog | Day D (admin-created, same-looking opening) is left completely alone | (500, 1000000, 490, 980000) | (500, 1000000, 490, 980000) | (500, 1000000, 490, 980000) | PASS |
+| TC-559 | Recompute backlog | Running it again is a no-op — idempotent | (450, 900000, 350, 700000) | (450, 900000, 350, 700000) | (450, 900000, 350, 700000) | PASS |
+| TC-560 | Schema | A current database reports no gaps | schema_gaps() | 0 | 0 | PASS |
+| TC-561 | Schema | Upgrading a current database changes nothing | upgrade_schema() | 0 | 0 | PASS |
+| TC-562 | Schema | A boolean column's NOT NULL default is a valid literal under Postgres | TRUE/FALSE, not 0/1 | True | as expected | PASS |
+| TC-563 | Schema | A timestamp column's NOT NULL default is never a bare NULL under Postgres | True | True | as expected | PASS |
+| TC-564 | Schema | ...and the SQLite round trip actually succeeds, with every row backfilled | a real timestamp, not NULL | True | as expected | PASS |
+| TC-565 | Schema | An older database is detected as behind | 4 tables + 1 column missing | True | as expected | PASS |
+| TC-566 | Schema | Without the upgrade it reports 503, not a bare 500 | GET /api/bootstrap | 503 | 503 | PASS |
+| TC-567 | Schema | and names the problem | error | schema_outdated | schema_outdated | PASS |
+| TC-568 | Schema | and says exactly what to run | message | True | as expected | PASS |
+| TC-569 | Schema | The upgrade adds the missing tables | 4 tables | True | as expected | PASS |
+| TC-570 | Schema | and the missing column | overheads.spend_date | True | as expected | PASS |
+| TC-571 | Schema | with nothing going wrong | problems | 0 | 0 | PASS |
+| TC-572 | Schema | No gaps are left afterwards | schema_gaps() | 0 | 0 | PASS |
+| TC-573 | Schema | Sign-in works once the database is upgraded | GET /api/bootstrap | 200 | 200 | PASS |
+| TC-574 | Schema | The existing overhead survived untouched | ₹25,000 rent still there | 25000.0 | 25000.0 | PASS |
+| TC-575 | Schema | and gained the new field as undated | dated flag | False | False | PASS |
+| TC-576 | Schema | Every module answers on the upgraded database | 5 endpoints | [200, 200, 200, 200, 200] | [200, 200, 200, 200, 200] | PASS |
+| TC-577 | Schema | Re-running the upgrade is a no-op | second run | 0 | 0 | PASS |
+| TC-578 | Branches | Create with an explicit code | code=BX1 | BX1 | BX1 | PASS |
+| TC-579 | Branches | Duplicate code is refused | code=BX1 again | 409 | 409 | PASS |
+| TC-580 | Branches | Blank name is refused | name='' | 422 | 422 | PASS |
+| TC-581 | Branches | Auto code is allocated when none is given | no code | True | as expected | PASS |
+| TC-582 | Branches | Scales to any number (adds 15 at once, codes stay unique) | create 15 more branches | True | as expected | PASS |
+| TC-583 | Branches | Rename works | PUT name | Renamed Hub | Renamed Hub | PASS |
+| TC-584 | Branches | Deleting cascades to its records | DELETE BX1 | True | as expected | PASS |
+| TC-585 | Branches | Cannot delete the last remaining branch | delete down to one | 409 | 409 | PASS |
+| TC-586 | Users | Create a supervisor with a branch | role=supervisor | 201 | 201 | PASS |
+| TC-587 | Users | Supervisor without a branch is refused | branches=[] | 422 | 422 | PASS |
+| TC-588 | Users | Duplicate username is refused | username=tsup | 409 | 409 | PASS |
+| TC-589 | Users | Unknown role is refused | role=owner | 422 | 422 | PASS |
+| TC-590 | Users | New account can sign in | tsup/pw1234 | 200 | 200 | PASS |
+| TC-591 | Users | Password reset takes effect | reset then login | 200 | 200 | PASS |
+| TC-592 | Users | Too-short password is refused | pw='abc' | 422 | 422 | PASS |
+| TC-593 | Users | Admin cannot delete their own account | self delete | 409 | 409 | PASS |
+| TC-594 | Users | Deleted account can no longer sign in | delete tsup | 401 | 401 | PASS |
+| TC-595 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
+| TC-596 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
+| TC-597 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
+| TC-598 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
+| TC-599 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
+| TC-600 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
+| TC-601 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
+| TC-602 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
+| TC-603 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
+| TC-604 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
+| TC-605 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
+| TC-606 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
+| TC-607 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
+| TC-608 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
+| TC-609 | Activity log | Captures who did it | userName present | True | as expected | PASS |
+| TC-610 | Activity log | Captures the role | role present | True | as expected | PASS |
+| TC-611 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
+| TC-612 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
+| TC-613 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
+| TC-614 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
+| TC-615 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
+| TC-616 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
+| TC-617 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
+| TC-618 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
+| TC-619 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
+| TC-620 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
+| TC-621 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
+| TC-622 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
+| TC-623 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
+| TC-624 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
+| TC-625 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
+| TC-626 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
+| TC-627 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
+| TC-628 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 39 | 39 | PASS |
+| TC-629 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
+| TC-630 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
+| TC-631 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
+| TC-632 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
+| TC-633 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 39 | 39 | PASS |
+| TC-634 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
+| TC-635 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
+| TC-636 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
+| TC-637 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
+| TC-638 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
+| TC-639 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
+| TC-640 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
+| TC-641 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
+| TC-642 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
+| TC-643 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
+| TC-644 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
+| TC-645 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
+| TC-646 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
+| TC-647 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
+| TC-648 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |
