@@ -2719,7 +2719,7 @@ function showView(name){
   if(name==='records') renderRecords();
   if(name==='customers') renderCustomers();
   if(name==='workers') renderWorkers();
-  if(name==='dayclose') renderDayClose();
+  if(name==='dayclose'){ renderDayClose(); renderDayCloseHistory(); }
   if(name==='overheads'){ renderOverheads(); renderOverheadLedger(); }
   if(name==='purchases') renderPurchaseLedger();
   if(name==='feedledger') renderFeedLedger();
@@ -4335,7 +4335,16 @@ function wire() {
   $('branchSelect').addEventListener('change', function () {
     S.branch = this.value; refreshBranchSelects(); runChicken();
     loadEntry(null); renderDashboard(); renderRecords(); renderCustomers();
-    renderWorkers(); renderOverheads(); renderOverheadLedger(); renderDayCloseHistory();
+    renderWorkers(); renderOverheads(); renderOverheadLedger();
+    // renderDayCloseHistory() used to fire here too, on every branch switch
+    // — but that table has its own independent branch filter (defaulting to
+    // "every branch this admin can see"), completely unrelated to this
+    // header selector, so the fetch could never actually change what it
+    // showed. It was pure dead weight on the single most frequent action in
+    // the app for an admin — one more full round trip to the server on
+    // every branch switch for a table that couldn't have changed. It still
+    // loads (see showView()) the moment the Day Close screen is actually
+    // opened, and login still refreshes it once for the closeBadge count.
   });
   qsa('#entryCatSeg button').forEach(function (b) { b.addEventListener('click', function () { S.cat = b.getAttribute('data-cat'); syncSegs(); loadEntry(null); }); });
   qsa('#dashCatSeg button').forEach(function (b) { b.addEventListener('click', function () { S.dashCat = b.getAttribute('data-cat'); syncSegs(); renderDashboard(); }); });
