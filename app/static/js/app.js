@@ -2989,6 +2989,25 @@ function upsertEntry(rec) {
   if (i >= 0) S.entries[i] = rec; else S.entries.push(rec);
 }
 
+/* A hotel-sale line on an entry moves that customer's running balance, so
+   whoever just saved/approved an entry with hotel sales needs fresh totals
+   afterward. This used to call the full bootstrap() — every entry, worker,
+   ledger row, overhead, receipt, adjustment, day-close and (for an admin)
+   every user account in the system, re-fetched and re-joined from scratch —
+   just to pick up a couple of customer balances that changed. On a save or
+   an approval (the two most frequent actions in the whole app, and hotel
+   sales are a routine, everyday part of an entry, not an edge case) that
+   extra round trip was exactly the "takes a while after I approve/save"
+   slowness reported 2026-09-08. GET /api/customers already returns just the
+   customers and their totals for the branches this user can see — same data
+   bootstrap() would have refreshed here, at a fraction of the cost. */
+function refreshCustomers() {
+  return api('GET', '/customers').then(function (d) {
+    S.customers = d.customers || [];
+    S.custTotals = d.totals || {};
+  });
+}
+
 function saveEntry(status) {
   if (status === 'pending') {
     var miss = validate(true);
@@ -3010,7 +3029,7 @@ function saveEntry(status) {
     clearDraft(savedDraftKey);   // it's on the server now — nothing left to recover
     savedModal(status === 'draft' ? 'Draft saved.' : status === 'pending' ? 'Sent to admin for approval.' : 'Changes saved.');
     /* hotel lines move customer balances, so pull the fresh totals back */
-    return (hadHotel || (rec.hotelSales || []).length ? bootstrap() : Promise.resolve())
+    return (hadHotel || (rec.hotelSales || []).length ? refreshCustomers() : Promise.resolve())
       .then(function () {
         loadEntry(rec.id);
         renderRecords(); renderDashboard(); renderCustomers(); updatePendingBadge();
@@ -3031,7 +3050,7 @@ function decide(id, verdict, reason) {
     else toast('Returned to supervisor.', 'warn');
     closeModal('reviewModal');
     /* approving turns pending hotel bills into real debt */
-    return ((rec.hotelSales || []).length ? bootstrap() : Promise.resolve()).then(function () {
+    return ((rec.hotelSales || []).length ? refreshCustomers() : Promise.resolve()).then(function () {
       if (S.editing && S.editing.id === id) loadEntry(id);
       renderRecords(); renderDashboard(); renderCustomers(); updatePendingBadge();
     });
@@ -3236,7 +3255,10 @@ function customerModal(c) {
 
     if (!once('cuSave')) return;
     var p = c.id ? api('PUT', '/customers/' + c.id, body) : api('POST', '/customers', body);
-    p.then(function () { return bootstrap(); })
+    // Only the customer master record + totals changed here — no receipt or
+    // adjustment was touched — so refreshCustomers() (see its comment above
+    // saveEntry()) covers it without the full bootstrap() round trip.
+    p.then(function () { return refreshCustomers(); })
       .then(function () {
         closeModal('genModal');
         renderCustomers(); renderHotelRows(); recalc(); renderDashboard();
@@ -3268,9 +3290,13 @@ function receiptModal(cid) {
     '<button id="rcSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Record receipt</button></div>');
   bind('rcSave', function () {
     if (v('rcAmt') <= 0) { toast('Enter an amount.', 'error'); return; }
+    // A receipt only moves the customer's balance (S.custTotals) — the
+    // dashboard's day-by-day P&L never reads receipts (only entries and
+    // S.customerAdjustments do, see aggregate()), so refreshCustomers() is
+    // enough here too; see the comment above saveEntry().
     api('POST', '/customers/' + cid + '/payments', { date: tv('rcDate'), amount: v('rcAmt'),
       mode: tv('rcMode'), note: tv('rcNote') })
-      .then(function () { return bootstrap(); })
+      .then(function () { return refreshCustomers(); })
       .then(function () {
         closeModal('genModal'); renderCustomers(); renderDashboard();
         savedModal(money0(v('rcAmt')) + ' received from ' + c.name + '.');
@@ -3303,7 +3329,7 @@ function editReceiptModal(cid, r) {
     if (!once('rcESave')) return;
     api('PUT', '/payments/' + r.id, { date: tv('rcEDate'), amount: v('rcEAmt'),
       mode: tv('rcEMode'), note: tv('rcENote') })
-      .then(function () { return bootstrap(); })
+      .then(function () { return refreshCustomers(); })   // see the comment above saveEntry()
       .then(function () {
         renderCustomers(); renderDashboard();
         openCustomerLedger(cid);
@@ -3341,6 +3367,11 @@ function adjustBillModal(cid) {
     var amt = v('adjAmt');
     if (!amt) { toast('Enter an amount to add or reduce.', 'error'); return; }
     if (!once('adjSave')) return;
+    // Unlike the receipt/customer saves above, this one really does need the
+    // full bootstrap(): a billing adjustment lands in S.customerAdjustments,
+    // and the dashboard's day-by-day P&L reads that array directly (see
+    // aggregate()) — refreshCustomers() alone would leave today's P&L
+    // showing stale figures until the next full reload.
     api('POST', '/customers/' + cid + '/adjustments', { date: tv('adjDate'), amount: amt,
       settled: tv('adjSettled') === '1', note: tv('adjNote') })
       .then(function () { return bootstrap(); })
@@ -3435,7 +3466,7 @@ function openCustomerLedger(cid) {
         bind('rcEdit_' + r.id, function () { editReceiptModal(cid, r); });
         bind('rcDel_' + r.id, function () {
           if (!confirm('Delete this ' + money0(r.amount) + ' receipt (' + r.date + ')?')) return;
-          api('DELETE', '/payments/' + r.id).then(function () { return bootstrap(); })
+          api('DELETE', '/payments/' + r.id).then(function () { return refreshCustomers(); })   // see the comment above saveEntry()
             .then(function () {
               renderCustomers(); renderDashboard();
               openCustomerLedger(cid);
