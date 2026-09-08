@@ -2,7 +2,7 @@
 
 **Run:** 2026-09-08  
 **Database:** throwaway SQLite file, deleted after the run  
-**Result:** 650/650 passed, 0 failed
+**Result:** 655/655 passed, 0 failed
 
 ## Summary by module
 
@@ -65,7 +65,7 @@
 | Scale | 2 | 2 | 0 |
 | Schema | 18 | 18 | 0 |
 | Session | 5 | 5 | 0 |
-| Settings | 3 | 3 | 0 |
+| Settings | 8 | 8 | 0 |
 | Today-only | 15 | 15 | 0 |
 | Users | 9 | 9 | 0 |
 | Validation | 12 | 12 | 0 |
@@ -73,7 +73,7 @@
 | Waste meat sold | 12 | 12 | 0 |
 | Window | 4 | 4 | 0 |
 | Workers rename | 1 | 1 | 0 |
-| **Total** | **650** | **650** | **0** |
+| **Total** | **655** | **655** | **0** |
 
 ## Test cases
 
@@ -678,54 +678,59 @@
 | TC-597 | Settings | Waste percentages are configurable | broiler 28% | 28.0 | 28.0 | PASS |
 | TC-598 | Settings | New waste % feeds the calculation | 28% -> 72% yield | 72000 | 72000 | PASS |
 | TC-599 | Settings | Restore the default | broiler 31% | 31.0 | 31.0 | PASS |
-| TC-600 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
-| TC-601 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
-| TC-602 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
-| TC-603 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
-| TC-604 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
-| TC-605 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
-| TC-606 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
-| TC-607 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
-| TC-608 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
-| TC-609 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
-| TC-610 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
-| TC-611 | Activity log | Captures who did it | userName present | True | as expected | PASS |
-| TC-612 | Activity log | Captures the role | role present | True | as expected | PASS |
-| TC-613 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
-| TC-614 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
-| TC-615 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
-| TC-616 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
-| TC-617 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
-| TC-618 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
-| TC-619 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
-| TC-620 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
-| TC-621 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
-| TC-622 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
-| TC-623 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
-| TC-624 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
-| TC-625 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
-| TC-626 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
-| TC-627 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
-| TC-628 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
-| TC-629 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
-| TC-630 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 39 | 39 | PASS |
-| TC-631 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
-| TC-632 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
-| TC-633 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
-| TC-634 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
-| TC-635 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 39 | 39 | PASS |
-| TC-636 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
-| TC-637 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
-| TC-638 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
-| TC-639 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
-| TC-640 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
-| TC-641 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
-| TC-642 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
-| TC-643 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
-| TC-644 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
-| TC-645 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
-| TC-646 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
-| TC-647 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
-| TC-648 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
-| TC-649 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
-| TC-650 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |
+| TC-600 | Settings | Non-numeric value is refused | wasteBroiler='abc' | 422 | 422 | PASS |
+| TC-601 | Settings | Negative value is refused | tolerance=-1 | 422 | 422 | PASS |
+| TC-602 | Settings | Waste % of 100 or more is refused | wasteBroiler=100 | 422 | 422 | PASS |
+| TC-603 | Settings | A rejected update changes nothing | waste still 31% after bad PUT | 31.0 | 31.0 | PASS |
+| TC-604 | Settings | Valid update still works after a rejected one | broiler 31% | 31.0 | 31.0 | PASS |
+| TC-605 | Activity log | Records 'Sign in' | after the run above | True | as expected | PASS |
+| TC-606 | Activity log | Records 'Failed sign in' | after the run above | True | as expected | PASS |
+| TC-607 | Activity log | Records 'Submitted entry' | after the run above | True | as expected | PASS |
+| TC-608 | Activity log | Records 'Approved entry' | after the run above | True | as expected | PASS |
+| TC-609 | Activity log | Records 'Returned entry' | after the run above | True | as expected | PASS |
+| TC-610 | Activity log | Records 'Added worker' | after the run above | True | as expected | PASS |
+| TC-611 | Activity log | Records 'Created branch' | after the run above | True | as expected | PASS |
+| TC-612 | Activity log | Records 'Added overhead' | after the run above | True | as expected | PASS |
+| TC-613 | Activity log | Records 'Changed settings' | after the run above | True | as expected | PASS |
+| TC-614 | Activity log | Records 'Created user' | after the run above | True | as expected | PASS |
+| TC-615 | Activity log | Records 'Blocked: admin only' | after the run above | True | as expected | PASS |
+| TC-616 | Activity log | Captures who did it | userName present | True | as expected | PASS |
+| TC-617 | Activity log | Captures the role | role present | True | as expected | PASS |
+| TC-618 | Activity log | Filter by action works | ?action=Sign in | True | as expected | PASS |
+| TC-619 | Activity log | Supervisor cannot read it | GET as supervisor | 403 | 403 | PASS |
+| TC-620 | Activity log | Blocked attempts are themselves logged | 'Blocked: admin only' | True | as expected | PASS |
+| TC-621 | Robustness | Malformed JSON body does not crash | no body on login | 401 | 401 | PASS |
+| TC-622 | Robustness | Missing fields default to zero | empty entry payload | 201 | 201 | PASS |
+| TC-623 | Robustness | Negative weights are stored as given, not crashed | openWtG = -5000 | 201 | 201 | PASS |
+| TC-624 | Robustness | Text in a numeric field is refused cleanly (422, not 500) | openBirds='abc' | 422 | 422 | PASS |
+| TC-625 | Robustness | Very long note is truncated, not rejected | 3000 chars | True | as expected | PASS |
+| TC-626 | Robustness | HTML in a note is stored safely as text | <script>alert(1)</script> | True | as expected | PASS |
+| TC-627 | Robustness | Unknown branch code is refused | branch='ZZZ' | 403 | 403 | PASS |
+| TC-628 | Robustness | Invalid category falls back to broiler | category='duck' | broiler | broiler | PASS |
+| TC-629 | Robustness | A constraint breach returns 409, never 500 | duplicate day | 409 | 409 | PASS |
+| TC-630 | Data wipe | There is real data to delete after the whole suite | entries > 0 | True | as expected | PASS |
+| TC-631 | Data wipe | A supervisor cannot see the preview | GET wipe-preview | 403 | 403 | PASS |
+| TC-632 | Data wipe | A supervisor cannot fetch the backup | GET wipe-backup | 403 | 403 | PASS |
+| TC-633 | Data wipe | A supervisor cannot wipe | POST wipe | 403 | 403 | PASS |
+| TC-634 | Data wipe | Preview reports what would be deleted | delete.entries | True | as expected | PASS |
+| TC-635 | Data wipe | The backup carries every entry the preview counted | len(backup.entries) | 39 | 39 | PASS |
+| TC-636 | Data wipe | Backed-up entries carry no photo data, just a count | photos empty, photoCount present | True | as expected | PASS |
+| TC-637 | Data wipe | Preview reports what would be kept | keep.branches | 1 | 1 | PASS |
+| TC-638 | Data wipe | No confirmation phrase is refused | POST with no body | 422 | 422 | PASS |
+| TC-639 | Data wipe | A wrong confirmation phrase is refused | confirm='yes' | 422 | 422 | PASS |
+| TC-640 | Data wipe | Nothing was deleted by the failed attempts | entries unchanged | 39 | 39 | PASS |
+| TC-641 | Data wipe | The real wipe reports ok | ok | True | as expected | PASS |
+| TC-642 | Data wipe | entries table is empty | daily_entries | 0 | 0 | PASS |
+| TC-643 | Data wipe | purchases table is empty | purchases | 0 | 0 | PASS |
+| TC-644 | Data wipe | hotelSales table is empty | customer_sales | 0 | 0 | PASS |
+| TC-645 | Data wipe | payments table is empty | customer_payments | 0 | 0 | PASS |
+| TC-646 | Data wipe | adjustments table is empty | customer_adjustments | 0 | 0 | PASS |
+| TC-647 | Data wipe | overheads table is empty | overheads | 0 | 0 | PASS |
+| TC-648 | Data wipe | dayCloses table is empty | day_close | 0 | 0 | PASS |
+| TC-649 | Data wipe | labourLedger table is empty | labour_ledger | 0 | 0 | PASS |
+| TC-650 | Data wipe | mortalityPhotos table is empty | mortality_photos | 0 | 0 | PASS |
+| TC-651 | Data wipe | Branches are untouched | same count | 1 | 1 | PASS |
+| TC-652 | Data wipe | User accounts are untouched | same count | 3 | 3 | PASS |
+| TC-653 | Data wipe | Worker profiles are untouched | same count | 11 | 11 | PASS |
+| TC-654 | Data wipe | Customer master records are untouched | same count | 8 | 8 | PASS |
+| TC-655 | Data wipe | A second wipe finds nothing left to delete | delete.entries | 0 | 0 | PASS |

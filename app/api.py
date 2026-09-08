@@ -1427,14 +1427,41 @@ def delete_user(uid):
 @bp.put("/settings")
 @admin_required
 def save_settings():
+    """
+    Update the shared, branch-wide settings — waste percentages, the yield
+    tolerance band, and the default day wage.
+
+    get_settings() blindly does float(value) on whatever is stored here, and
+    it runs on nearly every request (bootstrap, every entry list/render,
+    the dashboard) — so a non-numeric or out-of-range value written here
+    would not just reject this one save, it would break the entire app on
+    every subsequent request until someone fixed it directly in the
+    database. Validated here instead, the same way every other numeric
+    field in the app is (to_dec() + a FieldError on anything that doesn't
+    parse or doesn't make sense) — bad input never reaches storage.
+    """
     d = request.get_json(silent=True) or {}
     mapping = {"wasteBroiler": "waste_broiler", "wasteParents": "waste_parents",
                "tolerance": "tolerance", "dayWage": "day_wage"}
+    parsed = {}
     for src, key in mapping.items():
-        if src in d:
-            row = db.session.get(Setting, key) or Setting(key=key, value="0")
-            row.value = str(d[src])
-            db.session.merge(row)
+        if src not in d:
+            continue
+        value = to_dec(d[src], src)
+        if value < 0:
+            raise FieldError(src, f"'{src}' cannot be negative.")
+        # A waste % of 100 or more leaves nothing (or less than nothing) to
+        # dress out — compute_entry()'s yield_frac would hit zero or
+        # negative, which is guarded there against a crash, but every
+        # meat-cost and expected-yield figure in the app would silently go
+        # to ₹0 or negative from that point on.
+        if key in ("waste_broiler", "waste_parents") and value >= 100:
+            raise FieldError(src, f"'{src}' must be under 100%.")
+        parsed[key] = value
+    for key, value in parsed.items():
+        row = db.session.get(Setting, key) or Setting(key=key, value="0")
+        row.value = str(value)
+        db.session.merge(row)
     log_activity("Changed settings", str(d))
     db.session.commit()
     return jsonify(get_settings())

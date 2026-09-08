@@ -1155,6 +1155,20 @@ def test_admin_modules():
     case("Settings", "Restore the default", "broiler 31%", 31.0,
          lambda: ADMIN.put("/api/settings",
                            json={"wasteBroiler": 31}).get_json()["waste_broiler"])
+    case("Settings", "Non-numeric value is refused", "wasteBroiler='abc'", 422,
+         lambda: ADMIN.put("/api/settings",
+                           json={"wasteBroiler": "abc"}).status_code)
+    case("Settings", "Negative value is refused", "tolerance=-1", 422,
+         lambda: ADMIN.put("/api/settings",
+                           json={"tolerance": -1}).status_code)
+    case("Settings", "Waste % of 100 or more is refused", "wasteBroiler=100", 422,
+         lambda: ADMIN.put("/api/settings",
+                           json={"wasteBroiler": 100}).status_code)
+    case("Settings", "A rejected update changes nothing", "waste still 31% after bad PUT", 31.0,
+         lambda: ADMIN.put("/api/settings", json={}).get_json()["waste_broiler"])
+    case("Settings", "Valid update still works after a rejected one", "broiler 31%", 31.0,
+         lambda: ADMIN.put("/api/settings",
+                           json={"wasteBroiler": 31}).get_json()["waste_broiler"])
 
 
 def _make_many_branches(n):

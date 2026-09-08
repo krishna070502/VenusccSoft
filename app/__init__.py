@@ -6,7 +6,7 @@ import time
 from flask import Flask, g, jsonify, render_template, request, session
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
-from .config import Config
+from .config import Config, ProductionConfig
 from .extensions import db
 from .security import load_current_user
 
@@ -14,10 +14,33 @@ from .security import load_current_user
 SCHEMA_SIGNS = ("no such column", "undefinedcolumn", "does not exist",
                 "unknown column", "no such table", "undefinedtable")
 
+# Session cookies (login, idle timeout, everything auth-related) are signed
+# with SECRET_KEY. A well-known fallback or the .env template's own
+# placeholder text is not a secret at all — anyone who has ever seen this
+# file or the .env template could forge a session and sign in as any user,
+# admin included, without a password. Config.SECRET_KEY already falls back
+# to one of these if the environment variable is unset, silently — the
+# check in create_app() below is the loud version, so a real deployment
+# fails at start-up instead of quietly running wide open. Only enforced
+# under ProductionConfig; `python run.py` for local development is
+# unaffected.
+INSECURE_SECRET_KEYS = {
+    "", "change-me-in-production", "replace-this-with-a-long-random-string",
+}
+
 
 def create_app(config_object=Config) -> Flask:
     app = Flask(__name__, instance_relative_config=False)
     app.config.from_object(config_object)
+
+    if (config_object is ProductionConfig
+            and app.config.get("SECRET_KEY") in INSECURE_SECRET_KEYS):
+        raise RuntimeError(
+            "SECRET_KEY is not set (or is still the placeholder text) for a "
+            "production deployment. Generate a real one and set it in the "
+            "environment before starting:\n"
+            "    python -c \"import secrets;print(secrets.token_hex(32))\"\n"
+            "Refusing to start with a guessable session-signing key.")
 
     db.init_app(app)
 

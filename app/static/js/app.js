@@ -452,45 +452,6 @@ function alertHtml(list,ok){
   }).join('');
 }
 
-/* ---------------- activity log (admin visible only) ---------------- */
-function logAct(action,detail){
-  var arr=S.activity||[];
-  arr.push({ id:uid('a'), at:new Date().toISOString(),
-    userId:S.user?S.user.id:null, userName:S.user?S.user.name:'(anonymous)',
-    role:S.user?S.user.role:'—', branch:S.branch||'—', action:action, detail:detail||'' });
-  if(arr.length>3000) arr=arr.slice(arr.length-3000);
-  S.activity=arr; DB.write(K.activity,arr);
-}
-
-function renderActivity(){
-  if(!isAdmin()) return;
-  var uSel=$('actUser'), kSel=$('actKind');
-  var users={}, kinds={};
-  S.activity.forEach(function(a){ users[a.userName]=1; kinds[a.action]=1; });
-  var keepU=uSel.value, keepK=kSel.value;
-  uSel.innerHTML='<option value="">All users</option>'+Object.keys(users).sort().map(function(x){return '<option>'+esc(x)+'</option>';}).join('');
-  kSel.innerHTML='<option value="">All actions</option>'+Object.keys(kinds).sort().map(function(x){return '<option>'+esc(x)+'</option>';}).join('');
-  uSel.value=keepU; kSel.value=keepK;
-  var list=S.activity.filter(function(a){
-    if(keepU&&a.userName!==keepU) return false;
-    if(keepK&&a.action!==keepK) return false;
-    return true;
-  }).slice().reverse();
-  $('actCount').textContent=list.length;
-  var col={ 'Sign in':'bg-emerald-100 text-emerald-800','Sign out':'bg-slate-200 text-slate-700',
-    'Auto logout':'bg-amber-100 text-amber-800','Approved entry':'bg-emerald-100 text-emerald-800',
-    'Returned entry':'bg-rose-100 text-rose-800','Deleted entry':'bg-rose-100 text-rose-800',
-    'Failed sign in':'bg-rose-100 text-rose-800' };
-  $('actBody').innerHTML=list.length?list.slice(0,500).map(function(a){
-    var when=String(a.at).slice(0,10)+' '+String(a.at).slice(11,19);
-    return '<tr class="rowhover"><td class="px-4 py-2 whitespace-nowrap text-xs num">'+when+'</td>'+
-      '<td class="px-4 py-2 font-semibold">'+esc(a.userName)+'</td>'+
-      '<td class="px-4 py-2"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full '+(a.role==='admin'?'bg-amber-100 text-amber-800':'bg-emerald-100 text-emerald-800')+'">'+esc(a.role)+'</span></td>'+
-      '<td class="px-4 py-2 text-xs text-slate-500">'+esc(a.branch)+'</td>'+
-      '<td class="px-4 py-2"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded '+(col[a.action]||'bg-slate-100 text-slate-700')+'">'+esc(a.action)+'</span></td>'+
-      '<td class="px-4 py-2 text-xs text-slate-500">'+esc(a.detail)+'</td></tr>';
-  }).join(''):'<tr><td colspan="6" class="px-4 py-10 text-center text-slate-400">No activity recorded.</td></tr>';
-}
 
 /* ---------------- session management ---------------- */
 function idleMs(){ return (S.user && IDLE_MS[S.user.role]) || IDLE_MS.supervisor; }
@@ -516,12 +477,6 @@ function tickSession(){
   else if(!m.classList.contains('hidden')) m.classList.add('hidden');
 }
 
-function autoLogout(){
-  logAct('Auto logout','Idle for '+(idleMs()/60000)+' minutes');
-  LS.del(K.session);
-  DB.write(K.logoutReason,'You were signed out automatically after '+(idleMs()/60000)+' minutes of inactivity.');
-  location.reload();
-}
 
 /* ---------------- auto-filled closing values ---------------- */
 /* Only an admin may ever flip a field to manual (the toggle buttons are
@@ -1168,54 +1123,6 @@ function renderActions(){
 }
 function bind(id,fn){ var el=$(id); if(el) el.addEventListener('click',fn); }
 
-function saveEntry(status){
-  if(status==='pending'){
-    var miss=validate(true);
-    if(miss.length){ showValidation(miss); toast(miss.length+' required field(s) still missing.','error'); return; }
-  }
-  $('validationBox').classList.add('hidden');
-  var e=readForm();
-
-  /* Re-read from storage first — the record may have been approved elsewhere
-     since this form was opened. With a real API this becomes a server re-check. */
-  S.entries=DB.read(K.entries,S.entries);
-  if(S.editing){
-    var fresh=S.entries.filter(function(x){ return x.id===S.editing.id; })[0];
-    if(!fresh){ toast('That entry no longer exists.','error'); loadEntry(null); return; }
-    if(!canEdit(fresh)){
-      toast('This entry was '+fresh.status+' — only an admin can modify it now.','error');
-      logAct('Blocked edit attempt', fresh.category+' · '+dOf(fresh.datetime)+' · status '+fresh.status);
-      loadEntry(fresh.id); return;
-    }
-  }
-
-  /* One record per branch + category + day. */
-  var dup=existingEntry(e.branch,e.category,dOf(e.datetime),S.editing?S.editing.id:null);
-  if(dup){
-    if(!isAdmin()){
-      toast('A '+dup.status+' entry already exists for '+dOf(e.datetime)+'. Ask an admin to change it.','error');
-      logAct('Blocked duplicate entry', e.category+' · '+dOf(e.datetime)+' · existing is '+dup.status);
-      return;
-    }
-    if(!confirm('An entry already exists for '+dOf(e.datetime)+' ('+dup.status+').\n\nSave this as a second, separate record?')) return;
-  }
-
-  if(S.editing){
-    var idx=S.entries.findIndex(function(x){ return x.id===S.editing.id; });
-    e.id=S.editing.id; e.createdBy=S.editing.createdBy; e.createdAt=S.editing.createdAt;
-    e.reviewedBy=S.editing.reviewedBy; e.reviewedAt=S.editing.reviewedAt; e.rejectReason=S.editing.rejectReason;
-    e.status=status; e.updatedAt=new Date().toISOString(); e.updatedBy=S.user.id;
-    if(status==='pending'){ e.reviewedBy=null; e.reviewedAt=null; }
-    S.entries[idx]=e;
-  } else {
-    e.id=uid('e'); e.createdBy=S.user.id; e.createdAt=new Date().toISOString(); e.status=status; S.entries.push(e);
-  }
-  DB.write(K.entries,S.entries);
-  logAct(status==='pending'?'Submitted entry':status==='draft'?'Saved draft':(status==='approved'?'Modified APPROVED record':'Edited entry'),
-    (e.category)+' · '+dOf(e.datetime)+' · '+(S.branches[e.branch]||e.branch));
-  toast(status==='draft'?'Draft saved.':status==='pending'?'Sent to admin for approval.':'Changes saved.');
-  loadEntry(e.id); renderRecords(); renderDashboard(); updatePendingBadge();
-}
 
 function costingGaps(e){
   var gaps=[];
@@ -1226,27 +1133,6 @@ function costingGaps(e){
   return gaps;
 }
 
-function decide(id,verdict,reason){
-  S.entries=DB.read(K.entries,S.entries);
-  var e=S.entries.filter(function(x){return x.id===id;})[0]; if(!e) return;
-  if(verdict==='approved'){
-    var gaps=costingGaps(e);
-    if(gaps.length){
-      toast('Enter the '+gaps.join(' and ')+' before approving — the profit figures depend on it.','error');
-      return;
-    }
-  }
-  e.status=verdict==='approved'?'approved':'rejected';
-  e.reviewedBy=S.user.id; e.reviewedAt=new Date().toISOString();
-  e.rejectReason=verdict==='approved'?'':(reason||'');
-  DB.write(K.entries,S.entries);
-  logAct(verdict==='approved'?'Approved entry':'Returned entry',
-    e.category+' · '+dOf(e.datetime)+' · '+(S.branches[e.branch]||e.branch)+(reason?' — '+reason:''));
-  toast(verdict==='approved'?'Approved and saved as a record.':'Returned to supervisor.',verdict==='approved'?'success':'warn');
-  closeModal('reviewModal');
-  if(S.editing&&S.editing.id===id) loadEntry(id);
-  renderRecords(); renderDashboard(); updatePendingBadge();
-}
 
 function askReject(id){
   openGen('Return entry for correction',
@@ -2112,25 +1998,6 @@ function costingPanel(e,c){
   '</div>';
 }
 
-function repriceReview(id){
-  var e=S.entries.filter(function(x){return x.id===id;})[0]; if(!e) return;
-  var c=calc(e);
-  if($('rvAvg')) $('rvAvg').textContent=money(c.avgRate)+' / kg';
-  if($('rvRevenue')) $('rvRevenue').textContent=money0(c.revenue);
-  if($('rvCogs')) $('rvCogs').textContent=money0(c.cogs);
-  if($('rvNet')) $('rvNet').textContent=money0(c.netProfit);
-  (e.purchases||[]).forEach(function(p,i){
-    var el=document.querySelector('[data-rvline="'+i+'"]');
-    if(el) el.textContent=money(num(p.wtG)/1000*num(p.rate));
-  });
-  var gaps=costingGaps(e), btn=$('rvApprove');
-  if(btn){
-    btn.disabled=gaps.length>0;
-    btn.className='inline-flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded-lg '+
-      (gaps.length?'bg-slate-300 text-slate-500 cursor-not-allowed':'bg-emerald-700 hover:bg-emerald-800 text-white');
-    btn.title=gaps.length?'Enter the '+gaps.join(' and ')+' first':'';
-  }
-}
 
 function openReview(id){
   var e=S.entries.filter(function(x){return x.id===id;})[0]; if(!e) return;
@@ -2426,75 +2293,6 @@ function renderDayWise(){
     : 'Nothing recorded in this range.';
 }
 
-function markAttendance(workerId,days){
-  var date=$('wkDate').value||todayISO();
-  var w=S.workers.filter(function(x){return x.id===workerId;})[0]; if(!w) return;
-  var i=S.ledger.findIndex(function(l){ return l.workerId===workerId&&l.date===date&&l.type==='work'; });
-  logAct('Attendance', w.name+' · '+date+' · '+(days===0?'absent':days===0.5?'half day':'full day'));
-  if(days===0){ if(i>=0) S.ledger.splice(i,1); }
-  else {
-    var rec={ id:i>=0?S.ledger[i].id:uid('l'), branch:w.branch, workerId:workerId, date:date, type:'work',
-              days:days, amount:num(w.dayWage)*days, note:days===0.5?'Half day':'Full day' };
-    if(i>=0) S.ledger[i]=rec; else S.ledger.push(rec);
-  }
-  DB.write(K.ledger,S.ledger);
-  renderWorkers(); recalc(); renderDashboard();
-}
-
-function workerModal(w){
-  w=w||{};
-  openGen(w.id?'Edit worker':'Add worker',
-    '<div class="space-y-3">'+
-    '<div><label class="lbl" for="wkName">Name</label><input id="wkName" class="inp" value="'+esc(w.name||'')+'" /></div>'+
-    '<div class="grid grid-cols-2 gap-3">'+
-      '<div><label class="lbl" for="wkRole">Role</label><select id="wkRole" class="inp">'+
-        ['dresser','cutter','helper','cashier','driver'].map(function(r){ return '<option value="'+r+'"'+(w.role===r?' selected':'')+'>'+r.charAt(0).toUpperCase()+r.slice(1)+'</option>'; }).join('')+'</select></div>'+
-      '<div><label class="lbl" for="wkWage">Wage per day (₹)</label><input type="number" min="0" step="10" id="wkWage" class="inp num" value="'+(w.dayWage||S.settings.dayWage||700)+'" /></div>'+
-    '</div>'+
-    '<div><label class="lbl" for="wkPhone">Phone (optional)</label><input id="wkPhone" class="inp" value="'+esc(w.phone||'')+'" /></div>'+
-    '<button id="wkSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg mt-2">Save worker</button></div>');
-  bind('wkSave',function(){
-    var name=tv('wkName'); if(!name){ toast('Enter a name.','error'); return; }
-    if(v('wkWage')<=0){ toast('Enter the daily wage.','error'); return; }
-    if(w.id) Object.assign(w,{name:name,role:tv('wkRole'),dayWage:v('wkWage'),phone:tv('wkPhone')});
-    else S.workers.push({ id:uid('w'), branch:S.branch, name:name, role:tv('wkRole'), dayWage:v('wkWage'), phone:tv('wkPhone'), joinedOn:todayISO(), active:true });
-    DB.write(K.workers,S.workers); logAct(w.id?'Edited worker':'Added worker',name+' · '+tv('wkRole')+' · '+money0(v('wkWage'))+'/day');
-    closeModal('genModal'); renderWorkers(); toast('Worker saved.');
-  });
-}
-
-function ledgerModal(kind,preWorker){
-  var ws=branchWorkers();
-  if(!ws.length){ toast('Add a worker first.','warn'); return; }
-  var types=kind==='pay'?['paid','advance']:['tea','tiffin','advance','other'];
-  openGen(kind==='pay'?'Record payment':'Log expense',
-    '<div class="space-y-3">'+
-    '<div class="grid grid-cols-2 gap-3">'+
-      '<div><label class="lbl" for="lgWorker">Worker</label><select id="lgWorker" class="inp">'+ws.map(function(x){ return '<option value="'+x.id+'"'+(preWorker===x.id?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('')+'</select></div>'+
-      '<div><label class="lbl" for="lgDate">Date</label><input type="date" id="lgDate" class="inp" value="'+($('wkDate').value||todayISO())+'" /></div>'+
-    '</div>'+
-    '<div class="grid grid-cols-2 gap-3">'+
-      '<div><label class="lbl" for="lgType">Type</label><select id="lgType" class="inp">'+types.map(function(t){ return '<option value="'+t+'">'+LEDGER_TYPES[t].t+'</option>'; }).join('')+'</select></div>'+
-      '<div><label class="lbl" for="lgAmt">Amount (₹)</label><input type="number" min="0" step="1" id="lgAmt" class="inp num" /></div>'+
-    '</div>'+
-    '<div><label class="lbl" for="lgNote">Note</label><input id="lgNote" class="inp" placeholder="Optional" /></div>'+
-    '<p id="lgHint" class="text-xs rounded-lg px-3 py-2 font-semibold border"></p>'+
-    '<button id="lgSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Save</button></div>');
-  var upd=function(){
-    var t=tv('lgType'), def=LEDGER_TYPES[t];
-    var h=$('lgHint');
-    if(def.effect==='settle'){ h.className='text-xs rounded-lg px-3 py-2 font-semibold border bg-slate-100 text-slate-700 border-slate-300'; h.textContent='Reduces the worker’s outstanding balance.'; }
-    else { h.className='text-xs rounded-lg px-3 py-2 font-semibold border bg-emerald-50 text-emerald-800 border-emerald-200'; h.textContent='Paid by the shop — NOT deducted from the worker’s wages. Counts as a shop expense in the P&L.'; }
-  };
-  $('lgType').addEventListener('change',upd); upd();
-  bind('lgSave',function(){
-    if(v('lgAmt')<=0){ toast('Enter an amount.','error'); return; }
-    S.ledger.push({ id:uid('l'), branch:S.branch, workerId:tv('lgWorker'), date:tv('lgDate'), type:tv('lgType'), days:0, amount:v('lgAmt'), note:tv('lgNote') });
-    DB.write(K.ledger,S.ledger);
-    logAct('Ledger '+tv('lgType'), money0(v('lgAmt'))+' · '+(S.workers.filter(function(x){return x.id===tv('lgWorker');})[0]||{name:'?'}).name);
-    closeModal('genModal'); renderWorkers(); recalc(); renderDashboard(); toast('Saved.');
-  });
-}
 
 /* ---------------- fixed overheads (month-level, never daily) ---------------- */
 function ovhCatName(v){ var c=OVERHEAD_CATS.filter(function(x){return x.v===v;})[0]; return c?c.t:v; }
@@ -2595,41 +2393,6 @@ function renderOverheads(){
   updatePendingBadge();
 }
 
-function overheadModal(){
-  openGen('Add a monthly overhead',
-    '<div class="space-y-3">'+
-    '<div class="grid grid-cols-2 gap-3">'+
-      '<div><label class="lbl" for="ovMonth">Month</label><input type="month" id="ovMonth" class="inp" value="'+($('ovhMonth').value||todayISO().slice(0,7))+'" /></div>'+
-      '<div><label class="lbl" for="ovAmt">Amount (₹)</label><input type="number" min="0" step="1" id="ovAmt" class="inp num" /></div>'+
-    '</div>'+
-    '<div><label class="lbl" for="ovCat">Category</label><select id="ovCat" class="inp">'+
-      OVERHEAD_CATS.map(function(c){ return '<option value="'+c.v+'">'+c.t+'</option>'; }).join('')+'</select></div>'+
-    '<div><label class="lbl" for="ovNote">Note / bill reference</label><input id="ovNote" class="inp" placeholder="e.g. electricity bill 4412, August" /></div>'+
-    '<p class="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-800 border border-amber-200 font-semibold">Charged once at month end. It will not change any single day&rsquo;s profit, and needs admin approval to count.</p>'+
-    '<button id="ovSave" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Submit for approval</button></div>');
-  bind('ovSave',function(){
-    if(v('ovAmt')<=0){ toast('Enter an amount.','error'); return; }
-    var rec={ id:uid('o'), branch:S.branch, month:tv('ovMonth')||todayISO().slice(0,7),
-      category:tv('ovCat'), amount:v('ovAmt'), note:tv('ovNote'),
-      status:isAdmin()?'approved':'pending', createdBy:S.user.id, createdAt:new Date().toISOString(),
-      reviewedBy:isAdmin()?S.user.id:null, reviewedAt:isAdmin()?new Date().toISOString():null, rejectReason:'' };
-    S.overheads.push(rec); DB.write(K.overheads,S.overheads);
-    logAct('Added overhead', ovhCatName(rec.category)+' · '+rec.month+' · '+money0(rec.amount)+(isAdmin()?' (auto-approved)':' (pending)'));
-    closeModal('genModal'); $('ovhMonth').value=rec.month; renderOverheads(); renderDashboard();
-    toast(isAdmin()?'Overhead recorded.':'Sent to admin for approval.');
-  });
-}
-
-function decideOverhead(id,verdict,reason){
-  S.overheads=DB.read(K.overheads,S.overheads);
-  var o=S.overheads.filter(function(x){return x.id===id;})[0]; if(!o) return;
-  o.status=verdict; o.reviewedBy=S.user.id; o.reviewedAt=new Date().toISOString();
-  o.rejectReason=verdict==='rejected'?(reason||''):'';
-  DB.write(K.overheads,S.overheads);
-  logAct(verdict==='approved'?'Approved overhead':'Returned overhead', ovhCatName(o.category)+' · '+o.month+' · '+money0(o.amount)+(reason?' — '+reason:''));
-  renderOverheads(); renderDashboard();
-  toast(verdict==='approved'?'Overhead approved — charged at month end.':'Overhead returned.', verdict==='approved'?'success':'warn');
-}
 
 /* ---------------- admin ---------------- */
 function nextBranchCode(){ var i=1,c; do{ c='B'+String(i).padStart(2,'0'); i++; }while(S.branches[c]); return c; }
@@ -2662,6 +2425,21 @@ function renderAdmin(){
 function download(blob,name){ var u=URL.createObjectURL(blob),a=document.createElement('a'); a.href=u; a.download=name;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){URL.revokeObjectURL(u);},1000); }
 
+/* A supplier/customer/worker name or a note can be anything someone typed —
+   if it starts with = + - @ (or a tab/CR), Excel, LibreOffice and Google
+   Sheets all read that as the start of a formula, not literal text, the
+   moment the exported file is opened (CSV/formula injection, CWE-1236).
+   A leading apostrophe forces plain-text rendering without changing what
+   was actually typed. Only applies to strings — a genuine number (revenue,
+   a weight) is written as a real numeric cell by SheetJS regardless of its
+   sign, so this never touches money or measurements, only free text. */
+function sanitizeExportCell(v) {
+  return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v;
+}
+function sanitizeExportRows(rows) {
+  return (rows || []).map(function (r) { return r.map(sanitizeExportCell); });
+}
+
 /* Every "Export" button in the app funnels through here so the download is a
    real .xlsx workbook, not a CSV file wearing an Excel icon. `rows` is a
    plain 2D array (no header row). Falls back to a CSV download if the
@@ -2669,6 +2447,7 @@ function download(blob,name){ var u=URL.createObjectURL(blob),a=document.createE
    blocked, whatever — so a button never just does nothing. */
 function toXlsx(filename, sheetName, headers, rows) {
   filename = filename.replace(/\.(csv|xlsx)$/i, '');
+  rows = sanitizeExportRows(rows);
   if (typeof XLSX === 'undefined') { toCsvFallback(filename, headers, rows); return; }
   try {
     var ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
@@ -2697,6 +2476,7 @@ function toXlsx(filename, sheetName, headers, rows) {
    isn't available, same reasoning as toXlsx(). */
 function toXlsxMulti(filename, sheets) {
   filename = filename.replace(/\.(csv|xlsx)$/i, '');
+  sheets = sheets.map(function (s) { return Object.assign({}, s, { rows: sanitizeExportRows(s.rows) }); });
   if (typeof XLSX === 'undefined') {
     sheets.forEach(function (s) { toCsvFallback(filename + '_' + s.name, s.headers, s.rows); });
     return;
@@ -2811,7 +2591,7 @@ function downloadWipeBackup(b) {
      overheadSheet, dayCloseSheet, ledgerSheet]);
 }
 function toCsvFallback(filename, headers, rows) {
-  var csv = [headers].concat(rows).map(function (r) {
+  var csv = [headers].concat(sanitizeExportRows(rows)).map(function (r) {
     return r.map(function (c) { var s = String(c == null ? '' : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
   }).join('\r\n');
   download(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }), filename + '.csv');
@@ -2957,96 +2737,7 @@ function syncSegs(){
   qsa('#dashScopeSeg button').forEach(function(b){ b.classList.toggle('active',b.getAttribute('data-scope')===S.dashScope); });
 }
 
-/* ---------------- demo data ---------------- */
-function seedDemo(){
-  var sup=S.users.filter(function(u){return u.role==='supervisor';})[0]||S.users[0];
-  var adm=S.users.filter(function(u){return u.role==='admin';})[0];
-  var out=[], led=[], wk=[];
-  var names=[['Suresh','dresser'],['Mahesh','dresser'],['Anil','cutter'],['Vikram','cutter']];
-  Object.keys(S.branches).forEach(function(br){
-    names.forEach(function(nm){ wk.push({ id:uid('w'), branch:br, name:nm[0]+' ('+br+')', role:nm[1], dayWage:nm[1]==='dresser'?650:600, phone:'', joinedOn:addDays(todayISO(),-30), active:true }); });
-  });
-  wk.forEach(function(w){
-    for(var i=13;i>=0;i--){
-      if(Math.random()<0.12) continue;
-      var d=addDays(todayISO(),-i), days=Math.random()<0.1?0.5:1;
-      led.push({ id:uid('l'), branch:w.branch, workerId:w.id, date:d, type:'work', days:days, amount:w.dayWage*days, note:days===0.5?'Half day':'Full day' });
-      if(i%7===0) led.push({ id:uid('l'), branch:w.branch, workerId:w.id, date:d, type:'paid', days:0, amount:w.dayWage*5, note:'Weekly settlement' });
-      if(i%3===0) led.push({ id:uid('l'), branch:w.branch, workerId:w.id, date:d, type:'tea', days:0, amount:30, note:'Morning tea' });
-    }
-  });
 
-  Object.keys(S.branches).forEach(function(br){
-    ['broiler','parents'].forEach(function(cat){
-      var openB=80, avg=cat==='parents'?2600:2050, openW=openB*avg, openM=Math.round(Math.random()*6000), openRate=cat==='parents'?135:120;
-      for(var i=13;i>=0;i--){
-        var d=addDays(todayISO(),-i);
-        var buyB=Math.round(180+Math.random()*140);
-        var buyW=Math.round(buyB*avg*(0.96+Math.random()*0.08));
-        var buyRate=+(openRate*(0.97+Math.random()*0.09)).toFixed(2);
-        var purchases=[{ supplier:['Sunrise Poultry','Green Valley','Deccan Agro'][Math.floor(Math.random()*3)], birds:buyB, wtG:buyW, rate:buyRate }];
-        var availW=openW+buyW, availV=openW/1000*openRate+buyW/1000*buyRate;
-        var avgRate=availV/(availW/1000);
-        var mortC=Math.round(Math.random()*4), mortW=mortC*avg;
-        var liveC=Math.round((openB+buyB)*(0.16+Math.random()*0.1)), liveW=Math.round(liveC*avg);
-        var drC=Math.round((openB+buyB-liveC-mortC)*(0.55+Math.random()*0.25)), drW=Math.round(drC*avg);
-        var waste=cat==='parents'?21:31, yf=(100-waste)/100;
-        var y=yf+(Math.random()-0.45)*0.05; if(Math.random()<0.15) y-=0.045;
-        var meat=Math.round(drW*y);
-        var closeB=openB+buyB-liveC-mortC-drC;
-        var sellMul=1.55+Math.random()*0.25;
-        var rSkin=+(avgRate*sellMul).toFixed(0), rSkinless=rSkin+35, rLive=+(avgRate*1.16).toFixed(0);
-        var skin=Math.round((openM+meat)*(0.42+Math.random()*0.2));
-        var skinless=Math.round((openM+meat-skin)*(0.55+Math.random()*0.3));
-        var dmg=Math.round(Math.random()*900);
-        var closeM=Math.max(openM+meat-skin-skinless-dmg,0);
-        var st=i>1?'approved':(i===1?'pending':'draft');
-        out.push({ id:uid('e'), branch:br, category:cat, datetime:d+'T19:30',
-          openBirds:openB, openWtG:openW, openRate:+openRate.toFixed(2), openMeatG:openM, purchases:purchases,
-          rateSkin:rSkin, rateSkinless:rSkinless, rateLiver:130, rateLive:rLive,
-          liveSoldCount:liveC, liveSoldWtG:liveW, cutCharges:Math.round(liveC*8),
-          mortCount:mortC, mortWtG:mortW, damageG:dmg, photos:[],
-          dressedCount:drC, dressedWtG:drW, actualMeatG:meat,
-          skinSoldG:skin, skinlessSoldG:skinless, liverSoldG:Math.round(drC*35),
-          closeBirds:closeB, closeWtG:closeB*avg, closeMeatG:closeM, notes:'',
-          status:st, createdBy:sup.id, createdAt:d+'T19:30',
-          reviewedBy: st==='approved'?adm.id:null, reviewedAt: st==='approved'?d+'T20:00':null });
-        openB=closeB; openW=closeB*avg; openM=closeM; openRate=avgRate;
-      }
-    });
-  });
-  S.entries=out; S.workers=wk; S.ledger=led;
-  DB.write(K.entries,S.entries); DB.write(K.workers,S.workers); DB.write(K.ledger,S.ledger);
-}
-
-/* ---------------- boot ---------------- */
-function loadAll(){
-  S.users=DB.read(K.users,null)||DEFAULT_USERS.slice();
-  S.branches=DB.read(K.branches,null)||JSON.parse(JSON.stringify(DEFAULT_BRANCHES));
-  S.entries=DB.read(K.entries,[]);
-  S.workers=DB.read(K.workers,[]);
-  S.ledger=DB.read(K.ledger,[]);
-  S.overheads=DB.read(K.overheads,[]);
-  S.activity=DB.read(K.activity,[]);
-  S.settings=Object.assign({},DEFAULT_SETTINGS,DB.read(K.settings,{}));
-  DB.write(K.users,S.users); DB.write(K.branches,S.branches); DB.write(K.settings,S.settings);
-}
-
-function startApp(user,fresh){
-  S.user=user;
-  logAct(fresh?'Sign in':'Session resumed', user.role+' · idle limit '+(IDLE_MS[user.role]/60000)+' min');
-  $('loginScreen').classList.add('hidden');
-  $('appShell').classList.remove('hidden');
-  applyRbac(); refreshBranchSelects();
-  $('dashFrom').value=monthStart(); $('dashTo').value=todayISO();
-  $('recFrom').value=addDays(todayISO(),-30); $('recTo').value=todayISO();
-  $('wkDate').value=todayISO(); $('wkMonth').value=todayISO().slice(0,7);
-  $('dwFrom').value=monthStart(); $('dwTo').value=todayISO();
-  $('ovhMonth').value=todayISO().slice(0,7);
-  if(isAdmin()) $('recStatus').value='pending';
-  bumpActivity(); tickSession();
-  syncSegs(); loadEntry(null); updatePendingBadge(); showView(isAdmin()?'dashboard':'entry');
-}
 
 function clock(){ var d=new Date();
   $('liveClock').textContent=d.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short'})+' · '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
@@ -3055,259 +2746,6 @@ function net(){ var on=navigator.onLine;
   $('netDot').className='h-2 w-2 rounded-full pulse-dot '+(on?'bg-emerald-300':'bg-amber-400');
   $('netText').textContent=on?'Online':'Offline — Sync Pending'; }
 
-function wire(){
-  $('loginForm').addEventListener('submit',function(ev){
-    ev.preventDefault();
-    var u=S.users.filter(function(x){ return x.username.toLowerCase()===tv('loginUser').toLowerCase()&&x.password===tv('loginPass')&&x.active!==false; })[0];
-    if(!u){ $('loginError').textContent='Invalid username or password.'; $('loginError').classList.remove('hidden');
-      logAct('Failed sign in','username: '+tv('loginUser')); return; }
-    $('loginError').classList.add('hidden'); DB.write(K.session,{id:u.id,at:Date.now()});
-    LS.del(K.logoutReason); runChicken(); startApp(u,true);
-  });
-  $('btnLogout').addEventListener('click',function(){ if(confirm('Sign out?')){ logAct('Sign out','manual'); LS.del(K.session); location.reload(); } });
-  $('btnStayIn').addEventListener('click',function(){ bumpActivity(); $('idleModal').classList.add('hidden'); });
-  ['mousemove','mousedown','keydown','touchstart','scroll','click'].forEach(function(ev){
-    document.addEventListener(ev,function(){ if(Date.now()-S.lastAct>1500) bumpActivity(); },{passive:true});
-  });
-  // Closing birds/weight/meat are always server-computed and the inputs are
-  // readonly — no manual-entry toggle any more.
-  $('actUser').addEventListener('change',renderActivity);
-  $('actKind').addEventListener('change',renderActivity);
-  $('btnActClear').addEventListener('click',function(){
-    if(!confirm('Clear the entire activity log?')) return;
-    S.activity=[]; DB.write(K.activity,[]); logAct('Cleared activity log',''); renderActivity(); toast('Activity log cleared.','warn');
-  });
-  $('btnActExport').addEventListener('click',function(){
-    var rows=[['When','User','Role','Branch','Action','Detail']].concat(S.activity.map(function(a){
-      return [a.at,a.userName,a.role,a.branch,a.action,a.detail]; }));
-    var csv=rows.map(function(r){ return r.map(function(c){ var s=String(c==null?'':c); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }).join(','); }).join('\r\n');
-    download(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),'VCC_activity_'+todayISO()+'.csv');
-  });
-  qsa('#mainNav .tab-btn').forEach(function(b){ b.addEventListener('click',function(){ showView(b.getAttribute('data-view')); }); });
-
-  $('branchSelect').addEventListener('change',function(){
-    S.branch=this.value; refreshBranchSelects(); runChicken();
-    loadEntry(null); renderDashboard(); renderRecords(); renderWorkers();
-  });
-  qsa('#entryCatSeg button').forEach(function(b){ b.addEventListener('click',function(){ S.cat=b.getAttribute('data-cat'); syncSegs(); loadEntry(null); }); });
-  qsa('#dashCatSeg button').forEach(function(b){ b.addEventListener('click',function(){ S.dashCat=b.getAttribute('data-cat'); syncSegs(); renderDashboard(); }); });
-  qsa('#dashScopeSeg button').forEach(function(b){ b.addEventListener('click',function(){ S.dashScope=b.getAttribute('data-scope'); syncSegs(); renderDashboard(); }); });
-  qsa('.qr').forEach(function(b){ b.addEventListener('click',function(){
-    var r=b.getAttribute('data-range');
-    if(r==='today'){ $('dashFrom').value=todayISO(); $('dashTo').value=todayISO(); }
-    else if(r==='7'){ $('dashFrom').value=addDays(todayISO(),-6); $('dashTo').value=todayISO(); }
-    else { $('dashFrom').value=monthStart(); $('dashTo').value=todayISO(); }
-    renderDashboard();
-  }); });
-  ['dashFrom','dashTo'].forEach(function(id){ $(id).addEventListener('change',renderDashboard); });
-
-  /* entry */
-  $('entryForm').addEventListener('input',recalc);
-  $('entryForm').addEventListener('submit',function(ev){ ev.preventDefault(); });
-  $('btnAddPurchase').addEventListener('click',function(){
-    S.purchases.push({ supplier:'', birds:0, wtG:0, rate:0 }); renderPurchases(); recalc();
-  });
-  $('purchaseRows').addEventListener('input',function(ev){
-    var el=ev.target.closest('[data-p]'); if(!el) return;
-    var i=+el.getAttribute('data-i'), f=el.getAttribute('data-p'), p=S.purchases[i]; if(!p) return;
-    if(f==='supplier') p.supplier=el.value;
-    else if(f==='birds') p.birds=num(el.value);
-    else if(f==='rate') p.rate=num(el.value);
-    else { var kgEl=$('purchaseRows').querySelector('[data-p="kg"][data-i="'+i+'"]'), gEl=$('purchaseRows').querySelector('[data-p="g"][data-i="'+i+'"]');
-      p.wtG=num(kgEl&&kgEl.value)*1000+num(gEl&&gEl.value); }
-    recalc();
-  });
-  $('purchaseRows').addEventListener('click',function(ev){
-    var b=ev.target.closest('[data-prm]'); if(!b) return;
-    S.purchases.splice(+b.getAttribute('data-prm'),1); renderPurchases(); recalc();
-  });
-
-  $('f_photos').addEventListener('change',function(){
-    var files=Array.prototype.slice.call(this.files||[]), left=files.length; if(!left) return;
-    files.forEach(function(f){ compress(f,function(u){ S.photos.push(u); if(--left===0){ renderPhotos(); recalc(); toast(files.length+' photo(s) attached.'); } }); });
-    this.value='';
-  });
-  $('photoStrip').addEventListener('click',function(ev){
-    var rm=ev.target.closest('[data-rm]');
-    if(rm){ S.photos.splice(+rm.getAttribute('data-rm'),1); renderPhotos(); recalc(); return; }
-    var vw=ev.target.closest('[data-view]');
-    if(vw){ $('lightboxImg').src=S.photos[+vw.getAttribute('data-view')]; $('lightbox').classList.remove('hidden'); }
-  });
-
-  /* records */
-  ['recFrom','recTo','recBranch','recCat','recStatus'].forEach(function(id){ $(id).addEventListener('change',renderRecords); });
-  $('btnRecExport').addEventListener('click',exportCsv);
-  $('btnRecPrint').addEventListener('click',printReport);
-  $('recBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-act]'); if(!b) return;
-    var id=b.getAttribute('data-id'), act=b.getAttribute('data-act');
-    if(act==='review') openReview(id);
-    else if(act==='edit'){ showView('entry'); loadEntry(id); }
-    else if(act==='del'&&confirm('Delete this entry permanently?')){
-      S.entries=S.entries.filter(function(x){return x.id!==id;}); DB.write(K.entries,S.entries);
-      logAct('Deleted entry','id '+id);
-      renderRecords(); renderDashboard(); updatePendingBadge(); toast('Entry deleted.','warn'); }
-  });
-  $('reviewBody').addEventListener('click',function(ev){
-    var im=ev.target.closest('img[data-view]'); if(!im) return;
-    $('lightboxImg').src=im.src; $('lightbox').classList.remove('hidden');
-  });
-
-  /* labour */
-  $('wkDate').addEventListener('change',renderWorkers);
-  $('wkMonth').addEventListener('change',renderWorkers);
-  $('btnAddWorker').addEventListener('click',function(){ workerModal(null); });
-  $('btnPayWorker').addEventListener('click',function(){ ledgerModal('pay'); });
-  $('btnAddExpense').addEventListener('click',function(){ ledgerModal('exp'); });
-  $('attendanceGrid').addEventListener('click',function(ev){
-    var b=ev.target.closest('[data-att]'); if(!b) return;
-    markAttendance(b.getAttribute('data-att'),parseFloat(b.getAttribute('data-days')));
-  });
-  $('workerBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-wact]'); if(!b) return;
-    var id=b.getAttribute('data-id'), act=b.getAttribute('data-wact');
-    var w=S.workers.filter(function(x){return x.id===id;})[0];
-    if(act==='pay') ledgerModal('pay',id);
-    else if(act==='edit') workerModal(w);
-    else if(confirm('Remove '+w.name+'? Their ledger history stays.')){
-      S.workers=S.workers.filter(function(x){return x.id!==id;}); DB.write(K.workers,S.workers); renderWorkers(); toast('Worker removed.','warn'); }
-  });
-  $('ledgerBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-lact]'); if(!b) return;
-    S.ledger=S.ledger.filter(function(x){ return x.id!==b.getAttribute('data-id'); });
-    DB.write(K.ledger,S.ledger); renderWorkers(); recalc(); renderDashboard(); toast('Ledger entry removed.','warn');
-  });
-
-  /* overheads */
-  $('ovhMonth').addEventListener('change',renderOverheads);
-  $('btnAddOverhead').addEventListener('click',overheadModal);
-  $('ovhBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-ovh]'); if(!b) return;
-    var id=b.getAttribute('data-id'), act=b.getAttribute('data-ovh');
-    if(act==='ok') decideOverhead(id,'approved');
-    else if(act==='no'){
-      openGen('Return overhead',
-        '<label class="lbl" for="ovhReason">Reason</label>'+
-        '<textarea id="ovhReason" rows="3" class="inp" placeholder="e.g. attach the bill copy"></textarea>'+
-        '<div class="flex gap-3 mt-4"><button id="ovhRejGo" class="bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg">Return</button>'+
-        '<button data-close="1" class="border border-slate-300 text-slate-600 font-bold text-sm px-5 py-2.5 rounded-lg">Cancel</button></div>');
-      bind('ovhRejGo',function(){
-        var rr=tv('ovhReason'); if(!rr){ toast('Give a reason.','error'); return; }
-        closeModal('genModal'); decideOverhead(id,'rejected',rr);
-      });
-    }
-    else if(act==='del'&&confirm('Delete this overhead entry?')){
-      var gone=S.overheads.filter(function(x){return x.id===id;})[0];
-      S.overheads=S.overheads.filter(function(x){return x.id!==id;});
-      DB.write(K.overheads,S.overheads);
-      logAct('Deleted overhead', gone?ovhCatName(gone.category)+' · '+gone.month+' · '+money0(gone.amount):id);
-      renderOverheads(); renderDashboard(); toast('Overhead deleted.','warn');
-    }
-  });
-
-  /* admin */
-  $('btnAddBranch').addEventListener('click',function(){ $('branchAddForm').classList.toggle('hidden'); });
-  $('branchAddForm').addEventListener('submit',function(ev){
-    ev.preventDefault();
-    var name=tv('newBranchName'); if(!name){ toast('Enter a branch name.','error'); return; }
-    var code=tv('newBranchCode').toUpperCase().replace(/[^A-Z0-9_-]/g,'')||nextBranchCode();
-    if(S.branches[code]){ toast('Code "'+code+'" already exists.','error'); return; }
-    S.branches[code]=name; DB.write(K.branches,S.branches);
-    if(S.user.branches) { S.user.branches.push(code); DB.write(K.users,S.users); }
-    setV('newBranchName',''); setV('newBranchCode','');
-    logAct('Created branch',code+' — '+name);
-    renderAdmin(); refreshBranchSelects(); toast('Branch "'+name+'" created.');
-  });
-  $('branchBody').addEventListener('input',function(ev){
-    var i=ev.target.closest('input[data-bname]'); if(!i||!i.value.trim()) return;
-    S.branches[i.getAttribute('data-bname')]=i.value.trim(); DB.write(K.branches,S.branches); refreshBranchSelects();
-  });
-  $('branchBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-bdel]'); if(!b||b.disabled) return;
-    var c=b.getAttribute('data-bdel'), n=S.entries.filter(function(e){return e.branch===c;}).length;
-    if(!confirm('Delete "'+S.branches[c]+'"?'+(n?'\n\n'+n+' record(s) will also be deleted.':''))) return;
-    delete S.branches[c];
-    S.entries=S.entries.filter(function(e){return e.branch!==c;});
-    S.workers=S.workers.filter(function(w){return w.branch!==c;});
-    S.ledger=S.ledger.filter(function(l){return l.branch!==c;});
-    S.overheads=S.overheads.filter(function(o){return o.branch!==c;});
-    S.users.forEach(function(u){ if(u.branches) u.branches=u.branches.filter(function(x){return x!==c;}); });
-    DB.write(K.branches,S.branches); DB.write(K.entries,S.entries); DB.write(K.workers,S.workers);
-    DB.write(K.ledger,S.ledger); DB.write(K.overheads,S.overheads); DB.write(K.users,S.users);
-    logAct('Deleted branch',c+' with '+n+' record(s)');
-    renderAdmin(); refreshBranchSelects(); renderRecords(); renderDashboard(); toast('Branch deleted.','warn');
-  });
-  $('btnAddUser').addEventListener('click',function(){ $('userAddForm').classList.toggle('hidden'); });
-  $('userAddForm').addEventListener('submit',function(ev){
-    ev.preventDefault();
-    var name=tv('newUserName'), lg=tv('newUserLogin'), pw=tv('newUserPass'), role=tv('newUserRole');
-    if(!name||!lg||!pw){ toast('Fill name, username and password.','error'); return; }
-    if(S.users.some(function(u){return u.username.toLowerCase()===lg.toLowerCase();})){ toast('Username taken.','error'); return; }
-    var brs=qsa('#newUserBranches .ubr').filter(function(c){return c.checked;}).map(function(c){return c.value;});
-    if(role==='supervisor'&&!brs.length){ toast('Assign at least one branch.','error'); return; }
-    S.users.push({ id:uid('u'), name:name, username:lg, password:pw, role:role, branches: role==='admin'?Object.keys(S.branches):brs, active:true });
-    DB.write(K.users,S.users); setV('newUserName',''); setV('newUserLogin',''); setV('newUserPass','');
-    logAct('Created user',lg+' ('+role+')');
-    renderAdmin(); toast('Account created.');
-  });
-  $('userBody').addEventListener('click',function(ev){
-    var b=ev.target.closest('button[data-uact]'); if(!b) return;
-    var id=b.getAttribute('data-id'), u=S.users.filter(function(x){return x.id===id;})[0];
-    if(b.getAttribute('data-uact')==='pass'){ var p=prompt('New password for '+u.name+':'); if(p){ u.password=p; DB.write(K.users,S.users); toast('Password updated.'); } }
-    else if(confirm('Delete account "'+u.username+'"?')){ S.users=S.users.filter(function(x){return x.id!==id;}); DB.write(K.users,S.users); renderAdmin(); toast('Account deleted.','warn'); }
-  });
-  $('btnSaveSettings').addEventListener('click',function(){
-    S.settings={ wasteBroiler:v('setWasteBroiler'), wasteParents:v('setWasteParents'), tolerance:v('setTolerance'), dayWage:v('setDayWage') };
-    DB.write(K.settings,S.settings); logAct('Changed settings',JSON.stringify(S.settings));
-    recalc(); renderDashboard(); renderRecords(); toast('Settings saved.');
-  });
-  $('btnExportAll').addEventListener('click',function(){
-    var d={}; Object.keys(K).forEach(function(k){ d[k]=DB.read(K[k],null); });
-    download(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}),'VCC_backup_'+todayISO()+'.json'); toast('Backup downloaded.');
-  });
-  $('importFile').addEventListener('change',function(){
-    var f=this.files[0]; if(!f) return; var fr=new FileReader();
-    fr.onload=function(){ try{ var d=JSON.parse(fr.result);
-      Object.keys(K).forEach(function(k){ if(d[k]!==undefined&&d[k]!==null) DB.write(K[k],d[k]); });
-      toast('Import complete — reloading.'); setTimeout(function(){location.reload();},900);
-    }catch(err){ toast('Not a valid backup file.','error'); } };
-    fr.readAsText(f); this.value='';
-  });
-  $('btnSeed').addEventListener('click',function(){
-    if(confirm('Replace all entries, workers and ledger with a 14-day demo dataset?')){
-      seedDemo(); logAct('Loaded demo data',''); renderAdmin(); renderActivity(); renderRecords(); renderDashboard(); renderWorkers(); updatePendingBadge(); loadEntry(null); toast('Demo data loaded.'); }
-  });
-  ['reviewModal','genModal','lightbox'].forEach(function(id){
-    $(id).addEventListener('click',function(ev){ if(ev.target.closest('[data-close]')) closeModal(id); });
-  });
-  document.addEventListener('keydown',function(ev){
-    if(ev.key!=='Escape') return;
-    ['lightbox','genModal','reviewModal'].forEach(function(id){ if(!$(id).classList.contains('hidden')) closeModal(id); });
-  });
-  window.addEventListener('online',net); window.addEventListener('offline',net);
-
-  /* another tab changed the data — pull it in and refresh what is on screen */
-  window.addEventListener('storage',function(ev){
-    if(!S.user||!ev.key) return;
-    if([K.entries,K.workers,K.ledger,K.overheads,K.branches,K.users,K.settings].indexOf(ev.key)<0) return;
-    loadAll();
-    if(S.editing){
-      var still=S.entries.filter(function(x){ return x.id===S.editing.id; })[0];
-      if(!still||!canEdit(still)){ loadEntry(still?still.id:null); toast('This entry was updated elsewhere.','warn'); }
-    }
-    renderRecords(); renderDashboard(); renderWorkers(); renderOverheads(); updatePendingBadge();
-  });
-}
-
-function init(){
-  loadAll(); wire(); net(); clock(); setInterval(clock,1000); setInterval(tickSession,1000);
-  var reason=DB.read(K.logoutReason,null);
-  if(reason){ $('loginNotice').textContent=reason; $('loginNotice').classList.remove('hidden'); LS.del(K.logoutReason); }
-  try{ var l=document.createElement('link'); l.rel='icon'; l.type='image/png'; l.href=$('brandLogo').getAttribute('src'); document.head.appendChild(l); }catch(e){}
-  var s=DB.read(K.session,null);
-  if(s){ var u=S.users.filter(function(x){return x.id===s.id;})[0]; if(u){ startApp(u); return; } }
-  $('loginUser').focus();
-}
 
 /* =======================================================================
    API INTEGRATION LAYER

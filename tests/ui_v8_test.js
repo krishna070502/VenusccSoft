@@ -889,6 +889,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await sleep(150);
   check('pressing Escape dismisses it too', $('savedModal').classList.contains('hidden'));
 
+  console.log('\n[25] CSV/Excel export sanitizer (formula-injection guard, CWE-1236)');
+  // app.js's top-level functions are private inside its own IIFE, not on
+  // `w` — so the sanitizer can only be exercised the way a real user would
+  // hit it: create a record with a formula-looking name, export the screen
+  // it appears on, and inspect what actually got written to the file.
+  // toCsvFallback() is the path taken here since no XLSX CDN script is
+  // loaded in this jsdom environment (same fallback the other Export button
+  // checks above already exercise) — intercept Blob to capture the CSV text
+  // instead of letting the download happen.
+  nav('customers'); await sleep(400);
+  click($('btnAddCustomer')); await sleep(250);
+  setVal($('cuName'), '=2+2 Injection Test');
+  setVal($('cuKind'), 'function');
+  setVal($('cuLessLive'), '10');
+  setVal($('cuLessSkin'), '10');
+  click($('cuSave'));
+  await sleep(1200);
+  const injRow = qa('#custBody tr').find(tr => tr.textContent.includes('Injection Test'));
+  check('the formula-named customer was created', !!injRow);
+
+  let capturedCsv = null;
+  const origBlob = w.Blob;
+  w.Blob = function (parts) { capturedCsv = parts.join(''); return new origBlob(parts); };
+  click($('custExport'));
+  await sleep(300);
+  w.Blob = origBlob;
+  check('the export ran and something was captured', !!capturedCsv, capturedCsv);
+  check('the formula-looking name is prefixed with an apostrophe in the exported file',
+        capturedCsv && capturedCsv.includes("'=2+2 Injection Test"),
+        capturedCsv);
+  check('...and the raw, unescaped formula does NOT appear on its own',
+        capturedCsv && !new RegExp('[,\\r\\n]=2\\+2 Injection Test').test(capturedCsv),
+        capturedCsv);
+  check('an ordinary customer name from earlier in the suite is untouched in the same export',
+        capturedCsv && capturedCsv.includes('Marriage Hall UI') && !capturedCsv.includes("'Marriage Hall UI"),
+        capturedCsv);
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
