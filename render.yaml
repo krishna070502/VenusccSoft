@@ -7,7 +7,14 @@ services:
   - type: web
     name: venus-chicken-centers
     runtime: python
-    plan: free
+    # Starter, not free — the free tier sleeps the whole app after ~15
+    # minutes of no traffic, and the next request (almost always someone's
+    # login) has to wait 30-60+ seconds for it to wake back up. That was the
+    # main cause of "login/every screen feels slow" reported 2026-09-08.
+    # Keep this in sync with whatever plan is actually active on the Render
+    # dashboard — if it ever drifts, a redeploy from this blueprint would
+    # silently downgrade the live service back to the free, sleeping tier.
+    plan: starter
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
     healthCheckPath: /healthz
