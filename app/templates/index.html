@@ -984,6 +984,8 @@
           <span class="text-xs text-slate-400" id="dcHistNote"></span>
         </div>
         <div class="ml-auto flex items-end gap-2 flex-wrap">
+          <div><label class="lbl" for="dcHistBranch" title="Show handover history for one branch, or all.">Branch</label>
+            <select id="dcHistBranch" class="inp !py-1.5 !text-xs"><option value="">All branches</option></select></div>
           <div><label class="lbl" for="dcFrom" title="Start of the handover history range — admin only.">From</label><input type="date" id="dcFrom" class="inp !py-1.5 !text-xs" /></div>
           <div><label class="lbl" for="dcTo" title="End of the handover history range — admin only.">To</label><input type="date" id="dcTo" class="inp !py-1.5 !text-xs" /></div>
           <button id="dcThisWeek" class="text-xs font-bold border border-slate-300 bg-white rounded-lg px-2.5 py-2 hover:bg-slate-50">This week</button>

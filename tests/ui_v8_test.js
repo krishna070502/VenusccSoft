@@ -674,6 +674,60 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('dcBranchExport')); await sleep(200);
   check('the by-branch table\'s Print/Excel buttons do not throw', printCalls >= 10, printCalls + ' calls');
 
+  console.log('\n[20b] handover history branch filter actually isolates one branch');
+  // A second branch's handover, today, distinct from Yarrakatta's (section
+  // [9]) — proves the new dcHistBranch filter really narrows the main
+  // history table instead of always mixing every branch together.
+  const b2Entry = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'B02', category: 'broiler', datetime: today + 'T19:00',
+      openBirds: 40, openWtG: 100000, openRate: 120, openMeatG: 0,
+      rateSkin: 250, rateSkinless: 300, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 10, liveSoldWtG: 20000, cutCharges: 0,
+      dressedCount: 0, dressedWtG: 0, actualMeatG: 0,
+      skinSoldG: 0, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 30, closeWtG: 80000, closeMeatG: 0, purchases: []
+    })
+  })).json();
+  await (await w.fetch('/api/entries/' + b2Entry.id + '/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict: 'approved', openRate: 120 })
+  })).json();
+  nav('dayclose'); await sleep(700);
+  // Admin sees every branch's card regardless of the branch selector, so
+  // pick B02's card by its data attribute, not by "the first card on screen".
+  const b2Card = q('[data-dcbranch="B02"]');
+  check('Branch 02 also gets a day close card', !!b2Card);
+  // 10 live birds @150 over 20 kg = 3,000 — declare exactly that, clean.
+  setVal(b2Card.querySelector('[data-dc="cash"]'), '3000');
+  setVal(b2Card.querySelector('[data-dc="upi"]'), '0');
+  await sleep(300);
+  click(b2Card.querySelector('[data-dcsave]'));
+  await sleep(1200);
+
+  click($('dcThisMonth')); await sleep(700);
+  check('the branch filter offers every branch the admin can see',
+        [...$('dcHistBranch').options].some(o => /Downtown/.test(o.textContent)) &&
+        [...$('dcHistBranch').options].some(o => /Yarrakatta/.test(o.textContent)));
+
+  setVal($('dcHistBranch'), 'B01'); await sleep(700);
+  check('picking one branch shows only its own handover rows',
+        qa('#dcHistBody tr').every(tr => !/Downtown/.test(tr.textContent)) &&
+        qa('#dcHistBody tr').some(tr => /Yarrakatta/.test(tr.textContent)),
+        qa('#dcHistBody tr').map(tr => tr.textContent.slice(0, 60)).join(' | '));
+
+  setVal($('dcHistBranch'), 'B02'); await sleep(700);
+  check('...and switching branches swaps which handover shows, not both at once',
+        qa('#dcHistBody tr').every(tr => !/Yarrakatta/.test(tr.textContent)) &&
+        qa('#dcHistBody tr').some(tr => /Downtown/.test(tr.textContent)),
+        qa('#dcHistBody tr').map(tr => tr.textContent.slice(0, 60)).join(' | '));
+
+  setVal($('dcHistBranch'), ''); await sleep(700);
+  check('"All branches" shows every branch\'s handover together again',
+        qa('#dcHistBody tr').some(tr => /Yarrakatta/.test(tr.textContent)) &&
+        qa('#dcHistBody tr').some(tr => /Downtown/.test(tr.textContent)));
+
   console.log('\n[21] bonus meat, branch and day wise (admin only, does not touch closing stock)');
   const d75 = new Date(Date.now() - 75 * 86400000).toISOString().slice(0, 10);   // untouched by every other section
   // Default waste_broiler is 31% (yield 69%): 10,000g dressed -> 6,900g

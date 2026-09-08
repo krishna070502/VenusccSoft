@@ -1601,7 +1601,19 @@ def delete_customer(cid):
 @bp.get("/customers/<cid>/ledger")
 @login_required
 def customer_ledger(cid):
-    """Dated statement for one hotel or hostel, with a running balance."""
+    """
+    Dated statement for one hotel or hostel, with a running balance.
+
+    Unlike the worker ledger, purchase ledger, feed ledger and day close
+    history — all admin-only browsable pasts — a supervisor can read this
+    one. They are the one collecting money from these hotels day to day,
+    so they need to see what is actually owed and confirm a receipt landed
+    on the right line; cutting that off would leave them guessing. What
+    they cannot do is add a receipt dated anywhere but today (see
+    add_payment() below), edit or delete one, or add a billing adjustment —
+    those stay admin-only, matching everywhere else money is corrected
+    after the fact.
+    """
     c = db.session.get(Customer, cid)
     if not c:
         return jsonify({"error": "not_found"}), 404
@@ -1679,8 +1691,16 @@ def add_payment(cid):
         return jsonify({"error": "validation", "message": "Enter an amount."}), 422
     mode = d.get("mode") if d.get("mode") in ("cash", "upi", "bank", "cheque") else "cash"
 
+    pay_date = parse_date(d.get("date"), date.today())
+    # A supervisor only ever records today's receipt — the date picker on the
+    # receipt modal is disabled for them client-side, so this is the matching
+    # server-side floor: whatever date sneaks in on a direct API call, an
+    # admin gets it, anyone else gets overridden to today. Same pattern as
+    # add_ledger()'s day pin for worker attendance/wages.
+    if not g.user.is_admin:
+        pay_date = date.today()
     p = CustomerPayment(customer_id=c.id, branch_id=c.branch_id,
-                        pay_date=parse_date(d.get("date"), date.today()),
+                        pay_date=pay_date,
                         amount=amount, mode=mode, note=(d.get("note") or "")[:500],
                         created_by_id=g.user.id)
     db.session.add(p)

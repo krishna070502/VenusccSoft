@@ -3817,7 +3817,8 @@ function receiptModal(cid) {
       'Billed ' + money0(num(t.credit) + num(t.cash)) + ' · received ' + money0(num(t.receipts)) +
       ' · <b>balance due ' + money0(num(t.balance)) + '</b></div>' +
     '<div class="grid grid-cols-2 gap-3">' +
-      '<div><label class="lbl" for="rcDate">Date received</label><input type="date" id="rcDate" class="inp" value="' + todayISO() + '" /></div>' +
+      '<div><label class="lbl" for="rcDate">Date received</label><input type="date" id="rcDate" class="inp" value="' + todayISO() + '"' +
+        (isAdmin() ? '' : ' disabled title="Supervisors can only record today’s receipt."') + ' /></div>' +
       '<div><label class="lbl" for="rcAmt">Amount (₹)</label><input type="number" min="0" step="1" id="rcAmt" class="inp num" /></div>' +
     '</div>' +
     '<div class="grid grid-cols-2 gap-3">' +
@@ -4123,10 +4124,26 @@ function renderDayCloseHistory() {
   // Admin only — see renderDayClose() above. A supervisor never sees the
   // nav badge either, since there is no history to flag for them any more.
   if (!isAdmin()) { var b = $('closeBadge'); if (b) b.classList.add('hidden'); return; }
+  // Branch filter — every branch by default (this is the admin's own
+  // cross-branch view), narrowed to one when picked. Options are rebuilt
+  // whenever the set of branches changes, same pattern as dcGapBranch below.
+  var sel = $('dcHistBranch');
+  if (sel) {
+    var codes = myBranches();
+    var signature = codes.join(',');
+    if (sel.getAttribute('data-filled') !== signature) {
+      var cur = sel.value;
+      sel.innerHTML = '<option value="">All branches</option>' +
+        codes.map(function (k) { return '<option value="' + esc(k) + '">' + esc(S.branches[k]) + '</option>'; }).join('');
+      sel.value = codes.indexOf(cur) >= 0 ? cur : '';
+      sel.setAttribute('data-filled', signature);
+    }
+  }
+  var branch = sel ? sel.value : '';
   var from = $('dcFrom').value || addDays(todayISO(), -29);
   var to = $('dcTo').value || todayISO();
   api('GET', '/dayclose/history?from=' + from + '&to=' + to +
-             (isAdmin() ? '' : '&branch=' + S.branch))
+             (branch ? '&branch=' + branch : ''))
     .then(function (d) {
       var rows = d.rows, t = { expected: 0, declared: 0, diff: 0 }, missing = 0;
       $('dcHistBody').innerHTML = rows.length ? rows.map(function (r) {
@@ -5289,6 +5306,7 @@ function wire() {
   ['dcFrom', 'dcTo'].forEach(function (id) {
     $(id).addEventListener('change', renderDayCloseHistory);
   });
+  if ($('dcHistBranch')) $('dcHistBranch').addEventListener('change', renderDayCloseHistory);
   $('dcThisWeek').addEventListener('click', function () {
     $('dcFrom').value = addDays(todayISO(), -6); $('dcTo').value = todayISO();
     renderDayCloseHistory();

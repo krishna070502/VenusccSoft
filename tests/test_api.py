@@ -1675,6 +1675,22 @@ def test_hotels():
          "DELETE /api/payments", 403,
          lambda: SUP.delete("/api/payments/whatever").status_code)
 
+    # A supervisor can only ever record TODAY's receipt — same floor as a
+    # supervisor's daily entry, worker attendance and overhead spend date.
+    # The date field is disabled on their receipt modal client-side; this is
+    # the matching server-side pin for a direct API call.
+    sup_backdated = SUP.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                              json={"amount": 50, "mode": "cash", "date": D(15)})
+    case("Hotel receipts", "A supervisor's receipt date is pinned to today, "
+                            "even if a past date is sent",
+         "date=D(15) sent", TODAY.isoformat(),
+         lambda: sup_backdated.get_json()["date"])
+    admin_backdated = ADMIN.post(f"/api/customers/{HOTEL['a']['id']}/payments",
+                                  json={"amount": 50, "mode": "cash", "date": D(15)})
+    case("Hotel receipts", "...but an admin's chosen date is honored",
+         "date=D(15) sent", D(15),
+         lambda: admin_backdated.get_json()["date"])
+
     # ---- repricing --------------------------------------------------------
     SUP.put(f"/api/customers/{HOTEL['a']['id']}", json={"lessSkin": 80})
     case("Hotels", "Editing the deal does not rewrite an approved bill",
