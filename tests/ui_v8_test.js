@@ -926,6 +926,57 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         capturedCsv && capturedCsv.includes('Marriage Hall UI') && !capturedCsv.includes("'Marriage Hall UI"),
         capturedCsv);
 
+  console.log('\n[26] carry-forward brings opening stock, but NOT yesterday\'s selling rates');
+  // Reported 2026-09-09: Section C (skin/skinless/liver/live bird rate) was
+  // silently pre-filled from the previous day's approved entry, same as
+  // opening birds/weight/meat — but the selling rate is set fresh each day,
+  // and having yesterday's figure already sitting in the box looked like a
+  // stale value nobody had actually re-entered. Only the opening stock
+  // should carry; the rate boxes should start blank every time.
+  const cfMade = await (await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      // closeBirds/closeWtG are server-computed (handled - sold - dressed -
+      // mortality), not taken from the request literally — so this has to
+      // be an internally consistent day (105 birds bought, 100 dressed,
+      // 5 left over weighing 9 kg) for the approved entry to actually end
+      // up with the 5-birds/9kg closing stock this test then checks
+      // carries forward. An inconsistent fixture (dressing birds that were
+      // never bought) would just get auto-computed down to 0 and silently
+      // test the wrong thing.
+      branch: 'B02', category: 'broiler', datetime: '2033-02-01T18:00',
+      openBirds: 0, openWtG: 0, openRate: 100, openMeatG: 0,
+      rateSkin: 271, rateSkinless: 282, rateLiver: 293, rateLive: 264,
+      dressedCount: 100, dressedWtG: 200000, actualMeatG: 138000,
+      skinSoldG: 138000, skinlessSoldG: 0, liverSoldG: 0,
+      closeMeatG: 0, purchases: [{ supplier: 'CF Test Supplier', birds: 105, wtG: 209000, rate: 100 }]
+    })
+  })).json();
+  await (await w.fetch('/api/entries/' + cfMade.id + '/decision', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verdict: 'approved' })
+  })).json();
+
+  nav('entry'); await sleep(300);
+  setVal($('branchSelect'), 'B02'); await sleep(300);
+  const broilerBtn = qa('#entryCatSeg button').find(b => b.getAttribute('data-cat') === 'broiler');
+  click(broilerBtn); await sleep(300);
+  if ($('actNew')) { click($('actNew')); await sleep(300); }
+  await sleep(700);   // let the carry-forward fetch settle
+
+  check('opening birds carried forward from the approved day', $('f_openBirds').value === '5',
+        $('f_openBirds').value);
+  check('opening weight carried forward too', $('f_openWt_kg').value === '9' && $('f_openWt_g').value === '0',
+        $('f_openWt_kg').value + '.' + $('f_openWt_g').value);
+  check('skin rate did NOT carry forward — starts blank', $('f_rateSkin').value === '',
+        $('f_rateSkin').value);
+  check('skinless rate did NOT carry forward — starts blank', $('f_rateSkinless').value === '',
+        $('f_rateSkinless').value);
+  check('liver rate did NOT carry forward — starts blank', $('f_rateLiver').value === '',
+        $('f_rateLiver').value);
+  check('live bird rate did NOT carry forward — starts blank', $('f_rateLive').value === '',
+        $('f_rateLive').value);
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));

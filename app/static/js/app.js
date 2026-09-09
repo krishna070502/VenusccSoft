@@ -849,10 +849,15 @@ function blankForm(){
         if(!filledG('f_openWt')) setG('f_openWt',cf.closeWtG);
         if(!filledG('f_openMeat')) setG('f_openMeat',cf.closeMeatG);
         if(!filled('f_openRate')) setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
-        if(!filled('f_rateSkin')) setV('f_rateSkin',cf.rateSkin);
-        if(!filled('f_rateSkinless')) setV('f_rateSkinless',cf.rateSkinless);
-        if(!filled('f_rateLiver')) setV('f_rateLiver',cf.rateLiver);
-        if(!filled('f_rateLive')) setV('f_rateLive',cf.rateLive);
+        // Selling rates (Section C: skin/skinless/liver/live bird price) are
+        // deliberately NOT carried forward from here any more — reported
+        // 2026-09-09: the market rate is set fresh each day, and having
+        // yesterday's rate silently sitting in the box looked like it was
+        // "sticking" and being missed rather than re-entered on purpose.
+        // Only closing stock (opening birds/weight/meat, just above) carries
+        // forward now. This only changes what a brand-new entry starts
+        // with — it never touches any entry already saved, so every rate an
+        // admin or supervisor has already typed for a past day is untouched.
         $('carryNote').textContent='Carried forward from '+cf.date+' — '+num(cf.closeBirds)+' birds'+(isAdmin()?' @ '+money(cf.avgRate)+'/kg':'');
       } else {
         S.carryForward=null;
