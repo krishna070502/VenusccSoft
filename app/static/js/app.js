@@ -4410,6 +4410,20 @@ function wire() {
   // idempotent, so a redundant call here for inputs that already fired
   // 'input' is harmless.
   $('entryForm').addEventListener('change', recalc);
+  // Belt-and-braces for Android Chrome specifically: its native
+  // datetime-local picker (date and time are two separate dialogs there,
+  // unlike desktop's single widget) has been reported to leave the field
+  // showing a new value without ever firing 'input' or 'change' if the user
+  // taps away instead of explicitly confirming both steps — reported
+  // 2026-09-09 as "changing the date doesn't update anything" on an Android
+  // phone specifically, never seen on desktop. 'focusout' (unlike 'blur',
+  // this one bubbles, so the single form-level listener still catches it)
+  // fires whenever any field loses focus regardless of whether the browser
+  // considered the value "changed" — the moment a finger taps elsewhere on
+  // the screen, which is exactly the gesture a phone user makes right after
+  // picking a date. recalc() is cheap and idempotent, so a redundant call
+  // here for something that already fired 'input'/'change' is harmless.
+  $('entryForm').addEventListener('focusout', recalc);
   $('entryForm').addEventListener('submit', function (ev) { ev.preventDefault(); });
   /* Auto/manual toggle for closing birds/weight/meat — admin only (the
      buttons themselves are data-admin and hidden from a supervisor, but the
