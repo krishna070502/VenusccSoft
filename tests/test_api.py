@@ -2893,6 +2893,36 @@ def test_v16_purchase_returns():
          "= 637,000", 637_000,
          lambda: same_updated["calc"]["expCloseWtG"])
 
+    # Reported 2026-09-14: neither the by-supplier summary nor the
+    # transaction log said which branch a purchase or return belonged to —
+    # every row now carries branch/branchName, whether the caller asked for
+    # one branch or, by leaving `branch` off, every branch at once.
+    tagged = ADMIN.get(f"/api/purchase-ledger?branch=B01&from={D(56)}&to={D(55)}").get_json()
+    shiva_tagged = next(s for s in tagged["suppliers"] if s["supplier"] == "Shiva Traders")
+    case("Purchase ledger", "A single-branch supplier row says which branch it's for",
+         "B01", "B01", lambda: shiva_tagged["branch"])
+    case("Purchase ledger", "Every transaction row is tagged with the same branch",
+         True, True, lambda: all(t["branch"] == "B01" for t in tagged["transactions"]))
+
+    all_branches = ADMIN.get(f"/api/purchase-ledger?from={D(58)}&to={D(55)}").get_json()
+    case("Purchase ledger", "Omitting branch answers with no single branch code",
+         "", "", lambda: all_branches["branch"])
+    shiva_rows = [s for s in all_branches["suppliers"] if s["supplier"] == "Shiva Traders"]
+    case("Purchase ledger", "...and Shiva Traders shows up once per branch, not merged together",
+         {"B01", "B02"}, {s["branch"] for s in shiva_rows}, lambda: {s["branch"] for s in shiva_rows})
+    b01_shiva = next(s for s in shiva_rows if s["branch"] == "B01")
+    b02_shiva = next(s for s in shiva_rows if s["branch"] == "B02")
+    case("Purchase ledger", "...B01's Shiva Traders totals are exactly what the single-branch view showed",
+         (40, 20), (b01_shiva["boughtBirds"], b01_shiva["returnedBirds"]),
+         lambda: (b01_shiva["boughtBirds"], b01_shiva["returnedBirds"]))
+    case("Purchase ledger", "...B02's Shiva Traders totals are kept separate, not merged into B01's",
+         (300, 20), (b02_shiva["boughtBirds"], b02_shiva["returnedBirds"]),
+         lambda: (b02_shiva["boughtBirds"], b02_shiva["returnedBirds"]))
+    case("Purchase ledger", "Every transaction row in the all-branch view is tagged with its own branch",
+         True, True,
+         lambda: all(t["branch"] in ("B01", "B02") for t in all_branches["transactions"]
+                     if t["supplier"] == "Shiva Traders"))
+
 
 # ===========================================================================
 def test_v17_customer_adjustments():

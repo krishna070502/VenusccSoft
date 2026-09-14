@@ -2220,11 +2220,25 @@ def purchase_ledger():
     from Shiva Traders" screen. See the Purchase model docstring for how a
     return row is priced (always the original purchase's rate, never a rate
     typed on the return day).
+
+    `branch` is optional. Given, this scopes to that one branch exactly like
+    before. Omitted, it covers every branch the admin can see at once —
+    reported 2026-09-14: with only a single-branch view, and neither the
+    supplier summary nor the transaction log saying which branch a row
+    belonged to, a buy or return was effectively unattributable the moment
+    an admin had more than one branch open. Both the supplier rows and the
+    transaction rows now always carry `branch`/`branchName`, in single- or
+    all-branch scope alike, so the caller never has to infer it from context.
     """
-    err = require_branch(request.args.get("branch"))
-    if err:
-        return err
-    branch = branch_by_code(request.args["branch"])
+    branch = None
+    if request.args.get("branch"):
+        err = require_branch(request.args["branch"])
+        if err:
+            return err
+        branch = branch_by_code(request.args["branch"])
+        bids = [branch.id]
+    else:
+        bids = visible_branch_ids()
 
     to_day = parse_date(request.args.get("to"), date.today(), field="to")
     from_day = parse_date(request.args.get("from"), to_day - timedelta(days=90), field="from")
@@ -2232,18 +2246,21 @@ def purchase_ledger():
         from_day, to_day = to_day, from_day
 
     rows = (Purchase.query.join(DailyEntry, Purchase.entry_id == DailyEntry.id)
-            .options(joinedload(Purchase.entry))
-            .filter(DailyEntry.branch_id == branch.id,
+            .options(joinedload(Purchase.entry).joinedload(DailyEntry.branch))
+            .filter(DailyEntry.branch_id.in_(bids),
                     DailyEntry.business_date >= from_day,
                     DailyEntry.business_date <= to_day)
-            .order_by(DailyEntry.business_date.asc()).all())
+            .order_by(DailyEntry.business_date.asc()).all()) if bids else []
 
     by_supplier = {}
     txns = []
     for p in rows:
         name = (p.supplier or "Unknown").strip() or "Unknown"
-        agg = by_supplier.setdefault(name.lower(), {
-            "supplier": name, "boughtBirds": 0, "boughtWtG": 0, "boughtAmt": 0.0,
+        bcode = p.entry.branch.code
+        bname = p.entry.branch.name
+        agg = by_supplier.setdefault((bcode, name.lower()), {
+            "branch": bcode, "branchName": bname, "supplier": name,
+            "boughtBirds": 0, "boughtWtG": 0, "boughtAmt": 0.0,
             "returnedBirds": 0, "returnedWtG": 0, "returnedAmt": 0.0})
         amt = float(p.weight_g) / 1000 * float(p.rate)
         if p.kind == "return":
@@ -2254,7 +2271,8 @@ def purchase_ledger():
             agg["boughtBirds"] += p.birds
             agg["boughtWtG"] += p.weight_g
             agg["boughtAmt"] += amt
-        txns.append({"id": p.id, "date": p.entry.business_date.isoformat(), "supplier": name,
+        txns.append({"id": p.id, "date": p.entry.business_date.isoformat(),
+                     "branch": bcode, "branchName": bname, "supplier": name,
                      "kind": p.kind, "birds": p.birds, "wtG": p.weight_g, "rate": float(p.rate),
                      "amount": round(amt, 2), "returnOf": p.return_of_id, "hasBill": p.has_bill})
 
@@ -2266,9 +2284,10 @@ def purchase_ledger():
         agg["netWtG"] = agg["boughtWtG"] - agg["returnedWtG"]
         agg["netAmt"] = round(agg["boughtAmt"] - agg["returnedAmt"], 2)
         suppliers.append(agg)
-    suppliers.sort(key=lambda a: a["supplier"].lower())
+    suppliers.sort(key=lambda a: (a["branchName"].lower(), a["supplier"].lower()))
 
-    return jsonify({"branch": branch.code, "from": from_day.isoformat(), "to": to_day.isoformat(),
+    return jsonify({"branch": branch.code if branch else "",
+                    "from": from_day.isoformat(), "to": to_day.isoformat(),
                     "suppliers": suppliers, "transactions": txns})
 
 

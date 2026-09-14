@@ -87,7 +87,7 @@ function kindDef(v){ return CUSTOMER_KINDS.filter(function(k){ return k.v===v; }
 
 var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[], settings:{}, activity:[],
           customers:[], receipts:[], customerAdjustments:[], custTotals:{}, closes:[],
-          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, wkLedger:null, dcCurrent:null, closeHistory:[],
+          window:null, fetching:null, ovhScope:'branch', ovhLedger:null, plScope:'branch', wkLedger:null, dcCurrent:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
@@ -3885,14 +3885,16 @@ function renderLedgerLog() {
    S so Print/Excel can read the exact same rows without re-fetching. */
 function renderPurchaseLedger(){
   if(!$('plBody') || !isAdmin() || !S.branch) return;
-  $('plBranchLabel').textContent=S.branches[S.branch]||S.branch;
+  $('plBranchLabel').textContent = S.plScope==='all' ? 'All branches' : (S.branches[S.branch]||S.branch);
   var from=$('plFrom').value || monthStart();
   var to=$('plTo').value || todayISO();
-  api('GET','/purchase-ledger?branch='+encodeURIComponent(S.branch)+'&from='+from+'&to='+to).then(function(d){
+  var scope = S.plScope==='all' ? '' : '&branch='+encodeURIComponent(S.branch);
+  api('GET','/purchase-ledger?from='+from+'&to='+to+scope).then(function(d){
     S.purchaseLedger=d;
     var sup=d.suppliers||[];
     $('plBody').innerHTML=sup.length ? sup.map(function(s){
-      return '<tr class="rowhover"><td class="px-4 py-2.5 font-semibold">'+esc(s.supplier)+'</td>'+
+      return '<tr class="rowhover"><td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">'+esc(s.branchName||s.branch)+'</span></td>'+
+        '<td class="px-4 py-2.5 font-semibold">'+esc(s.supplier)+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+s.boughtBirds+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+fmtW(s.boughtWtG)+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+money0(s.boughtAmt)+'</td>'+
@@ -3902,25 +3904,26 @@ function renderPurchaseLedger(){
         '<td class="px-4 py-2.5 text-right num font-bold">'+s.netBirds+'</td>'+
         '<td class="px-4 py-2.5 text-right num font-bold">'+fmtW(s.netWtG)+'</td>'+
         '<td class="px-4 py-2.5 text-right num font-bold">'+money0(s.netAmt)+'</td></tr>';
-    }).join('') : '<tr><td colspan="10" class="px-4 py-10 text-center text-slate-400">No purchases between '+from+' and '+to+'.</td></tr>';
+    }).join('') : '<tr><td colspan="11" class="px-4 py-10 text-center text-slate-400">No purchases between '+from+' and '+to+'.</td></tr>';
 
     var tot=sup.reduce(function(a,s){ a.bb+=s.boughtBirds; a.bw+=s.boughtWtG; a.ba+=s.boughtAmt;
       a.rb+=s.returnedBirds; a.rw+=s.returnedWtG; a.ra+=s.returnedAmt;
       a.nb+=s.netBirds; a.nw+=s.netWtG; a.na+=s.netAmt; return a; },
       {bb:0,bw:0,ba:0,rb:0,rw:0,ra:0,nb:0,nw:0,na:0});
-    $('plFoot').innerHTML=sup.length ? '<tr><td class="px-4 py-2.5">Totals · '+sup.length+' supplier(s)</td>'+
+    $('plFoot').innerHTML=sup.length ? '<tr><td class="px-4 py-2.5" colspan="2">Totals · '+sup.length+' supplier row(s)</td>'+
       '<td class="px-4 py-2.5 text-right num">'+tot.bb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.bw)+'</td>'+
       '<td class="px-4 py-2.5 text-right num">'+money0(tot.ba)+'</td>'+
       '<td class="px-4 py-2.5 text-right num">'+tot.rb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.rw)+'</td>'+
       '<td class="px-4 py-2.5 text-right num">'+money0(tot.ra)+'</td>'+
       '<td class="px-4 py-2.5 text-right num">'+tot.nb+'</td><td class="px-4 py-2.5 text-right num">'+fmtW(tot.nw)+'</td>'+
       '<td class="px-4 py-2.5 text-right num">'+money0(tot.na)+'</td></tr>' : '';
-    $('plNote').textContent=sup.length ? sup.length+' supplier(s) · '+from+' to '+to : 'Pick a date range to see purchases and returns.';
+    $('plNote').textContent=sup.length ? sup.length+' supplier row(s) · '+from+' to '+to : 'Pick a date range to see purchases and returns.';
 
     var txns=d.transactions||[];
     $('plTxnBody').innerHTML=txns.length ? txns.slice().reverse().map(function(t){
       var isRet=t.kind==='return';
       return '<tr class="rowhover'+(isRet?' bg-rose-50':'')+'"><td class="px-4 py-2.5 whitespace-nowrap">'+t.date+'</td>'+
+        '<td class="px-4 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">'+esc(t.branchName||t.branch)+'</span></td>'+
         '<td class="px-4 py-2.5">'+esc(t.supplier)+'</td>'+
         '<td class="px-4 py-2.5">'+(isRet?'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-rose-100 text-rose-800">Return</span>':'<span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">Buy</span>')+'</td>'+
         '<td class="px-4 py-2.5 text-right num">'+(isRet?'−':'')+t.birds+'</td>'+
@@ -3928,7 +3931,7 @@ function renderPurchaseLedger(){
         '<td class="px-4 py-2.5 text-right num">'+money0(t.rate)+'</td>'+
         '<td class="px-4 py-2.5 text-right num'+(isRet?' text-rose-700':'')+'">'+(isRet?'−':'')+money0(t.amount)+'</td>'+
         '<td class="px-4 py-2.5 text-center">'+(t.hasBill?'<button type="button" class="text-emerald-700 hover:text-emerald-900" data-pltxn-bill="'+t.id+'" title="View purchase bill"><i class="fa-solid fa-file-invoice"></i></button>':'<span class="text-slate-300">&mdash;</span>')+'</td></tr>';
-    }).join('') : '<tr><td colspan="8" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
+    }).join('') : '<tr><td colspan="9" class="px-4 py-10 text-center text-slate-400">No transactions in this range.</td></tr>';
   }).catch(apiFail);
 }
 
@@ -4716,6 +4719,13 @@ function wire() {
     printTable('Worker ledger — transaction log', x.d.from + ' to ' + x.d.to, x.headers, x.rows);
   });
   /* ---- supplier purchase ledger (admin only) ---- */
+  qsa('#plScopeSeg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      S.plScope = b.getAttribute('data-plscope');
+      qsa('#plScopeSeg button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      renderPurchaseLedger();
+    });
+  });
   ['plFrom', 'plTo'].forEach(function (id) { $(id).addEventListener('change', renderPurchaseLedger); });
   $('plThisMonth').addEventListener('click', function () {
     $('plFrom').value = monthStart(); $('plTo').value = todayISO(); renderPurchaseLedger();
@@ -4728,7 +4738,7 @@ function wire() {
   $('plPrint').addEventListener('click', function () {
     var by = tableData('#plBody');
     var d = S.purchaseLedger;
-    printTable('Purchase ledger — ' + (S.branches[S.branch] || S.branch),
+    printTable('Purchase ledger — ' + (S.plScope === 'all' ? 'All branches' : (S.branches[S.branch] || S.branch)),
       d ? d.from + ' to ' + d.to : '', by.headers, by.rows);
   });
   /* Bill icon in the Transactions table — fetched on demand (see

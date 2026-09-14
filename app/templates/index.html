@@ -1095,6 +1095,10 @@
     <div class="card overflow-hidden mb-5">
       <div class="px-5 py-3 bg-slate-100 flex flex-wrap items-end gap-2">
         <h3 class="font-bold text-sm uppercase tracking-wide text-slate-700">By supplier</h3>
+        <div class="seg" id="plScopeSeg">
+          <button type="button" data-plscope="branch" class="active">This branch</button>
+          <button type="button" data-plscope="all">All branches</button>
+        </div>
         <span class="text-xs text-slate-400" id="plNote"></span>
         <div class="ml-auto flex items-end gap-2 flex-wrap">
           <div><label class="lbl" for="plFrom" title="Start of the date range.">From</label><input type="date" id="plFrom" class="inp !py-1.5 !text-xs" /></div>
@@ -1106,6 +1110,7 @@
       </div>
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Supplier</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Bought (birds)</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Bought (kg)</th>
@@ -1130,6 +1135,7 @@
       <div class="overflow-x-auto"><table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600"><tr class="text-left">
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Date</th>
+          <th class="px-4 py-2.5 font-bold text-xs uppercase">Branch</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Supplier</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase">Type</th>
           <th class="px-4 py-2.5 font-bold text-xs uppercase text-right">Birds</th>

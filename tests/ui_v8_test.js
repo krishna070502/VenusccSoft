@@ -398,7 +398,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   setVal($('plFrom'), d45); await sleep(600);
   const shivaRow = qa('#plBody tr').find(tr => tr.textContent.includes('Shiva Traders UI'));
   check('the supplier summary lists Shiva Traders UI with 40 birds bought',
-        !!shivaRow && shivaRow.children[1] && shivaRow.children[1].textContent.trim() === '40',
+        !!shivaRow && shivaRow.children[2] && shivaRow.children[2].textContent.trim() === '40',
+        shivaRow && shivaRow.textContent);
+  check('...and the row says which branch it belongs to',
+        !!shivaRow && shivaRow.children[0] && shivaRow.children[0].textContent.trim().length > 0,
         shivaRow && shivaRow.textContent);
   const shivaTxn = qa('#plTxnBody tr').find(tr => tr.textContent.includes('Shiva Traders UI'));
   check('the transaction log shows it as a Buy', !!shivaTxn && /Buy/.test(shivaTxn.textContent),
