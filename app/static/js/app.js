@@ -1282,10 +1282,14 @@ function recalc(){
   // loadEntry() whenever a different entry/new entry is loaded.
   if(c.liveShortWtG>0 && dOf(e.datetime)===todayISO() && !S.warnedLiveShort){
     S.warnedLiveShort=true;
-    openGen('Live bird weight shortage',
+    // Reported 2026-09-14: the popup never said which branch it was about —
+    // easy to lose track of for an admin who manages several, or once the
+    // popup is screenshotted/forwarded without the header behind it.
+    var shortBranchName=S.branches[e.branch]||e.branch;
+    openGen('Live bird weight shortage — '+shortBranchName,
       '<div class="space-y-3 text-sm">'+
         '<div class="rounded-lg bg-rose-50 border-l-4 border-rose-600 px-3 py-2 text-rose-800">'+
-          '<p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i>Closing birds worked out to 0</p>'+
+          '<p class="font-bold flex items-center gap-1.5"><i class="fa-solid fa-triangle-exclamation"></i>'+esc(shortBranchName)+' — closing birds worked out to 0</p>'+
           '<p class="mt-0.5 leading-snug">…but '+fmtW(c.liveShortWtG)+' ≈ '+money0(c.liveShortValue)+' of live bird weight is still unaccounted for.</p>'+
         '</div>'+
         '<p class="text-slate-600 leading-snug">This has been recorded as a live bird weight shortage and will <b>not</b> be carried forward — tomorrow’s opening weight starts at 0 kg. Please recheck today’s purchases, live sales, mortality and dressed counts before submitting.</p>'+

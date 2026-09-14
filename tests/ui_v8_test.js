@@ -1011,6 +1011,47 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('live bird rate did NOT carry forward — starts blank', $('f_rateLive').value === '',
         $('f_rateLive').value);
 
+  console.log('\n[27] the live bird weight shortage popup names which branch it is about');
+  // Reported 2026-09-14: the popup just said "Live bird weight shortage"
+  // with no branch anywhere in it — easy to lose track of for an admin
+  // managing more than one, or once it's screenshotted without the header
+  // behind it. B01/broiler/today is untouched by every earlier section.
+  nav('entry'); await sleep(300);
+  setVal($('branchSelect'), 'B01'); await sleep(300);
+  const broilerBtn2 = qa('#entryCatSeg button').find(b => b.getAttribute('data-cat') === 'broiler');
+  click(broilerBtn2); await sleep(300);
+  if ($('actNew')) { click($('actNew')); await sleep(700); }   // let the carry-forward fetch settle first (see section [26])
+  // A blank form can still be carrying a hotel-sale row added earlier in
+  // this same run (S.hotelSales isn't branch/category-scoped in the UI the
+  // way the plain fields are) — clear any so it can't eat into the bird/
+  // weight balance below and mask the shortage this section means to test.
+  while (q('#hotelRows [data-hrm]')) { click(q('#hotelRows [data-hrm]')); await sleep(100); }
+  // Built the same way the app's own todayISO() builds it (local
+  // Y/M/D getters, not toISOString's UTC date) — this entry's popup only
+  // fires when dOf(e.datetime) matches todayISO() exactly, and the two can
+  // disagree by a day around midnight if built two different ways.
+  const now27 = new Date();
+  const todayStr = now27.getFullYear() + '-' + String(now27.getMonth() + 1).padStart(2, '0') +
+    '-' + String(now27.getDate()).padStart(2, '0');
+  setVal($('f_datetime'), todayStr + 'T09:00');
+  // 10 birds in, 10 dressed -> every bird is accounted for (expBirds hits
+  // exactly 0), but only 15kg of the 20kg opening weight was dressed, so
+  // 5kg has nowhere left to go and should surface as a shortage.
+  setVal($('f_openBirds'), '10');
+  setVal($('f_openWt_kg'), '20'); setVal($('f_openWt_g'), '0');
+  setVal($('f_dressedCount'), '10');
+  setVal($('f_dressedWt_kg'), '15'); setVal($('f_dressedWt_g'), '0');
+  await sleep(600);
+  const b01Name = [...qa('#branchSelect option')].find(o => o.value === 'B01').textContent;
+  check('the popup opens for today\'s shortage', !$('genModal').classList.contains('hidden'));
+  check('...and its title names the branch, not just the generic heading',
+        $('genTitle').textContent.includes(b01Name) && $('genTitle').textContent !== 'Live bird weight shortage',
+        $('genTitle').textContent);
+  check('...and the branch is named inside the body too',
+        $('genBody').textContent.includes(b01Name), $('genBody').textContent);
+  const closeBtn = q('#genModal [data-close]');
+  if (closeBtn) { click(closeBtn); await sleep(200); }
+
   console.log('\n' + '='.repeat(60));
   console.log('UI v8 RESULT: ' + pass + ' passed, ' + fail + ' failed');
   console.log('='.repeat(60));
