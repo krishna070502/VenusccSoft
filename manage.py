@@ -24,6 +24,8 @@ Database and account management.
 import getpass
 import sys
 
+from sqlalchemy.orm import joinedload, selectinload
+
 from app import create_app
 from app.extensions import db
 from app.models import Branch, DailyEntry, User
@@ -226,9 +228,24 @@ def recompute_closing_stock(apply_changes=None, verbose=True):
 
     for branch_id, category in combos:
         branch = db.session.get(Branch, branch_id)
+        # Eager-loaded: entry.to_dict() below touches purchases, photos,
+        # hotel_sales, branch, created_by and reviewed_by for EVERY entry in
+        # the chain. Left to lazy-load one at a time, that's roughly half a
+        # dozen extra round trips per entry — harmless on SQLite, but on a
+        # cross-region Postgres connection (see api.py's bootstrap() comment
+        # on Render/Neon latency) it turns a chain of a few hundred entries
+        # into many minutes, and risks the request timing out before this
+        # dry run ever finishes. Batched here into a handful of queries
+        # total for the whole branch+category chain instead of one per row.
         entries = (DailyEntry.query
                    .filter(DailyEntry.branch_id == branch_id, DailyEntry.category == category,
                            DailyEntry.status.in_(("approved", "pending")))
+                   .options(joinedload(DailyEntry.branch),
+                            joinedload(DailyEntry.created_by),
+                            joinedload(DailyEntry.reviewed_by),
+                            selectinload(DailyEntry.purchases),
+                            selectinload(DailyEntry.photos),
+                            selectinload(DailyEntry.hotel_sales))
                    .order_by(DailyEntry.business_date.asc(), DailyEntry.entered_at.asc())
                    .all())
         if not entries:
