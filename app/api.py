@@ -11,7 +11,7 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, request, session
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, undefer
 
@@ -435,7 +435,9 @@ def _apply_entry_fields(entry: DailyEntry, d: dict, manual_close: set | None = N
             entry.open_rate = to_dec(d.get("openRate"), "openRate")
 
 
-def _previous_for_carry_forward(branch_id: int, category: str) -> DailyEntry | None:
+def _previous_for_carry_forward(branch_id: int, category: str,
+                                before_date: date | None = None,
+                                exclude_entry_id: int | None = None) -> DailyEntry | None:
     """
     The most recent entry for this branch+category that a next day's opening
     figures can safely be based on — the physical closing count as it stood
@@ -457,12 +459,25 @@ def _previous_for_carry_forward(branch_id: int, category: str) -> DailyEntry | N
     figures are exactly what's in question); PENDING and APPROVED are both
     fair game, ordered by business_date then entered_at so a same-day PUT
     that arrived after another entry still sorts correctly.
+
+    `before_date`, when given, restricts this to entries strictly BEFORE that
+    calendar date — required whenever the entry being created is not
+    necessarily the newest one on file, e.g. an admin going back to fill in a
+    day that was skipped at the time. Without this, the plain "most recent
+    entry, full stop" lookup would hand a backdated entry the closing figures
+    of a LATER day instead of the day immediately before it — the other half
+    of "closing birds/weight not carrying forward" reports, alongside the
+    approval-backlog bug above. `exclude_entry_id` additionally excludes the
+    entry being (re)carried itself, for the same-day case.
     """
-    return (DailyEntry.query
-            .filter(DailyEntry.branch_id == branch_id, DailyEntry.category == category,
-                    DailyEntry.status.in_(("approved", "pending")))
-            .order_by(DailyEntry.business_date.desc(), DailyEntry.entered_at.desc())
-            .first())
+    q = (DailyEntry.query
+         .filter(DailyEntry.branch_id == branch_id, DailyEntry.category == category,
+                 DailyEntry.status.in_(("approved", "pending"))))
+    if before_date is not None:
+        q = q.filter(DailyEntry.business_date < before_date)
+    if exclude_entry_id is not None:
+        q = q.filter(DailyEntry.id != exclude_entry_id)
+    return q.order_by(DailyEntry.business_date.desc(), DailyEntry.entered_at.desc()).first()
 
 
 def _carry_forward_opening(entry: DailyEntry) -> None:
@@ -475,12 +490,19 @@ def _carry_forward_opening(entry: DailyEntry) -> None:
     entries_carry_forward()), so this only needs to run for a supervisor;
     it's a no-op — and harmless — on the very first entry for a branch, where
     opening figures are optional anyway.
+
+    Scoped to strictly before entry.business_date (see
+    _previous_for_carry_forward's `before_date`) rather than "the most recent
+    entry on file, whatever its date" — a supervisor's entry is always for
+    today in practice (see create_entry()), but this must not silently pull
+    a later day's closing figures if that ever stops being true.
     """
     # entry.branch.id, not entry.branch_id — the object was constructed with
     # `branch=branch` (see create_entry()), so the relationship is populated
     # immediately but the FK column only resolves at flush; entry.branch is
     # the one that's safe to read before that.
-    prev = _previous_for_carry_forward(entry.branch.id, entry.category)
+    prev = _previous_for_carry_forward(entry.branch.id, entry.category,
+                                       before_date=entry.business_date)
     if prev:
         # Floored at 0 — compute_entry() now floors newly-computed
         # close_birds/close_weight_g/close_meat_g the same way (see the
@@ -517,6 +539,101 @@ def _recompute_closing_stock(entry: DailyEntry, manual_close: set | None = None)
     if "closeWtG" not in manual_close:
         entry.close_weight_g = calc["expCloseWtG"]
     entry.actual_meat_g = calc["actualMeatG"]
+
+
+def _cascade_forward(entry: DailyEntry, old_close: tuple) -> int:
+    """
+    Push a change in `entry`'s own closing birds/weight/meat forward through
+    every later entry in the same branch+category chain whose opening was
+    carried from it automatically, re-deriving each one's own closing
+    figures in turn.
+
+    Without this, editing a day after the fact — an admin adding a return
+    that was missed on the day itself (birds handed back to a supplier don't
+    get recorded until later), correcting a mis-typed count, or going back to
+    fill in a day that was skipped at the time (see `before_date` on
+    _previous_for_carry_forward) — only ever updated that one day's own row.
+    Every later day was already computed from the OLD figures at the time it
+    was saved and nothing ever revisited them, so they sat there stale until
+    someone happened to re-save each one by hand: reported as "opening
+    birds/weight/meat not carrying forward" and "closing birds/weight/meat
+    not updating automatically".
+
+    `old_close` is (birds, weightG, meatG) as `entry` stood BEFORE this save
+    — the caller captures it before touching the row (or, for a brand-new
+    backdated entry that did not exist a moment ago, the closing figures of
+    whatever entry later days were actually carrying from before the gap
+    was filled — see create_entry()). Nothing to do, and nothing queried,
+    when the save didn't actually change them.
+
+    Walks forward one entry at a time rather than one bulk query, so each
+    step's own "was this auto-carried / auto-computed" check runs against
+    that entry's own real inputs, and stops the moment a step produces no
+    change at all — an entry an admin decoupled by hand (typed its own
+    opening, or put a closing field in manual mode) breaks the chain there:
+    its own closing figures are then unchanged from what they already were,
+    so nothing beyond it can have changed either. That same stop keeps an
+    edit to an old day from re-touching an unbounded stretch of future
+    entries on every save.
+
+    Per-field, not all-or-nothing: birds and weight are independent (see
+    calc.py), so one can keep auto-carrying while the other was hand-
+    corrected on some later day. Closing MEAT is never recomputed here —
+    it's always a physical count (see _apply_entry_fields), never derived
+    from opening meat, so a change upstream never has anything to give it;
+    only opening meat itself carries forward.
+    """
+    new_close = (entry.close_birds, entry.close_weight_g, entry.close_meat_g)
+    if new_close == old_close:
+        return 0
+
+    settings = get_settings()
+    prev_old_close = old_close
+    prev_close = new_close
+    touched = 0
+
+    later = (DailyEntry.query
+             .filter(DailyEntry.branch_id == entry.branch_id,
+                     DailyEntry.category == entry.category,
+                     DailyEntry.status.in_(("approved", "pending")),
+                     or_(DailyEntry.business_date > entry.business_date,
+                         and_(DailyEntry.business_date == entry.business_date,
+                              DailyEntry.entered_at > entry.entered_at)))
+             .order_by(DailyEntry.business_date.asc(), DailyEntry.entered_at.asc())
+             .all())
+
+    for nxt in later:
+        orig_open = (nxt.open_birds, nxt.open_weight_g, nxt.open_meat_g)
+        orig_close = (nxt.close_birds, nxt.close_weight_g, nxt.close_meat_g)
+
+        calc_orig = compute_entry(nxt.to_dict(include_costs=True), settings)
+        close_birds_auto = orig_close[0] == calc_orig["expBirds"]
+        close_wt_auto = orig_close[1] == calc_orig["expCloseWtG"]
+
+        new_open = (
+            prev_close[0] if orig_open[0] == prev_old_close[0] else orig_open[0],
+            prev_close[1] if orig_open[1] == prev_old_close[1] else orig_open[1],
+            prev_close[2] if orig_open[2] == prev_old_close[2] else orig_open[2],
+        )
+
+        if new_open == orig_open:
+            break  # decoupled by hand here; nothing further down the chain can change either
+
+        nxt.open_birds, nxt.open_weight_g, nxt.open_meat_g = new_open
+        if close_birds_auto or close_wt_auto:
+            new_data = nxt.to_dict(include_costs=True)
+            new_data["openBirds"], new_data["openWtG"], new_data["openMeatG"] = new_open
+            calc_new = compute_entry(new_data, settings)
+            if close_birds_auto:
+                nxt.close_birds = calc_new["expBirds"]
+            if close_wt_auto:
+                nxt.close_weight_g = calc_new["expCloseWtG"]
+
+        touched += 1
+        prev_old_close = orig_close
+        prev_close = (nxt.close_birds, nxt.close_weight_g, nxt.close_meat_g)
+
+    return touched
 
 
 def _replace_purchases(entry: DailyEntry, rows: list) -> None:
@@ -995,6 +1112,19 @@ def create_entry():
     # to_dict() (which _recompute_closing_stock calls) needs the real 0s.
     _recompute_closing_stock(entry, manual_close)
 
+    # Almost always a no-op (a same-day entry has no later rows for this
+    # branch+category yet), but when this is an admin backfilling a day that
+    # was skipped at the time — later days already exist and, until now,
+    # were carrying their opening straight from whatever came before this
+    # gap (see _previous_for_carry_forward's `before_date`) — this pushes
+    # this new day's own closing figures into them, the same as an edit to
+    # an existing day does below in update_entry().
+    cascade_from = _previous_for_carry_forward(branch.id, category, before_date=bdate,
+                                               exclude_entry_id=entry.id)
+    cascade_old_close = ((cascade_from.close_birds, cascade_from.close_weight_g,
+                          cascade_from.close_meat_g) if cascade_from else (0, 0, 0))
+    _cascade_forward(entry, cascade_old_close)
+
     if status == "pending":
         problems = _submission_problems(entry, d)
         if problems:
@@ -1024,6 +1154,14 @@ def update_entry(entry_id):
         return jsonify({"error": "locked",
                         "message": f"This entry was {entry.status} — only an admin can modify it now."}), 403
 
+    # Captured before anything below touches the row — the reference point
+    # _cascade_forward() needs to tell whether this save actually changed
+    # what later days are carrying forward (see its docstring; e.g. an admin
+    # adding a return to a past day that was missed on the day itself, which
+    # changes that day's closing bird count without anyone re-saving any of
+    # the days after it).
+    old_close = (entry.close_birds, entry.close_weight_g, entry.close_meat_g)
+
     d = request.get_json(silent=True) or {}
 
     # an admin may correct the business date while reviewing
@@ -1048,6 +1186,7 @@ def update_entry(entry_id):
     _recompute_closing_stock(entry, manual_close)
     entry.updated_by_id = g.user.id
     db.session.flush()
+    _cascade_forward(entry, old_close)
 
     if d.get("submit"):
         problems = _submission_problems(entry, d)
@@ -1173,6 +1312,16 @@ def entries_carry_forward():
     "Most recent" means the newest PENDING or APPROVED entry, not APPROVED
     only — see _previous_for_carry_forward() for why an admin's approval
     backlog must not stall this.
+
+    An optional `date` says which day is about to be created — an admin
+    filling in a day that was skipped at the time, with later days already
+    on file, needs the closing figures of the day immediately BEFORE that
+    date, not whatever is newest overall (which could be one of those later
+    days). Without it this stays exactly what it always was: the most
+    recent entry on file, full stop, no date filtering at all — a plain
+    "what's the latest close for this branch+category" preview, which may
+    itself be dated today (see test_entries()'s "main" entry in the test
+    suite) rather than yesterday.
     """
     branch_code = request.args.get("branch")
     err = require_branch(branch_code)
@@ -1180,8 +1329,9 @@ def entries_carry_forward():
         return err
     branch = branch_by_code(branch_code)
     category = request.args.get("category") if request.args.get("category") in ("broiler", "parents") else "broiler"
+    target_date = parse_date(request.args.get("date"), field="date") if request.args.get("date") else None
 
-    prev = _previous_for_carry_forward(branch.id, category)
+    prev = _previous_for_carry_forward(branch.id, category, before_date=target_date)
     if not prev:
         return jsonify({"found": False})
 

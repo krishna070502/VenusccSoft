@@ -117,11 +117,10 @@ def seed():
 
 def recompute_closing_stock(apply_changes=None, verbose=True):
     """
-    One-time backfill, fixing two separate historical bugs in one pass —
-    they both show up as a wrong opening/closing figure, both get corrected
-    by walking each branch+category's chain oldest to newest and cascading
-    the fix forward, so they share one function rather than two nearly-
-    identical ones:
+    Backfill, fixing three separate ways an opening/closing figure can go
+    wrong, all corrected by walking each branch+category's chain oldest to
+    newest and cascading the fix forward, so they share one function rather
+    than three nearly-identical ones:
 
     (1) The closing-FORMULA bug: close_birds/close_weight_g/close_meat_g
     re-derived under the corrected formula (see calc.py's
@@ -167,6 +166,20 @@ def recompute_closing_stock(apply_changes=None, verbose=True):
     still sitting on the bug's output, never hand-corrected since) — a row
     an admin already fixed by hand, or one that was never wrong, is left
     completely alone.
+
+    (3) Plain cascade staleness: a supervisor's day whose opening was
+    carried from a previous day's closing that has SINCE been corrected by
+    an edit to that earlier day — a purchase return recorded after the
+    fact (the birds physically left days before anyone typed it in),
+    a mis-typed count fixed later, a skipped day filled in out of order —
+    made before api.py's per-save cascade (_cascade_forward()) existed to
+    push that correction forward on its own. Unlike (1)/(2) there is no
+    fixed old value to match, since any earlier day could be the one that
+    changed, so this applies unconditionally to a supervisor-created row
+    that fails both tiers above: a supervisor's opening is ALWAYS
+    server-assigned, never typed (same reasoning as (2)), so a mismatch
+    against the correct predecessor can only be staleness. Still never an
+    admin-created row — see (2)'s reasoning, which applies here too.
 
     Each branch+category is its own independent day-to-day chain, walked
     oldest to newest over every APPROVED or PENDING entry (matching exactly
@@ -260,8 +273,30 @@ def recompute_closing_stock(apply_changes=None, verbose=True):
                     # value instead — the specific fingerprint of the
                     # backlog-skip bug — and only for a supervisor's own
                     # entry, never an admin's.
-                    return (is_supervisor_entry and prev_approved_orig_close is not None
-                            and orig_open[k] == prev_approved_orig_close[k])
+                    if (is_supervisor_entry and prev_approved_orig_close is not None
+                            and orig_open[k] == prev_approved_orig_close[k]):
+                        return True
+                    # Tier 3: matches neither — the general case of a day
+                    # whose opening was carried from a previous close that
+                    # has SINCE been corrected by an edit to that earlier
+                    # day (a purchase return added after the fact, a
+                    # mis-typed count fixed, a day that was skipped and
+                    # later filled in out of order), from before this
+                    # repair tool's own run and, if that edit itself
+                    # predates the live per-save cascade (see
+                    # _cascade_forward() in api.py), possibly from long
+                    # before this run too. Unlike tiers 1/2 there is no
+                    # fixed value to match — any earlier day could have
+                    # been the one that changed — so this is unconditional
+                    # for a supervisor's own entry: a supervisor never
+                    # types opening figures by hand (see the comment on
+                    # is_supervisor_entry above), so its stored opening is
+                    # ALWAYS machine-assigned, never a deliberate figure,
+                    # and a mismatch against the correct predecessor can
+                    # only mean it is stale. Still never touches an
+                    # admin-created row, which can hold a genuinely
+                    # deliberate figure.
+                    return is_supervisor_entry
 
                 new_open = (
                     max(prev_new_close[0], 0) if _carried(0) else orig_open[0],

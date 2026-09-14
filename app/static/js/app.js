@@ -832,12 +832,28 @@ function previousDay(){ return S.carryForward; }
 function blankForm(){
   fillForm({ datetime:nowLocal(), photos:[], purchases:[], hotelSales:[] });
   S.carryForward = null;
+  fetchCarryForward();
+}
+
+/* Split out of blankForm() so changing the Date & time field on an
+   already-open new entry (see the f_datetime 'change' listener in
+   startApp()) can re-run just this lookup — an admin filling in a day that
+   was skipped at the time picks the date FIRST, or (more often) starts a
+   fresh entry on today's date and then backs it up, and either way the
+   opening birds/weight/meat this hands back must match whichever date is
+   in the field right now, not whatever it was when the form first opened.
+   Without a `date` on this request the server has no choice but to assume
+   "today", so it can hand back a LATER day's closing figures than the one
+   actually being saved — reported as opening figures "not carrying
+   forward" on a backfilled day. */
+function fetchCarryForward(){
+  if(!$('carryNote')) return;
   $('carryNote').textContent = 'Checking for a previous day to carry forward…';
-  var branch=S.branch, cat=S.cat;
-  api('GET', '/entries/carry-forward?branch='+encodeURIComponent(branch)+'&category='+encodeURIComponent(cat))
+  var branch=S.branch, cat=S.cat, dateStr=dOf(tv('f_datetime')||nowLocal());
+  api('GET', '/entries/carry-forward?branch='+encodeURIComponent(branch)+'&category='+encodeURIComponent(cat)+'&date='+encodeURIComponent(dateStr))
     .then(function(cf){
-      /* the branch/category may have changed again while this was in flight */
-      if(S.branch!==branch || S.cat!==cat) return;
+      /* the branch/category/date may have changed again while this was in flight */
+      if(S.branch!==branch || S.cat!==cat || S.editing || dOf(tv('f_datetime')||nowLocal())!==dateStr) return;
       if(cf.found){
         S.carryForward=cf;
         /* Only fill a field the user hasn't already started typing into. On
@@ -4430,6 +4446,21 @@ function wire() {
   // here for something that already fired 'input'/'change' is harmless.
   $('entryForm').addEventListener('focusout', recalc);
   $('entryForm').addEventListener('submit', function (ev) { ev.preventDefault(); });
+  // An admin backfilling a day that was skipped at the time changes the
+  // Date & time field on a brand-new entry — opening birds/weight/meat
+  // (and the opening rate) were already prefilled for whatever date the
+  // form happened to open on, so they have to be cleared and re-fetched
+  // for the date just chosen, or they're silently left showing the wrong
+  // day's figures (see fetchCarryForward()'s own "only fill an empty
+  // field" guard — without clearing first it would see these as already
+  // filled and leave the stale values in place). New-entry only: once an
+  // entry is saved, its own opening figures are never re-derived from this
+  // field again (see retime_entry()/_carry_forward_opening() server-side).
+  $('f_datetime').addEventListener('change', function () {
+    if (S.editing || !isAdmin()) return;
+    setV('f_openBirds', ''); setG('f_openWt', ''); setG('f_openMeat', ''); setV('f_openRate', '');
+    fetchCarryForward();
+  });
   /* Auto/manual toggle for closing birds/weight/meat — admin only (the
      buttons themselves are data-admin and hidden from a supervisor, but the
      isAdmin() check here is a second gate so a supervisor's own S.auto can
