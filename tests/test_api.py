@@ -3707,6 +3707,80 @@ def test_v28_recompute_fixes_carry_forward_backlog():
 
 
 # ===========================================================================
+# 25. The LIVE _cascade_forward() (api.py, not the manage.py batch tool
+#     above) must reach a still-unsubmitted DRAFT the same as an approved or
+#     pending later day — reported 2026-09-14.
+# ===========================================================================
+def test_v30_cascade_reaches_draft():
+    print("\n[40] a retroactive return correctly zeroes an already-approved day, "
+          "and the very next day's still-unsubmitted DRAFT picks up the correction too")
+
+    br = ADMIN.post("/api/branches", json={"name": "Cascade Draft Test Branch"}).get_json()
+    bcode = br["code"]
+    day1, day2 = D(15), D(14)
+
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+
+        # Day 1: approved BEFORE the return was ever recorded -- 100 birds
+        # bought, 90 dressed, nothing returned yet, so its own closing count
+        # at approval time is the pre-return figure (100 - 90 = 10).
+        e1 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(day1),
+                        created_by_id=admin_user.id, status="approved",
+                        open_birds=0, open_weight_g=0, open_meat_g=0,
+                        dressed_count=90, dressed_weight_g=180_000,
+                        close_birds=10, close_weight_g=20_000, close_meat_g=0)
+        db.session.add(e1); db.session.flush()
+        buy = Purchase(entry_id=e1.id, supplier="Shiva Traders", birds=100, weight_g=200_000,
+                       rate=Decimal("100"), kind="buy")
+        db.session.add(buy); db.session.flush()
+        e1_id, buy_id = e1.id, buy.id
+
+        # Day 2: a supervisor already started it and saved it as a DRAFT --
+        # never submitted -- with opening correctly carried from Day 1's
+        # close AS IT STOOD AT THE TIME (10 birds / 20,000 g), before the
+        # return below ever touches Day 1.
+        e2 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(day2),
+                        created_by_id=admin_user.id, status="draft",
+                        open_birds=10, open_weight_g=20_000, open_meat_g=0,
+                        close_birds=10, close_weight_g=20_000, close_meat_g=0)
+        db.session.add(e2); db.session.commit()
+        e2_id = e2.id
+
+    # The admin discovers 10 of those birds were actually handed back to the
+    # supplier that same day, and edits the already-approved Day 1 to add the
+    # return -- exactly the sequence reported: approve first, record the
+    # return after.
+    resp = ADMIN.put(f"/api/entries/{e1_id}", json={
+        "purchases": [
+            {"supplier": "Shiva Traders", "birds": 100, "wtG": 200_000, "rate": 100, "kind": "buy"},
+            {"supplier": "Shiva Traders", "birds": 10, "wtG": 20_000, "rate": 100,
+             "kind": "return", "returnOf": buy_id},
+        ]
+    })
+    case("Cascade to draft", "The edit is accepted", 200, resp.status_code, lambda: resp.status_code)
+    day1_after = resp.get_json()
+    case("Cascade to draft", "Day 1's own closing birds correctly zero out "
+                             "(100 bought - 10 returned - 90 dressed = 0)",
+         0, day1_after["closeBirds"], lambda: day1_after["closeBirds"])
+    case("Cascade to draft", "...and closing weight too",
+         0, day1_after["closeWtG"], lambda: day1_after["closeWtG"])
+
+    with app.app_context():
+        e2_row = db.session.get(DailyEntry, e2_id)
+        e2_after = (e2_row.status, e2_row.open_birds, e2_row.open_weight_g)
+    case("Cascade to draft", "Day 2's DRAFT status is untouched by the cascade -- "
+                             "only its opening figures were corrected",
+         "draft", e2_after[0], lambda: e2_after[0])
+    case("Cascade to draft", "Day 2's opening birds picks up the correction "
+                             "even though it was never submitted",
+         0, e2_after[1], lambda: e2_after[1])
+    case("Cascade to draft", "...and opening weight too",
+         0, e2_after[2], lambda: e2_after[2])
+
+
+# ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
 def test_schema_upgrade():
@@ -3935,6 +4009,7 @@ if __name__ == "__main__":
     test_v26_carry_forward_pending()
     test_v27_carry_forward_broiler_and_gaps()
     test_v28_recompute_fixes_carry_forward_backlog()
+    test_v30_cascade_reaches_draft()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()

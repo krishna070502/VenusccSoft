@@ -582,6 +582,26 @@ def _cascade_forward(entry: DailyEntry, old_close: tuple) -> int:
     it's always a physical count (see _apply_entry_fields), never derived
     from opening meat, so a change upstream never has anything to give it;
     only opening meat itself carries forward.
+
+    `later` deliberately does NOT filter by status the way
+    _previous_for_carry_forward() does. That function is choosing a trusted
+    SOURCE to read history from, where an unfinished draft or a rejected
+    entry's own figures are rightly out of consideration. This is the
+    opposite direction — every one of these rows, whatever its current
+    status, already has an opening figure sitting in it that was seeded from
+    this exact branch+category chain, and that figure needs to stay correct
+    regardless of whether the entry has been submitted yet. Reported
+    2026-09-14: a return added to an already-approved day correctly zeroed
+    that day's own closing stock, but the very next day — still sitting as
+    an unsubmitted draft at that moment — kept showing the old opening
+    figure, because it was invisible to a query that only looked at
+    approved/pending rows. A draft, once the supervisor gets back to it and
+    submits it, would have carried that stale figure through as if nothing
+    had ever changed. Every status still gets the same "decoupled by hand"
+    protection below (the loop stops the moment a step's own opening no
+    longer matches what it should have inherited), so a draft an admin or
+    supervisor has already hand-corrected is left alone exactly like an
+    approved one would be.
     """
     new_close = (entry.close_birds, entry.close_weight_g, entry.close_meat_g)
     if new_close == old_close:
@@ -595,7 +615,6 @@ def _cascade_forward(entry: DailyEntry, old_close: tuple) -> int:
     later = (DailyEntry.query
              .filter(DailyEntry.branch_id == entry.branch_id,
                      DailyEntry.category == entry.category,
-                     DailyEntry.status.in_(("approved", "pending")),
                      or_(DailyEntry.business_date > entry.business_date,
                          and_(DailyEntry.business_date == entry.business_date,
                               DailyEntry.entered_at > entry.entered_at)))
