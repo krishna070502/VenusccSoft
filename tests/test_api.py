@@ -3810,6 +3810,105 @@ def test_v30_cascade_reaches_draft():
          0, e2_after[2], lambda: e2_after[2])
 
 
+def test_v31_cascade_reaches_approved():
+    print("\n[41] a retroactive return also reaches a next day that's already "
+          "APPROVED (not just a draft) -- reported 2026-09-14, and correctly "
+          "keeps going through it to a THIRD day beyond")
+
+    br = ADMIN.post("/api/branches", json={"name": "Cascade Approved Test Branch"}).get_json()
+    bcode = br["code"]
+    day1, day2, day3 = D(15), D(14), D(13)
+
+    with app.app_context():
+        branch = Branch.query.filter_by(code=bcode).first()
+        admin_user = User.query.filter_by(role="admin").first()
+
+        # Day 1: approved BEFORE the return was ever recorded -- 100 birds
+        # bought, 90 dressed, so its own closing count at approval time is
+        # the pre-return figure (100 - 90 = 10).
+        e1 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(day1),
+                        created_by_id=admin_user.id, status="approved",
+                        open_birds=0, open_weight_g=0, open_meat_g=0,
+                        dressed_count=90, dressed_weight_g=180_000,
+                        close_birds=10, close_weight_g=20_000, close_meat_g=0)
+        db.session.add(e1); db.session.flush()
+        buy = Purchase(entry_id=e1.id, supplier="Shiva Traders", birds=100, weight_g=200_000,
+                       rate=Decimal("100"), kind="buy")
+        db.session.add(buy); db.session.flush()
+        e1_id, buy_id = e1.id, buy.id
+
+        # Day 2: already reviewed and APPROVED -- exactly the user's reported
+        # scenario, not a draft -- with opening correctly carried from Day
+        # 1's close as it stood at the time (10 birds / 20,000 g), and its
+        # own closing auto-computed the same way (nothing dressed that day,
+        # so it just passes the 10 birds through). _cascade_forward() itself
+        # doesn't care who created a later entry or what its status is (see
+        # its docstring -- `later` is deliberately unfiltered by status);
+        # that admin/supervisor distinction only applies to the separate
+        # manage.py backfill tool, not this live per-save cascade.
+        sup = User.query.filter_by(role="supervisor").first()
+        e2 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(day2),
+                        created_by_id=(sup.id if sup else admin_user.id), status="approved",
+                        open_birds=10, open_weight_g=20_000, open_meat_g=0,
+                        close_birds=10, close_weight_g=20_000, close_meat_g=0)
+        db.session.add(e2); db.session.commit()
+        e2_id = e2.id
+
+        # Day 3: still PENDING, opening carried from Day 2's close -- proves
+        # the correction keeps walking forward past the approved day too,
+        # not just landing on the one entry immediately after the edit.
+        e3 = DailyEntry(branch=branch, category="broiler", business_date=date.fromisoformat(day3),
+                        created_by_id=(sup.id if sup else admin_user.id), status="pending",
+                        open_birds=10, open_weight_g=20_000, open_meat_g=0,
+                        close_birds=10, close_weight_g=20_000, close_meat_g=0)
+        db.session.add(e3); db.session.commit()
+        e3_id = e3.id
+
+    # The admin discovers 10 of those birds were actually handed back to the
+    # supplier that same day, and edits the already-approved Day 1 to add the
+    # return -- exactly the sequence reported: approve first, record the
+    # return after.
+    resp = ADMIN.put(f"/api/entries/{e1_id}", json={
+        "purchases": [
+            {"supplier": "Shiva Traders", "birds": 100, "wtG": 200_000, "rate": 100, "kind": "buy"},
+            {"supplier": "Shiva Traders", "birds": 10, "wtG": 20_000, "rate": 100,
+             "kind": "return", "returnOf": buy_id},
+        ]
+    })
+    case("Cascade to approved", "The edit is accepted", 200, resp.status_code, lambda: resp.status_code)
+    day1_after = resp.get_json()
+    case("Cascade to approved", "Day 1's own closing birds correctly zero out",
+         0, day1_after["closeBirds"], lambda: day1_after["closeBirds"])
+
+    with app.app_context():
+        e2_row = db.session.get(DailyEntry, e2_id)
+        e2_after = (e2_row.status, e2_row.open_birds, e2_row.open_weight_g,
+                    e2_row.close_birds, e2_row.close_weight_g)
+        e3_row = db.session.get(DailyEntry, e3_id)
+        e3_after = (e3_row.status, e3_row.open_birds, e3_row.open_weight_g)
+
+    case("Cascade to approved", "Day 2's APPROVED status is untouched by the cascade -- "
+                                 "only its own figures were corrected",
+         "approved", e2_after[0], lambda: e2_after[0])
+    case("Cascade to approved", "Day 2's opening birds picks up the correction "
+                                 "even though it was already approved",
+         0, e2_after[1], lambda: e2_after[1])
+    case("Cascade to approved", "...and opening weight too",
+         0, e2_after[2], lambda: e2_after[2])
+    case("Cascade to approved", "...and its own auto-computed closing birds follows suit",
+         0, e2_after[3], lambda: e2_after[3])
+    case("Cascade to approved", "...and closing weight too",
+         0, e2_after[4], lambda: e2_after[4])
+
+    case("Cascade to approved", "Day 3, still PENDING, inherits the correction "
+                                 "transitively through the approved day between them",
+         "pending", e3_after[0], lambda: e3_after[0])
+    case("Cascade to approved", "...with opening birds corrected all the way through",
+         0, e3_after[1], lambda: e3_after[1])
+    case("Cascade to approved", "...and opening weight too",
+         0, e3_after[2], lambda: e3_after[2])
+
+
 # ===========================================================================
 # 21. Schema upgrades — an old database must not 500 on sign-in
 # ===========================================================================
@@ -4040,6 +4139,7 @@ if __name__ == "__main__":
     test_v27_carry_forward_broiler_and_gaps()
     test_v28_recompute_fixes_carry_forward_backlog()
     test_v30_cascade_reaches_draft()
+    test_v31_cascade_reaches_approved()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
