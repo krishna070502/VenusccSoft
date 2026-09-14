@@ -410,6 +410,37 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   click($('plExport')); await sleep(200);
   check('Purchase Ledger Print/Excel do not throw', printCalls >= 9, printCalls + ' calls');
 
+  // Reported 2026-09-14: switching branch while looking at the Purchase
+  // Ledger left the old branch's label and table sitting on screen —
+  // branchSelect's change handler never called renderPurchaseLedger() at
+  // all, so nothing here could ever have refreshed.
+  const b2BoughtRes = await w.fetch('/api/entries', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      branch: 'B02', category: 'parents', businessDate: d45,
+      openBirds: 0, openWtG: 0, openMeatG: 0, openRate: 100,
+      rateSkin: 200, rateSkinless: 230, rateLiver: 130, rateLive: 150,
+      liveSoldCount: 0, liveSoldWtG: 0, cutCharges: 0,
+      mortCount: 0, mortWtG: 0, damageG: 0,
+      dressedCount: 0, dressedWtG: 0, actualMeatG: 0,
+      skinSoldG: 0, skinlessSoldG: 0, liverSoldG: 0,
+      closeBirds: 0, closeWtG: 0, closeMeatG: 0,
+      purchases: [{ supplier: 'Branch Switch Test Co', birds: 15, wtG: 30000, rate: 150 }]
+    })
+  });
+  check('a second branch\'s purchase was created for the branch-switch check', b2BoughtRes.ok);
+  check('before switching, the label still names the original branch',
+        /B01|Branch 01/.test($('plBranchLabel').textContent), $('plBranchLabel').textContent);
+  check('...and its table does not yet mention the other branch\'s supplier',
+        !qa('#plBody tr').some(tr => tr.textContent.includes('Branch Switch Test Co')));
+  setVal($('branchSelect'), 'B02'); await sleep(700);
+  check('switching branch while on Purchase Ledger updates the label',
+        /B02|Branch 02/.test($('plBranchLabel').textContent), $('plBranchLabel').textContent);
+  check('...and the table now shows the new branch\'s own supplier',
+        qa('#plBody tr').some(tr => tr.textContent.includes('Branch Switch Test Co')));
+  check('...without still showing the old branch\'s supplier',
+        !qa('#plBody tr').some(tr => tr.textContent.includes('Shiva Traders UI')));
+  setVal($('branchSelect'), 'B01'); await sleep(700);   // restore for later sections
+
   console.log('\n[14] dashboard category filter: same-day broiler+parents, broiler carries the cost');
   const d20 = new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 10);
   const dashWorker = await (await w.fetch('/api/workers', {

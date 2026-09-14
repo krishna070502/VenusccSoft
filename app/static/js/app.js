@@ -4358,8 +4358,29 @@ function wire() {
   });
   $('branchSelect').addEventListener('change', function () {
     S.branch = this.value; refreshBranchSelects(); runChicken();
-    loadEntry(null); renderDashboard(); renderRecords(); renderCustomers();
-    renderWorkers(); renderOverheads(); renderOverheadLedger();
+    loadEntry(null);
+    // Only refresh whichever screen is actually on screen right now — same
+    // lazy-render reasoning as showView()'s per-screen dispatch, and the
+    // renderDayCloseHistory() removal just below used to explain. This used
+    // to unconditionally re-fetch Dashboard, Records, Customers, Workers
+    // and Overheads on every single branch switch regardless of which one
+    // (if any) was actually visible — up to five full round trips fired and
+    // immediately discarded unread, on the single most frequent action an
+    // admin takes. Worse, it never included Purchase Ledger, Feed Ledger or
+    // Day Close's own card at all, so switching branch while any of THOSE
+    // screens was open silently left the old branch's data on screen with
+    // nothing to say it was stale. Reported 2026-09-14 as both "changing
+    // branch on Purchases is slow" and "...and doesn't change the table".
+    var active = qsa('.view').find(function (v) { return !v.classList.contains('hidden'); });
+    var name = active ? active.id.replace('view-', '') : '';
+    if (name === 'dashboard') renderDashboard();
+    else if (name === 'records') renderRecords();
+    else if (name === 'customers') renderCustomers();
+    else if (name === 'workers') renderWorkers();
+    else if (name === 'dayclose') renderDayClose();
+    else if (name === 'overheads') { renderOverheads(); renderOverheadLedger(); }
+    else if (name === 'purchases') renderPurchaseLedger();
+    else if (name === 'feedledger') renderFeedLedger();
     // renderDayCloseHistory() used to fire here too, on every branch switch
     // — but that table has its own independent branch filter (defaulting to
     // "every branch this admin can see"), completely unrelated to this
