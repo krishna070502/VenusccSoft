@@ -91,7 +91,7 @@ var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[]
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
           editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
-          purchaseLedger:null, openPurchases:{}, gramsTouched:{} };
+          purchaseLedger:null, openPurchases:{}, gramsTouched:{}, openTouched:{} };
 
 /* ---------------- helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -806,6 +806,7 @@ function readForm(){
 
 function fillForm(e){
   S.gramsTouched={};   /* a freshly loaded/blank form starts with nothing typed yet */
+  S.openTouched={};    /* see fetchCarryForward()'s guard, just below */
   setV('f_datetime',e.datetime||nowLocal());
   setV('f_openBirds',e.openBirds); setG('f_openWt',e.openWtG); setV('f_openRate',e.openRate); setG('f_openMeat',e.openMeatG);
   setV('f_rateSkin',e.rateSkin); setV('f_rateSkinless',e.rateSkinless); setV('f_rateLiver',e.rateLiver); setV('f_rateLive',e.rateLive);
@@ -863,15 +864,17 @@ function fetchCarryForward(){
       if(S.branch!==branch || S.cat!==cat || S.editing || dOf(tv('f_datetime')||nowLocal())!==dateStr) return;
       if(cf.found){
         S.carryForward=cf;
-        /* Only fill a field the user hasn't already started typing into. On
-           a slow connection this fetch can resolve well after someone has
-           begun the day's entry, and overwriting what they just typed —
-           especially the skin/skinless rate — is exactly the "values change
-           on their own" bug this guards against. */
-        if(!filled('f_openBirds')) setV('f_openBirds',cf.closeBirds);
-        if(!filledG('f_openWt')) setG('f_openWt',cf.closeWtG);
-        if(!filledG('f_openMeat')) setG('f_openMeat',cf.closeMeatG);
-        if(!filled('f_openRate')) setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
+        /* Only fill a field the user hasn't actually TYPED into — see
+           openFieldTouched() above. On a slow connection this fetch can
+           resolve well after someone has begun the day's entry, and
+           overwriting what they just typed is exactly the "values change on
+           their own" bug this guards against; but the guard has to be based
+           on real keystrokes, not just "is the box non-empty right now", or
+           it ends up protecting a value nobody actually typed. */
+        if(!openFieldTouched('f_openBirds')) setV('f_openBirds',cf.closeBirds);
+        if(!openFieldTouched('f_openWt')) setG('f_openWt',cf.closeWtG);
+        if(!openFieldTouched('f_openMeat')) setG('f_openMeat',cf.closeMeatG);
+        if(!openFieldTouched('f_openRate')) setV('f_openRate',cf.avgRate?Number(cf.avgRate).toFixed(2):'');
         // Selling rates (Section C: skin/skinless/liver/live bird price) are
         // deliberately NOT carried forward from here any more — reported
         // 2026-09-09: the market rate is set fresh each day, and having
@@ -1015,6 +1018,27 @@ function gramsIncomplete(id){
   return !/^\d{3}$/.test(raw);
 }
 
+/* ---------------- opening figures: only real typing blocks carry-forward ----------------
+   fetchCarryForward() used to decide whether a box already held something the
+   admin/supervisor typed by checking filled() — was the box non-empty. That
+   is the wrong test: it can't tell "the person typed this" from "this box
+   is non-empty for some other reason" (a value carried over from a previous
+   render, a since-corrected draft, or any other path that lands a value in
+   the box without a keystroke). Reported live 2026-09-15 on Yarrakatta:
+   the carry-forward NOTE correctly said "9 birds" (proving the fetch itself
+   came back right) while the Opening Birds BOX still showed 0 — reproduced
+   even in a brand-new browser with no saved draft at all, so filled() was
+   the culprit, not localStorage.
+   S.openTouched tracks the one thing that actually matters — a real
+   keystroke — the same way S.gramsTouched already does for the grams-typo
+   guard just above. A programmatic setV()/setG() (carry-forward's own fill,
+   or fillForm() blanking the box) never fires 'input', so it can never mark
+   a field touched; only the person's own typing can. */
+var OPEN_FIELDS = ['f_openBirds','f_openWt_kg','f_openWt_g','f_openMeat_kg','f_openMeat_g','f_openRate'];
+function openFieldTouched(id){
+  return !!(S.openTouched[id] || S.openTouched[id+'_kg'] || S.openTouched[id+'_g']);
+}
+
 /* delegated once at load, so it survives every re-render of the entry form
    and needs no per-field wiring; a programmatic setV()/setG() never fires
    'input', only real typing does, which is exactly the distinction this
@@ -1022,6 +1046,7 @@ function gramsIncomplete(id){
 document.addEventListener('input', function(ev){
   var id=ev.target && ev.target.id;
   if(id && /_g$/.test(id) && GRAMS_FIELDS.some(function(f){ return f.id===id; })) S.gramsTouched[id]=true;
+  if(id && OPEN_FIELDS.indexOf(id)!==-1) S.openTouched[id]=true;
 });
 
 function validate(showMarks){
@@ -4535,6 +4560,12 @@ function wire() {
   $('f_datetime').addEventListener('change', function () {
     if (S.editing || !isAdmin()) return;
     setV('f_openBirds', ''); setG('f_openWt', ''); setG('f_openMeat', ''); setV('f_openRate', '');
+    // These boxes are genuinely empty again now, so any earlier keystroke
+    // into them (for the date this form previously had) must stop counting
+    // as "touched" — otherwise openFieldTouched() (see fetchCarryForward())
+    // would keep blocking the fresh fetch below from filling the now-empty
+    // boxes with the new date's correct opening figures.
+    OPEN_FIELDS.forEach(function(id){ delete S.openTouched[id]; });
     fetchCarryForward();
   });
   /* Auto/manual toggle for closing birds/weight/meat — admin only (the
