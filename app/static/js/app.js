@@ -4419,6 +4419,18 @@ function wire() {
   });
   $('btnLogout').addEventListener('click', function () {
     if (!confirm('Sign out?')) return;
+    // K.lastEntry exists to survive an ACCIDENTAL refresh — see its comment
+    // up top — so startApp() reopens the same record after a reload rather
+    // than dropping back to a blank form. A deliberate sign-out is the
+    // opposite of that: the next login silently reopening whatever record
+    // happened to be open before is exactly what was reported live
+    // 2026-09-15 as "opening birds showing 0 after logout and login again"
+    // — it wasn't a fresh new entry failing to carry forward at all, it was
+    // the OLD entry from before sign-out being reopened automatically, and
+    // whatever that old entry's own real opening figure was (0, for
+    // whichever record that happened to be) got mistaken for the bug.
+    // Clearing it here means the next login always starts clean instead.
+    LS.del(K.lastEntry);
     api('POST', '/logout', {}).then(function () { location.reload(); }).catch(function () { location.reload(); });
   });
   $('btnStayIn').addEventListener('click', function () {
