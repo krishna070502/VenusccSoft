@@ -70,7 +70,7 @@ class User(db.Model):
     username = Column(String(64), unique=True, nullable=False, index=True)
     name = Column(String(160), nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(20), nullable=False)          # 'admin' | 'supervisor'
+    role = Column(String(20), nullable=False)          # 'admin' | 'supervisor' | 'super_admin'
     is_active = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -78,7 +78,7 @@ class User(db.Model):
     branches = relationship("Branch", secondary=user_branches, lazy="joined")
 
     __table_args__ = (
-        CheckConstraint("role IN ('admin','supervisor')", name="ck_users_role"),
+        CheckConstraint("role IN ('admin','supervisor','super_admin')", name="ck_users_role"),
     )
 
     # -- password handling -------------------------------------------------
@@ -90,10 +90,21 @@ class User(db.Model):
 
     @property
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        # 'super_admin' is a strict superset of 'admin' -- every check in the
+        # app that gates something on "is_admin" (approvals, costing edits,
+        # Day Close, the Purchase/Feed ledgers...) should keep working for a
+        # super admin exactly the same as it always has for a plain admin.
+        # The handful of things ONLY a super admin may do (Dashboard,
+        # Administration — see is_super_admin / super_admin_required) are
+        # gated separately, on top of this, never instead of it.
+        return self.role in ("admin", "super_admin")
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role == "super_admin"
 
     def branch_codes(self):
-        """Admins implicitly see every branch."""
+        """Admins (and super admins) implicitly see every branch."""
         if self.is_admin:
             return [b.code for b in Branch.query.filter_by(is_active=True).all()]
         return [b.code for b in self.branches if b.is_active]

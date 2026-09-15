@@ -91,7 +91,11 @@ def create_admin():
     if len(pw) < 6:
         print("Use at least 6 characters.")
         return
-    u = User(name=name, username=username, role="admin")
+    # super_admin, not admin -- this is the account that bootstraps the
+    # whole install, so it should have every permission from the start
+    # rather than needing ensure_super_admin() to promote it on next boot
+    # (which it would, but only because nothing else is a super_admin yet).
+    u = User(name=name, username=username, role="super_admin")
     u.set_password(pw)
     u.branches = Branch.query.all()
     db.session.add(u)

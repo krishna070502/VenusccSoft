@@ -62,7 +62,7 @@ var LEDGER_TYPES = {
    The supervisor fallback mirrors config.py's default (30 min) — it's only
    ever used in the sliver of time before bootstrap() overwrites it with the
    server's real value, but should still agree with the server if it is. */
-var IDLE_MS = { admin: Infinity, supervisor: 30*60*1000 };
+var IDLE_MS = { admin: Infinity, super_admin: Infinity, supervisor: 30*60*1000 };
 var IDLE_WARN = 30*1000;
 
 /* Hotels & hostels buy under the counter rate. PRODUCTS keeps the three
@@ -528,7 +528,13 @@ function applyAutoFill(c){
 }
 
 /* ---------------- auth & RBAC ---------------- */
-function isAdmin(){ return S.user && S.user.role==='admin'; }
+// 'super_admin' counts as admin everywhere admin already did -- every one
+// of the (many) isAdmin() call sites throughout this file keeps behaving
+// exactly the same for a super admin as it always has for a plain admin.
+// isSuperAdmin() below is the separate, narrower check for the two things
+// ONLY a super admin may reach: Dashboard and Administration.
+function isAdmin(){ return !!S.user && (S.user.role==='admin'||S.user.role==='super_admin'); }
+function isSuperAdmin(){ return !!S.user && S.user.role==='super_admin'; }
 function myBranches(){ return isAdmin()?Object.keys(S.branches):(S.user.branches||[]).filter(function(b){return S.branches[b];}); }
 function existingEntry(branch,cat,date,exceptId){
   return S.entries.filter(function(x){
@@ -546,6 +552,7 @@ function userName(id){ var u=S.users.filter(function(x){return x.id===id;})[0]; 
 
 function applyRbac(){
   qsa('[data-admin]').forEach(function(el){ el.classList.toggle('hidden',!isAdmin()); });
+  qsa('[data-superadmin]').forEach(function(el){ el.classList.toggle('hidden',!isSuperAdmin()); });
   qsa('[data-sup]').forEach(function(el){ el.classList.toggle('hidden',isAdmin()); });
   $('idleLimitTxt').textContent=(idleMs()/60000);
   /* No countdown pill for admin — there's nothing counting down (see
@@ -553,7 +560,7 @@ function applyRbac(){
   $('sessionPill').classList.toggle('hidden', isAdmin());
   $('navRecordsLabel').textContent=isAdmin()?'Approvals':'My Entries';
   $('userName').textContent=S.user.name;
-  $('userRole').textContent=S.user.role;
+  $('userRole').textContent=S.user.role==='super_admin'?'Super Admin':S.user.role;
   $('userInitials').textContent=S.user.name.split(/\s+/).map(function(x){return x[0];}).join('').slice(0,2).toUpperCase();
   /* A supervisor only ever works today's attendance/wages — no browsing or
      editing a past day's worker records (see markAttendance/adjustWage,
@@ -1688,7 +1695,7 @@ function renderWasteMeatReport(list){
 }
 
 function renderDashboard(){
-  if(!isAdmin()) return;          /* dashboard is admin-only */
+  if(!isSuperAdmin()) return;     /* dashboard is super-admin-only */
   if(!S.branch) return;
   var r=dashRange();
   var list=dashEntries();
@@ -2431,8 +2438,8 @@ function renderAdmin(){
   }).join('');
   $('userBody').innerHTML=S.users.map(function(u){
     return '<tr class="rowhover"><td class="px-5 py-2.5 font-semibold">'+esc(u.name)+'</td><td class="px-3 py-2.5 font-mono text-xs">'+esc(u.username)+'</td>'+
-      '<td class="px-3 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(u.role==='admin'?'bg-amber-100 text-amber-800':'bg-emerald-100 text-emerald-800')+'">'+u.role+'</span></td>'+
-      '<td class="px-3 py-2.5 text-xs text-slate-500">'+(u.role==='admin'?'All':esc((u.branches||[]).join(', ')||'—'))+'</td>'+
+      '<td class="px-3 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(u.role==='super_admin'?'bg-rose-100 text-rose-800':u.role==='admin'?'bg-amber-100 text-amber-800':'bg-emerald-100 text-emerald-800')+'">'+(u.role==='super_admin'?'Super Admin':u.role)+'</span></td>'+
+      '<td class="px-3 py-2.5 text-xs text-slate-500">'+(u.role!=='supervisor'?'All':esc((u.branches||[]).join(', ')||'—'))+'</td>'+
       '<td class="px-5 py-2.5 text-right"><button data-uact="pass" data-id="'+u.id+'" title="Reset password" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-key"></i></button>'+
       (u.id!==S.user.id?'<button data-uact="del" data-id="'+u.id+'" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>':'')+'</td></tr>';
   }).join('');
@@ -2732,7 +2739,8 @@ function openGen(t,h){ $('genTitle').textContent=t; $('genBody').innerHTML=h; $(
 function closeModal(id){ $(id).classList.add('hidden'); }
 
 function showView(name){
-  if(name==='dashboard' && !isAdmin()) name='entry';   /* supervisors have no dashboard */
+  if(name==='dashboard' && !isSuperAdmin()) name='entry';  /* super-admin-only */
+  if(name==='admin' && !isSuperAdmin()) name='entry';      /* super-admin-only */
   if(name==='dayclose' && !isAdmin()) name='entry';    /* nor any view onto Day Close */
   if(name==='purchases' && !isAdmin()) name='entry';   /* nor the supplier purchase ledger */
   if(name==='feedledger' && !isAdmin()) name='entry';  /* nor the feed purchase ledger */
@@ -2880,6 +2888,8 @@ function apiFail(err) {
 function handleSessionEnd(reason) {
   S.user = null;
   $('appShell').classList.add('hidden');
+  $('sessionCheck').classList.add('hidden');
+  $('loginForm').classList.remove('hidden');
   $('loginScreen').classList.remove('hidden');
   if (reason === 'idle_timeout') {
     $('loginNotice').textContent = 'You were signed out automatically after a period of inactivity.';
@@ -3000,7 +3010,7 @@ function renderActivity() {
       var when = String(a.at).slice(0, 10) + ' ' + String(a.at).slice(11, 19);
       return '<tr class="rowhover"><td class="px-4 py-2 whitespace-nowrap text-xs num">' + when + '</td>' +
         '<td class="px-4 py-2 font-semibold">' + esc(a.userName) + '</td>' +
-        '<td class="px-4 py-2"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ' + (a.role === 'admin' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800') + '">' + esc(a.role) + '</span></td>' +
+        '<td class="px-4 py-2"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ' + (a.role === 'super_admin' ? 'bg-rose-100 text-rose-800' : a.role === 'admin' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800') + '">' + esc(a.role) + '</span></td>' +
         '<td class="px-4 py-2 text-xs text-slate-500">' + esc(a.branch) + '</td>' +
         '<td class="px-4 py-2"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded ' + (col[a.action] || 'bg-slate-100 text-slate-700') + '">' + esc(a.action) + '</span></td>' +
         '<td class="px-4 py-2 text-xs text-slate-500">' + esc(a.detail) + '</td></tr>';
@@ -4271,7 +4281,7 @@ function startApp(user, fresh) {
   // from a supervisor) on top of whatever this resolves to.
   var savedView = LS.get(K.lastView);
   var knownViews = qsa('#mainNav .tab-btn').map(function (b) { return b.getAttribute('data-view'); });
-  showView(savedView && knownViews.indexOf(savedView) >= 0 ? savedView : (isAdmin() ? 'dashboard' : 'entry'));
+  showView(savedView && knownViews.indexOf(savedView) >= 0 ? savedView : (isSuperAdmin() ? 'dashboard' : 'entry'));
 }
 
 function autoLogout() {
@@ -4305,8 +4315,21 @@ function init() {
     }
   });
 
+  // The login FORM stays hidden (see index.html's #sessionCheck) for the
+  // whole time this is in flight -- an already-signed-in visitor should
+  // never see the credentials form at all, just a brief spinner, then
+  // straight into the app. Reported 2026-09-15: on this host's known
+  // cross-region DB latency (same root cause as the slow login/save
+  // elsewhere), that round trip is easily several seconds, long enough for
+  // the interactive login form to render, sit there, and then vanish again
+  // once bootstrap() finally resolves -- looking exactly like an
+  // unnecessary detour through the login page on every refresh. Only reveal
+  // the form once we actually know it's needed: no session, or the check
+  // itself failed.
   api('GET', '/me').then(function (d) {
     if (!d.user) {
+      $('sessionCheck').classList.add('hidden');
+      $('loginForm').classList.remove('hidden');
       if (d.reason === 'idle_timeout') {
         $('loginNotice').textContent = 'You were signed out automatically after a period of inactivity.';
         $('loginNotice').classList.remove('hidden');
@@ -4318,6 +4341,8 @@ function init() {
   }).catch(function (err) {
     /* Say why. Swallowing this is what turned a schema problem into a blank
        login screen with "Request failed (500)" and no explanation. */
+    $('sessionCheck').classList.add('hidden');
+    $('loginForm').classList.remove('hidden');
     if (err && !err.handled && err.message) {
       $('loginError').textContent = err.message;
       $('loginError').classList.remove('hidden');

@@ -21,7 +21,7 @@ from .extensions import db
 from .models import (ActivityLog, Branch, Customer, CustomerAdjustment, CustomerPayment,
                      CustomerSale, DailyEntry, DayClose, LabourLedger, MortalityPhoto,
                      Overhead, Purchase, Setting, User, Worker, utcnow)
-from .security import (admin_required, branch_by_code, log_activity,
+from .security import (admin_required, super_admin_required, branch_by_code, log_activity,
                        login_required, require_branch, idle_limit_minutes,
                        start_session, end_session)
 
@@ -1464,7 +1464,7 @@ def entry_photos(entry_id):
 # branches, users, settings  (admin)
 # ==========================================================================
 @bp.post("/branches")
-@admin_required
+@super_admin_required
 def create_branch():
     d = request.get_json(silent=True) or {}
     name = (d.get("name") or "").strip()
@@ -1505,7 +1505,7 @@ def create_branch():
 
 
 @bp.put("/branches/<code>")
-@admin_required
+@super_admin_required
 def rename_branch(code):
     branch = branch_by_code(code)
     if not branch:
@@ -1519,7 +1519,7 @@ def rename_branch(code):
 
 
 @bp.delete("/branches/<code>")
-@admin_required
+@super_admin_required
 def delete_branch(code):
     branch = branch_by_code(code)
     if not branch:
@@ -1535,7 +1535,7 @@ def delete_branch(code):
 
 
 @bp.post("/users")
-@admin_required
+@super_admin_required
 def create_user():
     d = request.get_json(silent=True) or {}
     name, username = (d.get("name") or "").strip(), (d.get("username") or "").strip()
@@ -1543,7 +1543,7 @@ def create_user():
     if not (name and username and password):
         return jsonify({"error": "validation",
                         "message": "Name, username and password are required."}), 422
-    if role not in ("admin", "supervisor"):
+    if role not in ("admin", "supervisor", "super_admin"):
         return jsonify({"error": "validation", "message": "Unknown role."}), 422
     if User.query.filter(func.lower(User.username) == username.lower()).first():
         return jsonify({"error": "duplicate", "message": "Username already taken."}), 409
@@ -1555,7 +1555,8 @@ def create_user():
 
     user = User(name=name, username=username, role=role)
     user.set_password(password)
-    picked = Branch.query.all() if role == "admin" else Branch.query.filter(Branch.code.in_(codes)).all()
+    picked = (Branch.query.all() if role in ("admin", "super_admin")
+             else Branch.query.filter(Branch.code.in_(codes)).all())
     user.branches = picked
     db.session.add(user)
     log_activity("Created user", f"{username} ({role})")
@@ -1564,7 +1565,7 @@ def create_user():
 
 
 @bp.put("/users/<int:uid>/password")
-@admin_required
+@super_admin_required
 def reset_password(uid):
     user = db.session.get(User, uid)
     if not user:
@@ -1579,7 +1580,7 @@ def reset_password(uid):
 
 
 @bp.delete("/users/<int:uid>")
-@admin_required
+@super_admin_required
 def delete_user(uid):
     user = db.session.get(User, uid)
     if not user:
@@ -1594,7 +1595,7 @@ def delete_user(uid):
 
 
 @bp.put("/settings")
-@admin_required
+@super_admin_required
 def save_settings():
     """
     Update the shared, branch-wide settings — waste percentages, the yield
@@ -3114,7 +3115,7 @@ def dayclose_history():
 # activity log (admin only)
 # ==========================================================================
 @bp.get("/activity")
-@admin_required
+@super_admin_required
 def activity():
     q = ActivityLog.query
     if request.args.get("user"):
@@ -3126,7 +3127,7 @@ def activity():
 
 
 @bp.delete("/activity")
-@admin_required
+@super_admin_required
 def clear_activity():
     n = ActivityLog.query.delete()
     log_activity("Cleared activity log", f"{n} row(s)")
@@ -3138,7 +3139,7 @@ def clear_activity():
 # admin data tools
 # ==========================================================================
 @bp.post("/admin/seed")
-@admin_required
+@super_admin_required
 def admin_seed():
     from .seed import load_demo
     counts = load_demo(g.user)
@@ -3169,7 +3170,7 @@ def _wipe_counts() -> dict:
 
 
 @bp.get("/admin/wipe-preview")
-@admin_required
+@super_admin_required
 def admin_wipe_preview():
     """Counts for the confirmation dialog before admin_wipe() below deletes
     anything — so an admin sees exactly what they are about to lose, not a
@@ -3186,7 +3187,7 @@ def admin_wipe_preview():
 
 
 @bp.get("/admin/wipe-backup")
-@admin_required
+@super_admin_required
 def admin_wipe_backup():
     """
     Every row admin_wipe() below is about to delete, as plain data — the
@@ -3218,7 +3219,7 @@ def admin_wipe_backup():
 
 
 @bp.post("/admin/wipe")
-@admin_required
+@super_admin_required
 def admin_wipe():
     """
     Erase every day-to-day transaction across every branch — daily entries
@@ -3260,7 +3261,7 @@ def admin_wipe():
 
 
 @bp.get("/admin/recompute-closing-stock")
-@admin_required
+@super_admin_required
 def recompute_closing_stock_preview():
     """
     Dry-run preview for the one-time closing-stock backfill (see
@@ -3275,7 +3276,7 @@ def recompute_closing_stock_preview():
 
 
 @bp.post("/admin/recompute-closing-stock")
-@admin_required
+@super_admin_required
 def recompute_closing_stock_apply():
     """Actually writes the corrected opening/closing figures — see the
     preview endpoint above and manage.py's recompute_closing_stock()."""

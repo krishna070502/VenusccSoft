@@ -283,3 +283,40 @@ def schema_gaps() -> list:
             if column.name not in present:
                 gaps.append(f"missing column '{table.name}.{column.name}'")
     return gaps
+
+
+def ensure_super_admin() -> int:
+    """
+    Self-healing one-time promotion, run on every boot: if no 'super_admin'
+    account exists yet, every current 'admin' becomes one instead.
+
+    'super_admin' is a new, third role (see User.is_super_admin) that alone
+    may reach the Dashboard and Administration screens (branches, user
+    accounts, settings, the activity log, the closing-stock backfill tool,
+    data export/seed/wipe) — a plain 'admin' keeps every OTHER admin
+    permission (approvals, costing, Day Close, the Purchase/Feed ledgers...)
+    exactly as before, see User.is_admin, but loses those two specifically.
+
+    Without this, the moment that restriction ships, every existing admin
+    account would be locked out of Administration at once — including the
+    one screen (User accounts) that could otherwise promote someone back in.
+    This closes that gap by construction: the check is "does a super_admin
+    exist AT ALL", not "was this migration run before", so it is a no-op
+    forever once satisfied (a genuinely restricted 'admin' created later
+    through the Users screen is never silently re-promoted), but if every
+    super_admin account is ever deleted, the next boot quietly restores one
+    from whichever 'admin' accounts remain rather than leaving the app
+    permanently locked out of its own administration screen.
+
+    Runs unconditionally (not just when schema_gaps() finds a structural
+    gap) since this is a data invariant, not a DDL one — 'role' is still
+    just a VARCHAR, so no ALTER TABLE ever makes this fire on its own.
+    Returns how many rows were promoted (0 on every boot after the first).
+    """
+    from .models import User
+    if User.query.filter_by(role="super_admin").first():
+        return 0
+    promoted = User.query.filter_by(role="admin").update({"role": "super_admin"})
+    if promoted:
+        db.session.commit()
+    return promoted

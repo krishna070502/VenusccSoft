@@ -135,7 +135,11 @@
       <h1 class="mt-4 text-2xl font-bold text-white">Venus Chicken Centers</h1>
       <p class="text-emerald-300 text-xs uppercase tracking-[0.2em] mt-1">Operations Console</p>
     </div>
-    <form id="loginForm" class="bg-white rounded-2xl shadow-2xl p-6 space-y-4">
+    <div id="sessionCheck" class="bg-white rounded-2xl shadow-2xl p-8 text-center">
+      <i class="fa-solid fa-spinner fa-spin text-3xl text-emerald-700"></i>
+      <p class="mt-3 text-sm text-slate-500">Checking your session…</p>
+    </div>
+    <form id="loginForm" class="hidden bg-white rounded-2xl shadow-2xl p-6 space-y-4">
       <div><label class="lbl" for="loginUser" title="Your account username, given to you by the admin.">Username</label><input id="loginUser" class="inp" autocomplete="username" placeholder="Your username" required /></div>
       <div><label class="lbl" for="loginPass" title="Your account password.">Password</label><input id="loginPass" type="password" class="inp" autocomplete="current-password" placeholder="••••••••" required /></div>
       <p id="loginError" class="hidden text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2"></p>
@@ -178,7 +182,7 @@
       </div>
     </div>
     <nav class="flex gap-1 -mb-px overflow-x-auto" id="mainNav">
-      <button data-view="dashboard" data-admin="1" class="tab-btn active flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-chart-line text-xs"></i> Dashboard</button>
+      <button data-view="dashboard" data-superadmin="1" class="tab-btn active flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-chart-line text-xs"></i> Dashboard</button>
       <button data-view="entry" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-pen-to-square text-xs"></i> Daily Entry</button>
       <button data-view="records" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-clipboard-check text-xs"></i> <span id="navRecordsLabel">Approvals</span> <span id="pendingBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="customers" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-utensils text-xs"></i> Hotels &amp; Functions <span id="custBadge" class="hidden ml-1 bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
@@ -187,7 +191,7 @@
       <button data-view="overheads" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar text-xs"></i> Overheads <span id="ovhBadge" class="hidden ml-1 bg-amber-500 text-emerald-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">0</span></button>
       <button data-view="purchases" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-truck-fast text-xs"></i> Purchases</button>
       <button data-view="feedledger" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-wheat-awn text-xs"></i> Feed Ledger</button>
-      <button data-view="admin" data-admin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
+      <button data-view="admin" data-superadmin="1" class="tab-btn flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-t-lg text-emerald-100 hover:bg-emerald-700 whitespace-nowrap"><i class="fa-solid fa-gear text-xs"></i> Administration</button>
     </nav>
   </div>
 </header>
@@ -1315,7 +1319,7 @@
             <div><label class="lbl" for="newUserName" title="The person's full name, shown throughout the app.">Full name</label><input id="newUserName" class="inp" /></div>
             <div><label class="lbl" for="newUserLogin" title="The username they will sign in with — must be unique.">Username</label><input id="newUserLogin" class="inp" /></div>
             <div><label class="lbl" for="newUserPass" title="Their initial password. They can be given a new one later if needed.">Password</label><input id="newUserPass" class="inp" /></div>
-            <div><label class="lbl" for="newUserRole" title="Admin sees every branch and all figures; a supervisor is limited to their assigned branch(es) and today only.">Role</label><select id="newUserRole" class="inp"><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
+            <div><label class="lbl" for="newUserRole" title="Admin sees every branch and all figures except Dashboard and Administration; Super Admin has everything, including those two; a supervisor is limited to their assigned branch(es) and today only.">Role</label><select id="newUserRole" class="inp"><option value="supervisor">Supervisor</option><option value="admin">Admin</option><option value="super_admin">Super Admin</option></select></div>
           </div>
           <div><label class="lbl" title="Which branch(es) this user can see and work in. A supervisor should normally have exactly one.">Assigned branches</label><div id="newUserBranches" class="flex flex-wrap gap-2"></div></div>
           <button class="bg-emerald-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Create account</button>

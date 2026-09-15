@@ -54,7 +54,7 @@ def create_app(config_object=Config) -> Flask:
     # request after signing in, which tells the user nothing. Close the gap at
     # start-up instead. Set AUTO_UPGRADE_DB=0 to manage migrations yourself.
     if os.environ.get("AUTO_UPGRADE_DB", "1") == "1":
-        from .schema import schema_gaps, upgrade_schema
+        from .schema import ensure_super_admin, schema_gaps, upgrade_schema
         with app.app_context():
             try:
                 gaps = schema_gaps()
@@ -75,6 +75,19 @@ def create_app(config_object=Config) -> Flask:
                 # never stop the app booting over this; the handlers below
                 # will explain the problem on the first request that hits it
                 app.logger.error("Could not check the schema: %s", exc)
+            try:
+                # A data invariant, not a structural one -- see
+                # ensure_super_admin()'s own docstring for why this runs
+                # unconditionally rather than only inside the `if gaps:`
+                # branch above.
+                promoted = ensure_super_admin()
+                if promoted:
+                    app.logger.warning(
+                        "No super_admin existed yet -- promoted %d admin "
+                        "account(s) to super_admin so nobody lost access "
+                        "to Administration.", promoted)
+            except Exception as exc:                       # pragma: no cover
+                app.logger.error("Could not check for a super_admin account: %s", exc)
 
     # ---- per-request user resolution ------------------------------------
     @app.before_request

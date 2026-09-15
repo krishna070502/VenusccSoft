@@ -38,11 +38,12 @@ def log_activity(action: str, detail: str = "", user: User | None = None,
 def idle_limit_minutes(role: str) -> int | None:
     """
     Minutes of no activity before a session is force-ended — or None for a
-    role that is never auto-logged-out. An admin's session now stays open
-    indefinitely (see load_current_user(), which skips the idle check
-    entirely when this returns None); only a supervisor is timed out.
+    role that is never auto-logged-out. An admin's (and a super admin's)
+    session now stays open indefinitely (see load_current_user(), which
+    skips the idle check entirely when this returns None); only a
+    supervisor is timed out.
     """
-    if role == "admin":
+    if role in ("admin", "super_admin"):
         return None
     return current_app.config["IDLE_MINUTES"].get(role, 10)
 
@@ -116,6 +117,29 @@ def admin_required(fn):
             db.session.commit()
             return jsonify({"error": "forbidden",
                             "message": "Administrator access required."}), 403
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def super_admin_required(fn):
+    """
+    Like admin_required, but for the handful of endpoints behind the
+    Dashboard and Administration screens specifically (branches, user
+    accounts, settings, the activity log, the closing-stock backfill tool,
+    and the data-wipe/seed endpoints) — a plain admin is blocked from these
+    the same way a supervisor is blocked from admin_required ones, even
+    though g.user.is_admin is still true for them. Every other
+    admin_required endpoint (approvals, costing, Day Close, the Purchase/
+    Feed ledgers...) is unchanged and stays open to both.
+    """
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if not g.user.is_super_admin:
+            log_activity("Blocked: super admin only", f"{request.method} {request.path}")
+            db.session.commit()
+            return jsonify({"error": "forbidden",
+                            "message": "Super admin access required."}), 403
         return fn(*args, **kwargs)
     return wrapper
 

@@ -81,23 +81,35 @@ def build_fixtures():
         admin = User(name="System Admin", username="admin", role="admin")
         admin.set_password("admin123")
         admin.branches = Branch.query.all()
+        # A plain 'admin' fixture, deliberately kept role="admin" rather than
+        # auto-promoted, so every existing filter_by(role="admin") lookup
+        # throughout this suite keeps finding it (see test_v32 for why a
+        # promotion-on-boot would have broken those). SUPER below is the
+        # separate, super_admin-tier account -- the one that owns Branches,
+        # Users, Settings, the Activity Log and the closing-stock backfill
+        # tool now that those moved behind super_admin_required (see
+        # test_v32_super_admin_role).
+        owner = User(name="Owner Account", username="owner", role="super_admin")
+        owner.set_password("owner123")
+        owner.branches = Branch.query.all()
         sup = User(name="Ravi Kumar", username="ravi", role="supervisor")
         sup.set_password("ravi123")
         sup.branches = [Branch.query.filter_by(code="B01").first()]
         sup2 = User(name="Priya S", username="priya", role="supervisor")
         sup2.set_password("priya123")
         sup2.branches = [Branch.query.filter_by(code="B02").first()]
-        db.session.add_all([admin, sup, sup2])
+        db.session.add_all([admin, owner, sup, sup2])
         db.session.commit()
 
 
-ADMIN, SUP, SUP2, ANON = None, None, None, None
+ADMIN, SUPER, SUP, SUP2, ANON = None, None, None, None, None
 
 
 def login_all():
-    global ADMIN, SUP, SUP2, ANON
-    ADMIN, SUP, SUP2, ANON = (app.test_client() for _ in range(4))
+    global ADMIN, SUPER, SUP, SUP2, ANON
+    ADMIN, SUPER, SUP, SUP2, ANON = (app.test_client() for _ in range(5))
     ADMIN.post("/api/login", json={"username": "admin", "password": "admin123"})
+    SUPER.post("/api/login", json={"username": "owner", "password": "owner123"})
     SUP.post("/api/login", json={"username": "ravi", "password": "ravi123"})
     SUP2.post("/api/login", json={"username": "priya", "password": "priya123"})
 
@@ -270,7 +282,7 @@ def test_rbac():
     # gate actually gates it; it is intentionally NOT a 404 any more.
     case("RBAC", "Wiping data without the exact confirmation phrase is refused",
          "POST /api/admin/wipe, no confirm", 422,
-         lambda: ADMIN.post("/api/admin/wipe", json={}).status_code)
+         lambda: SUPER.post("/api/admin/wipe", json={}).status_code)
 
     case("RBAC", "Supervisor sees only assigned branches",
          "ravi assigned B01 only", ["B01"],
@@ -286,7 +298,7 @@ def test_rbac():
                           json={"branch": "B02", "name": "X", "dayWage": 100}).status_code)
     case("RBAC", "Supervisor receives no user list", "GET /api/bootstrap", [],
          lambda: SUP.get("/api/bootstrap").get_json()["users"])
-    case("RBAC", "Admin receives the user list", "GET /api/bootstrap", 3,
+    case("RBAC", "Admin receives the user list", "GET /api/bootstrap", 4,
          lambda: len(ADMIN.get("/api/bootstrap").get_json()["users"]))
 
 
@@ -644,7 +656,7 @@ def test_date_permission():
     case("Date permission", "The attempt is written to the audit log",
          "action 'Blocked date change'", True,
          lambda: any(a["action"] == "Blocked date change"
-                     for a in ADMIN.get("/api/activity").get_json()))
+                     for a in SUPER.get("/api/activity").get_json()))
     ADMIN.delete(f"/api/entries/{sid}")  # free B01/parents/today for later tests
 
     case("Date permission", "A supervisor's chosen date is silently overridden to today",
@@ -667,7 +679,7 @@ def test_date_permission():
     case("Date permission", "The move is recorded with both dates",
          "activity detail", True,
          lambda: any(a["action"] == "Changed record date/time" and D(19) in a["detail"]
-                     for a in ADMIN.get("/api/activity").get_json()))
+                     for a in SUPER.get("/api/activity").get_json()))
     case("Date permission", "Moving onto an occupied day is refused",
          "collide with an existing entry", 409,
          lambda: _collide(D(18)))
@@ -1093,21 +1105,21 @@ def _day_costs_split():
 def test_admin_modules():
     print("\n[10] Branches, users and settings")
     case("Branches", "Create with an explicit code", "code=BX1", "BX1",
-         lambda: ADMIN.post("/api/branches",
+         lambda: SUPER.post("/api/branches",
                             json={"code": "BX1", "name": "Test Branch X"}).get_json()["code"])
     case("Branches", "Duplicate code is refused", "code=BX1 again", 409,
-         lambda: ADMIN.post("/api/branches",
+         lambda: SUPER.post("/api/branches",
                             json={"code": "BX1", "name": "Clash"}).status_code)
     case("Branches", "Blank name is refused", "name=''", 422,
-         lambda: ADMIN.post("/api/branches", json={"name": "  "}).status_code)
+         lambda: SUPER.post("/api/branches", json={"name": "  "}).status_code)
     case("Branches", "Auto code is allocated when none is given", "no code", True,
-         lambda: ADMIN.post("/api/branches",
+         lambda: SUPER.post("/api/branches",
                             json={"name": "Auto branch"}).get_json()["code"].startswith("B"))
     case("Branches", "Scales to any number (adds 15 at once, codes stay unique)",
          "create 15 more branches", True,
          lambda: _make_many_branches(15))
     case("Branches", "Rename works", "PUT name", "Renamed Hub",
-         lambda: ADMIN.put("/api/branches/BX1",
+         lambda: SUPER.put("/api/branches/BX1",
                            json={"name": "Renamed Hub"}).get_json()["name"])
     case("Branches", "Deleting cascades to its records", "DELETE BX1", True,
          lambda: _delete_branch_cascades())
@@ -1115,20 +1127,20 @@ def test_admin_modules():
          "delete down to one", 409, lambda: _cannot_delete_last())
 
     case("Users", "Create a supervisor with a branch", "role=supervisor", 201,
-         lambda: ADMIN.post("/api/users", json={"name": "Test Sup", "username": "tsup",
+         lambda: SUPER.post("/api/users", json={"name": "Test Sup", "username": "tsup",
                                                 "password": "pw1234", "role": "supervisor",
                                                 "branches": ["B01"]}).status_code)
     case("Users", "Supervisor without a branch is refused", "branches=[]", 422,
-         lambda: ADMIN.post("/api/users", json={"name": "NoBranch", "username": "nb",
+         lambda: SUPER.post("/api/users", json={"name": "NoBranch", "username": "nb",
                                                 "password": "pw1234", "role": "supervisor",
                                                 "branches": []}).status_code)
     case("Users", "Duplicate username is refused", "username=tsup", 409,
-         lambda: ADMIN.post("/api/users", json={"name": "Dup", "username": "tsup",
+         lambda: SUPER.post("/api/users", json={"name": "Dup", "username": "tsup",
                                                 "password": "pw1234",
                                                 "role": "supervisor",
                                                 "branches": ["B01"]}).status_code)
     case("Users", "Unknown role is refused", "role=owner", 422,
-         lambda: ADMIN.post("/api/users", json={"name": "X", "username": "xx",
+         lambda: SUPER.post("/api/users", json={"name": "X", "username": "xx",
                                                 "password": "pw1234",
                                                 "role": "owner"}).status_code)
     case("Users", "New account can sign in", "tsup/pw1234", 200,
@@ -1138,36 +1150,36 @@ def test_admin_modules():
     case("Users", "Password reset takes effect", "reset then login", 200,
          lambda: _reset_and_login())
     case("Users", "Too-short password is refused", "pw='abc'", 422,
-         lambda: ADMIN.put(f"/api/users/{_uid('tsup')}/password",
+         lambda: SUPER.put(f"/api/users/{_uid('tsup')}/password",
                            json={"password": "abc"}).status_code)
     case("Users", "Admin cannot delete their own account", "self delete", 409,
-         lambda: ADMIN.delete(f"/api/users/{_uid('admin')}").status_code)
+         lambda: SUPER.delete(f"/api/users/{_uid('owner')}").status_code)
     case("Users", "Deleted account can no longer sign in", "delete tsup", 401,
          lambda: _delete_and_try_login())
 
     case("Settings", "Waste percentages are configurable", "broiler 28%", 28.0,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"wasteBroiler": 28}).get_json()["waste_broiler"])
     case("Settings", "New waste % feeds the calculation", "28% -> 72% yield", 72_000,
          lambda: compute_entry(base_entry(dressedWtG=100_000),
                                {"waste_broiler": 28, "waste_parents": 21,
                                 "tolerance": 2})["expectedMeatG"])
     case("Settings", "Restore the default", "broiler 31%", 31.0,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"wasteBroiler": 31}).get_json()["waste_broiler"])
     case("Settings", "Non-numeric value is refused", "wasteBroiler='abc'", 422,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"wasteBroiler": "abc"}).status_code)
     case("Settings", "Negative value is refused", "tolerance=-1", 422,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"tolerance": -1}).status_code)
     case("Settings", "Waste % of 100 or more is refused", "wasteBroiler=100", 422,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"wasteBroiler": 100}).status_code)
     case("Settings", "A rejected update changes nothing", "waste still 31% after bad PUT", 31.0,
-         lambda: ADMIN.put("/api/settings", json={}).get_json()["waste_broiler"])
+         lambda: SUPER.put("/api/settings", json={}).get_json()["waste_broiler"])
     case("Settings", "Valid update still works after a rejected one", "broiler 31%", 31.0,
-         lambda: ADMIN.put("/api/settings",
+         lambda: SUPER.put("/api/settings",
                            json={"wasteBroiler": 31}).get_json()["waste_broiler"])
 
 
@@ -1175,7 +1187,7 @@ def _make_many_branches(n):
     with app.app_context():
         before = Branch.query.count()
     for i in range(n):
-        ADMIN.post("/api/branches", json={"name": f"Scale test {i}"})
+        SUPER.post("/api/branches", json={"name": f"Scale test {i}"})
     with app.app_context():
         codes = [b.code for b in Branch.query.all()]
         return len(codes) == before + n and len(set(codes)) == len(codes)
@@ -1186,7 +1198,7 @@ def _delete_branch_cascades():
         b = Branch.query.filter_by(code="BX1").first()
         bid = b.id
     ADMIN.post("/api/entries", json=base_entry(branch="BX1", businessDate=D(1)))
-    ADMIN.delete("/api/branches/BX1")
+    SUPER.delete("/api/branches/BX1")
     with app.app_context():
         return (Branch.query.filter_by(code="BX1").first() is None
                 and DailyEntry.query.filter_by(branch_id=bid).count() == 0)
@@ -1196,8 +1208,8 @@ def _cannot_delete_last():
     with app.app_context():
         codes = [b.code for b in Branch.query.all()]
     for c in codes[1:]:
-        ADMIN.delete(f"/api/branches/{c}")
-    status = ADMIN.delete(f"/api/branches/{codes[0]}").status_code
+        SUPER.delete(f"/api/branches/{c}")
+    status = SUPER.delete(f"/api/branches/{codes[0]}").status_code
     return status
 
 
@@ -1208,14 +1220,14 @@ def _uid(username):
 
 
 def _reset_and_login():
-    ADMIN.put(f"/api/users/{_uid('tsup')}/password", json={"password": "brandnew1"})
+    SUPER.put(f"/api/users/{_uid('tsup')}/password", json={"password": "brandnew1"})
     return app.test_client().post("/api/login",
                                   json={"username": "tsup",
                                         "password": "brandnew1"}).status_code
 
 
 def _delete_and_try_login():
-    ADMIN.delete(f"/api/users/{_uid('tsup')}")
+    SUPER.delete(f"/api/users/{_uid('tsup')}")
     return app.test_client().post("/api/login",
                                   json={"username": "tsup",
                                         "password": "brandnew1"}).status_code
@@ -1226,7 +1238,7 @@ def _delete_and_try_login():
 # ===========================================================================
 def test_activity():
     print("\n[11] Activity log")
-    rows = ADMIN.get("/api/activity").get_json()
+    rows = SUPER.get("/api/activity").get_json()
     kinds = {r["action"] for r in rows}
     for want in ["Sign in", "Failed sign in", "Submitted entry", "Approved entry",
                  "Returned entry", "Added worker", "Created branch", "Added overhead",
@@ -1239,7 +1251,7 @@ def test_activity():
          lambda: any(r["role"] == "supervisor" for r in rows))
     case("Activity log", "Filter by action works", "?action=Sign in", True,
          lambda: all(r["action"] == "Sign in"
-                     for r in ADMIN.get("/api/activity?action=Sign in").get_json()))
+                     for r in SUPER.get("/api/activity?action=Sign in").get_json()))
     case("Activity log", "Supervisor cannot read it", "GET as supervisor", 403,
          lambda: SUP.get("/api/activity").status_code)
     case("Activity log", "Blocked attempts are themselves logged",
@@ -1311,11 +1323,11 @@ def test_admin_wipe():
     case("Data wipe", "A supervisor cannot wipe", "POST wipe", 403,
          lambda: SUP.post("/api/admin/wipe", json={"confirm": "DELETE ALL DATA"}).status_code)
 
-    prev = ADMIN.get("/api/admin/wipe-preview").get_json()
+    prev = SUPER.get("/api/admin/wipe-preview").get_json()
     case("Data wipe", "Preview reports what would be deleted", "delete.entries", True,
          lambda: prev["delete"]["entries"] == _count(DailyEntry) and prev["delete"]["entries"] > 0)
 
-    backup = ADMIN.get("/api/admin/wipe-backup").get_json()
+    backup = SUPER.get("/api/admin/wipe-backup").get_json()
     case("Data wipe", "The backup carries every entry the preview counted",
          "len(backup.entries)", prev["delete"]["entries"], lambda: len(backup["entries"]))
     case("Data wipe", "Backed-up entries carry no photo data, just a count",
@@ -1325,13 +1337,13 @@ def test_admin_wipe():
          lambda: prev["keep"]["branches"])
 
     case("Data wipe", "No confirmation phrase is refused", "POST with no body", 422,
-         lambda: ADMIN.post("/api/admin/wipe", json={}).status_code)
+         lambda: SUPER.post("/api/admin/wipe", json={}).status_code)
     case("Data wipe", "A wrong confirmation phrase is refused", "confirm='yes'", 422,
-         lambda: ADMIN.post("/api/admin/wipe", json={"confirm": "yes"}).status_code)
+         lambda: SUPER.post("/api/admin/wipe", json={"confirm": "yes"}).status_code)
     case("Data wipe", "Nothing was deleted by the failed attempts",
          "entries unchanged", prev["delete"]["entries"], lambda: _count(DailyEntry))
 
-    result = ADMIN.post("/api/admin/wipe", json={"confirm": "DELETE ALL DATA"}).get_json()
+    result = SUPER.post("/api/admin/wipe", json={"confirm": "DELETE ALL DATA"}).get_json()
     case("Data wipe", "The real wipe reports ok", "ok", True, lambda: result["ok"])
 
     for model, key in [(DailyEntry, "entries"), (Purchase, "purchases"),
@@ -1352,7 +1364,7 @@ def test_admin_wipe():
          lambda: _count(Customer))
 
     case("Data wipe", "A second wipe finds nothing left to delete", "delete.entries", 0,
-         lambda: ADMIN.get("/api/admin/wipe-preview").get_json()["delete"]["entries"])
+         lambda: SUPER.get("/api/admin/wipe-preview").get_json()["delete"]["entries"])
 
 
 # ===========================================================================
@@ -1887,7 +1899,7 @@ def test_overhead_ledger():
          "today's row", True,
          lambda: any(r["date"] == TODAY.isoformat() and r["total"] >= 500
                      for r in led["byDay"]))
-    ADMIN.post("/api/branches", json={"code": "BOV", "name": "Overhead Only"})
+    SUPER.post("/api/branches", json={"code": "BOV", "name": "Overhead Only"})
     ADMIN.post("/api/overheads", json={"branch": "BOV", "month": month,
                                        "category": "rent", "amount": 3000})
     solo = ADMIN.get(f"/api/overheads?branch=BOV&from={first}&to={TODAY.isoformat()}").get_json()
@@ -2142,7 +2154,7 @@ def test_scale():
         small = counter["n"]
 
         # add a month of entries in a fresh branch, then measure again
-        ADMIN.post("/api/branches", json={"code": "BSC", "name": "Scale Test"})
+        SUPER.post("/api/branches", json={"code": "BSC", "name": "Scale Test"})
         for i in range(40):
             ADMIN.post("/api/entries", json=base_entry(
                 branch="BSC", businessDate=(TODAY - timedelta(days=100 + i)).isoformat()))
@@ -3084,7 +3096,7 @@ def test_v19_live_bird_weight_shortage():
          "expBirds=120, nothing to flag", 0, lambda: normal["liveShortWtG"])
 
     # ---- round trip through the API: persisted as zero, not carried forward
-    br = ADMIN.post("/api/branches", json={"name": "Shortage Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Shortage Test Branch"}).get_json()
     bcode = br["code"]
 
     today_e = ADMIN.post("/api/entries", json=base_entry(
@@ -3122,7 +3134,7 @@ def test_v20_feed_purchase():
          "feedBags absent", 0.0, lambda: base["feedAmt"])
 
     # ---- round trip through the API -----------------------------------------
-    br = ADMIN.post("/api/branches", json={"name": "Feed Ledger Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Feed Ledger Test Branch"}).get_json()
     bcode = br["code"]
 
     blocked = ADMIN.post("/api/entries", json=base_entry(
@@ -3169,7 +3181,7 @@ def test_v21_recompute_closing_stock_cascade():
     print("\n[32] recompute-closing-stock: legacy zero-bird weight cascade")
     from manage import recompute_closing_stock
 
-    br = ADMIN.post("/api/branches", json={"name": "Recompute Cascade Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Recompute Cascade Test Branch"}).get_json()
     bcode = br["code"]
     day1_date, day2_date = D(10), D(9)
 
@@ -3328,7 +3340,7 @@ def test_v22_purchase_bill_photo():
 def test_v23_recompute_closing_stock_api():
     print("\n[34] Closing-stock backfill — admin API")
 
-    br = ADMIN.post("/api/branches", json={"name": "Recompute API Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Recompute API Test Branch"}).get_json()
     bcode = br["code"]
     day1_date, day2_date = D(100), D(99)
 
@@ -3367,7 +3379,7 @@ def test_v23_recompute_closing_stock_api():
     case("Recompute API", "A supervisor cannot apply it",
          403, 403, lambda: SUP.post("/api/admin/recompute-closing-stock").status_code)
 
-    preview = ADMIN.get("/api/admin/recompute-closing-stock").get_json()
+    preview = SUPER.get("/api/admin/recompute-closing-stock").get_json()
     case("Recompute API", "The admin preview finds the affected branch",
          True, True,
          lambda: any(c["branchCode"] == bcode for c in preview["changes"]))
@@ -3376,17 +3388,17 @@ def test_v23_recompute_closing_stock_api():
     case("Recompute API", "...which writes nothing",
          (59_000, 59_000, 79_000), _fetch(), lambda: _fetch())
 
-    applied = ADMIN.post("/api/admin/recompute-closing-stock").get_json()
+    applied = SUPER.post("/api/admin/recompute-closing-stock").get_json()
     case("Recompute API", "Applying it via the API reports applied=true",
          True, applied["applied"], lambda: applied["applied"])
     case("Recompute API", "...and actually corrects the stored figures",
          (0, 0, 20_000), _fetch(), lambda: _fetch())
     case("Recompute API", "...and records an activity log entry",
          True, True,
-         lambda: len(ADMIN.get("/api/activity?action=Recomputed closing stock (backfill)")
+         lambda: len(SUPER.get("/api/activity?action=Recomputed closing stock (backfill)")
                           .get_json()) > 0)
 
-    again = ADMIN.get("/api/admin/recompute-closing-stock").get_json()
+    again = SUPER.get("/api/admin/recompute-closing-stock").get_json()
     case("Recompute API", "Running the preview again finds nothing left for this branch",
          False, any(c["branchCode"] == bcode for c in again["changes"]),
          lambda: any(c["branchCode"] == bcode for c in again["changes"]))
@@ -3417,7 +3429,7 @@ def test_v24_waste_meat_sold():
          "2.5 x 250", 625.0, lambda: halves["wasteMeatAmt"])
 
     # ---- round trip through the API -----------------------------------------
-    br = ADMIN.post("/api/branches", json={"name": "Waste Meat Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Waste Meat Test Branch"}).get_json()
     bcode = br["code"]
 
     blocked = ADMIN.post("/api/entries", json=base_entry(
@@ -3460,7 +3472,7 @@ def test_v25_check_continuity():
     print("\n[36] check-continuity — read-only opening/closing audit")
     from manage import check_continuity
 
-    br = ADMIN.post("/api/branches", json={"name": "Reddigudem"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Reddigudem"}).get_json()
     bcode = br["code"]
     d1, d2, d5 = D(30), D(29), D(26)   # d2 and d5 are 3 calendar days apart — a gap
 
@@ -3519,7 +3531,7 @@ def test_v25_check_continuity():
          before, _snapshot(), lambda: _snapshot())
 
     # A clean chain (opens exactly match yesterday's close, no gaps) reports nothing.
-    br2 = ADMIN.post("/api/branches", json={"name": "Continuity Clean Branch"}).get_json()
+    br2 = SUPER.post("/api/branches", json={"name": "Continuity Clean Branch"}).get_json()
     ADMIN.post("/api/entries", json=base_entry(
         branch=br2["code"], category="broiler", businessDate=D(50),
         closeBirds=80, closeWtG=160_000, closeMeatG=0, purchases=[]))
@@ -3542,7 +3554,7 @@ def test_v25_check_continuity():
 def test_v26_carry_forward_pending():
     print("\n[37] carry-forward uses the latest PENDING entry too, not approved-only")
 
-    br = ADMIN.post("/api/branches", json={"name": "Carryforward Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Carryforward Test Branch"}).get_json()
     bcode = br["code"]
 
     with app.app_context():
@@ -3616,7 +3628,7 @@ def test_v27_carry_forward_broiler_and_gaps():
           "and survives days nobody entered at all")
 
     for label in ("Broiler Gap Branch A", "Broiler Gap Branch B"):
-        br = ADMIN.post("/api/branches", json={"name": label}).get_json()
+        br = SUPER.post("/api/branches", json={"name": label}).get_json()
         bcode = br["code"]
 
         with app.app_context():
@@ -3652,7 +3664,7 @@ def test_v28_recompute_fixes_carry_forward_backlog():
           "backlog-skip, cascades it forward, and leaves an admin's own figures alone")
     from manage import recompute_closing_stock
 
-    br = ADMIN.post("/api/branches", json={"name": "Recompute Backlog Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Recompute Backlog Test Branch"}).get_json()
     bcode = br["code"]
     dA, dB, dC, dD = D(20), D(19), D(18), D(17)
 
@@ -3745,7 +3757,7 @@ def test_v30_cascade_reaches_draft():
     print("\n[40] a retroactive return correctly zeroes an already-approved day, "
           "and the very next day's still-unsubmitted DRAFT picks up the correction too")
 
-    br = ADMIN.post("/api/branches", json={"name": "Cascade Draft Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Cascade Draft Test Branch"}).get_json()
     bcode = br["code"]
     day1, day2 = D(15), D(14)
 
@@ -3815,7 +3827,7 @@ def test_v31_cascade_reaches_approved():
           "APPROVED (not just a draft) -- reported 2026-09-14, and correctly "
           "keeps going through it to a THIRD day beyond")
 
-    br = ADMIN.post("/api/branches", json={"name": "Cascade Approved Test Branch"}).get_json()
+    br = SUPER.post("/api/branches", json={"name": "Cascade Approved Test Branch"}).get_json()
     bcode = br["code"]
     day1, day2, day3 = D(15), D(14), D(13)
 
@@ -3907,6 +3919,166 @@ def test_v31_cascade_reaches_approved():
          0, e3_after[1], lambda: e3_after[1])
     case("Cascade to approved", "...and opening weight too",
          0, e3_after[2], lambda: e3_after[2])
+
+
+def test_v32_super_admin_role():
+    print("\n[42] a new 'super_admin' role: Dashboard and Administration are "
+          "restricted to it, but every other admin permission is unchanged")
+
+    with app.app_context():
+        admin_row = User.query.filter_by(username="admin").first()
+        sup_row = User.query.filter_by(username="ravi").first()
+        su_row = User.query.filter_by(username="owner").first()
+        case("Super admin", "User.is_admin is still true for a plain admin",
+             True, admin_row.is_admin, lambda: admin_row.is_admin)
+        case("Super admin", "...but is_super_admin is not",
+             False, admin_row.is_super_admin, lambda: admin_row.is_super_admin)
+        case("Super admin", "A super_admin counts as is_admin too -- every "
+                             "ordinary admin_required endpoint stays open to it",
+             True, su_row.is_admin, lambda: su_row.is_admin)
+        case("Super admin", "...and is_super_admin, obviously",
+             True, su_row.is_super_admin, lambda: su_row.is_super_admin)
+        case("Super admin", "A supervisor is neither",
+             (False, False), (sup_row.is_admin, sup_row.is_super_admin),
+             lambda: (sup_row.is_admin, sup_row.is_super_admin))
+
+        from app.security import idle_limit_minutes
+        case("Super admin", "A super_admin's session never idles out, same as admin's",
+             None, idle_limit_minutes("super_admin"), lambda: idle_limit_minutes("super_admin"))
+
+    # ---- six endpoints spanning every card on the Administration screen ----
+    # (deliberately ADMIN here, not SUPER -- these six must be BLOCKED)
+    admin_blocked = {
+        "branches": lambda: ADMIN.post("/api/branches", json={"name": "Should Be Blocked"}),
+        "users": lambda: ADMIN.post("/api/users", json={"name": "X", "username": "blockedbyrbac",
+                                                          "password": "x12345", "role": "admin"}),
+        "settings": lambda: ADMIN.put("/api/settings", json=SETTINGS),
+        "activity": lambda: ADMIN.get("/api/activity"),
+        "recompute": lambda: ADMIN.get("/api/admin/recompute-closing-stock"),
+        "wipe preview": lambda: ADMIN.get("/api/admin/wipe-preview"),
+    }
+    for label, call in admin_blocked.items():
+        resp = call()
+        case("Super admin", f"A plain admin is blocked from {label} (super-admin-only now)",
+             403, resp.status_code, lambda resp=resp: resp.status_code)
+
+    case("Super admin", "A plain admin keeps every OTHER admin permission unchanged "
+                         "-- e.g. the Purchase Ledger, not part of Administration",
+         200, ADMIN.get("/api/purchase-ledger").status_code,
+         lambda: ADMIN.get("/api/purchase-ledger").status_code)
+
+    resp = SUPER.get("/api/activity")
+    case("Super admin", "The super_admin CAN reach the activity log", 200, resp.status_code,
+         lambda: resp.status_code)
+    resp = SUPER.get("/api/admin/recompute-closing-stock")
+    case("Super admin", "...and the closing-stock backfill preview", 200, resp.status_code,
+         lambda: resp.status_code)
+    resp = SUPER.get("/api/admin/wipe-preview")
+    case("Super admin", "...and the data-wipe preview", 200, resp.status_code,
+         lambda: resp.status_code)
+
+    resp = SUPER.post("/api/branches", json={"name": "Super Admin Test Branch"})
+    case("Super admin", "...and can create a branch", 201, resp.status_code,
+         lambda: resp.status_code)
+
+    resp = SUPER.post("/api/users", json={"name": "New Plain Admin", "username": "newplainadmin",
+                                          "password": "plain123", "role": "admin"})
+    case("Super admin", "...and can create a plain 'admin' user", 201, resp.status_code,
+         lambda: resp.status_code)
+    new_admin = resp.get_json()
+    with app.app_context():
+        all_branch_codes = sorted(b.code for b in Branch.query.all())
+    case("Super admin", "...who automatically gets every branch, same as before",
+         all_branch_codes, sorted(new_admin.get("branches") or []),
+         lambda: sorted(new_admin.get("branches") or []))
+
+    resp = SUPER.post("/api/users", json={"name": "Bad Role", "username": "badroleuser",
+                                          "password": "x12345", "role": "owner"})
+    case("Super admin", "An unknown role is still rejected", 422, resp.status_code,
+         lambda: resp.status_code)
+
+
+# ===========================================================================
+# 21a. ensure_super_admin() -- the one-time boot-time promotion
+# ===========================================================================
+def test_v33_ensure_super_admin_migration():
+    print("\n[43] ensure_super_admin() promotes existing admins exactly once, "
+          "and self-heals if every super_admin is ever removed")
+    import tempfile as tf
+    from app import create_app as _create
+    import app.config as _cfg
+    from app.schema import ensure_super_admin
+
+    mig_db = os.path.join(tf.gettempdir(), "vcc_superadmin_migration.db")
+    if os.path.exists(mig_db):
+        os.remove(mig_db)
+
+    def app_on(path):
+        os.environ["DATABASE_URL"] = f"sqlite:///{path}"
+        os.environ["AUTO_UPGRADE_DB"] = "0"
+        import importlib
+        importlib.reload(_cfg)
+        return _create(_cfg.Config)
+
+    mig = app_on(mig_db)
+    with mig.app_context():
+        db.create_all()
+        db.session.add(Branch(code="B01", name="Migration Test Branch"))
+        db.session.commit()
+        a1 = User(name="Admin One", username="mig_admin1", role="admin")
+        a1.set_password("x12345")
+        a2 = User(name="Admin Two", username="mig_admin2", role="admin")
+        a2.set_password("x12345")
+        db.session.add_all([a1, a2])
+        db.session.commit()
+
+        promoted = ensure_super_admin()
+        case("Super admin migration", "With no super_admin on file, every existing "
+                                       "admin is promoted in one pass",
+             2, promoted, lambda: promoted)
+
+        roles = {u.username: u.role for u in User.query.all()}
+        case("Super admin migration", "...both admins are now super_admin",
+             {"mig_admin1": "super_admin", "mig_admin2": "super_admin"}, roles,
+             lambda: roles)
+
+        # A genuinely restricted admin created AFTER the promotion (the whole
+        # point of the new tier) must never be swept up by a later boot.
+        a3 = User(name="Admin Three", username="mig_admin3", role="admin")
+        a3.set_password("x12345")
+        db.session.add(a3)
+        db.session.commit()
+
+        promoted_again = ensure_super_admin()
+        case("Super admin migration", "Once a super_admin exists, re-running is a no-op",
+             0, promoted_again, lambda: promoted_again)
+        a3_role = db.session.get(User, a3.id).role
+        case("Super admin migration", "...so a restricted admin created afterward "
+                                       "stays restricted, not silently promoted",
+             "admin", a3_role, lambda: a3_role)
+
+        # Self-healing: if every super_admin is ever removed (deleted, or
+        # demoted by hand), the app must not lock itself out of its own
+        # Administration screen forever.
+        User.query.filter_by(role="super_admin").update({"role": "admin"})
+        db.session.commit()
+        healed = ensure_super_admin()
+        case("Super admin migration", "If every super_admin is ever removed, "
+                                       "the next boot quietly restores one",
+             True, healed > 0, lambda: healed > 0)
+        case("Super admin migration", "...so Administration is never permanently "
+                                       "locked out",
+             True, User.query.filter_by(role="super_admin").count() > 0,
+             lambda: User.query.filter_by(role="super_admin").count() > 0)
+
+    with mig.app_context():
+        db.session.remove()
+        db.engine.dispose()
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        if os.path.exists(mig_db + suffix):
+            os.remove(mig_db + suffix)
+    os.environ["DATABASE_URL"] = f"sqlite:///{TMP_DB}"
+    os.environ.pop("AUTO_UPGRADE_DB", None)
 
 
 # ===========================================================================
@@ -4140,6 +4312,8 @@ if __name__ == "__main__":
     test_v28_recompute_fixes_carry_forward_backlog()
     test_v30_cascade_reaches_draft()
     test_v31_cascade_reaches_approved()
+    test_v32_super_admin_role()
+    test_v33_ensure_super_admin_migration()
     test_schema_upgrade()
     test_admin_modules()
     test_activity()
