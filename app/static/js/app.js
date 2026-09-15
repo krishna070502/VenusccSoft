@@ -29,6 +29,23 @@ var DB = {
   clearAll:function(){ Object.keys(K).forEach(function(k){ LS.del(K[k]); }); }
 };
 
+/* Wipes everything this browser remembers about THIS person's session --
+   which record/view/branch to reopen (K.lastEntry/lastView/lastBranch) and
+   every in-progress unsaved draft (vcc_draft_<branch>_<cat>_<date>, keyed
+   per entry -- see draftKey() -- so not reachable through the static K map
+   DB.clearAll() already covers). Called on an explicit logout, not a plain
+   refresh: several branches share one phone between supervisors, and the
+   next person signing in on that same device should land on a clean login
+   screen, not the previous person's half-typed entry or last-open record. */
+function clearSessionState(){
+  LS.del(K.lastEntry); LS.del(K.lastView); LS.del(K.lastBranch);
+  try{
+    Object.keys(localStorage)
+      .filter(function(k){ return k.indexOf('vcc_draft_')===0; })
+      .forEach(function(k){ LS.del(k); });
+  }catch(e){ /* localStorage unavailable — nothing to enumerate */ }
+}
+
 var DEFAULT_BRANCHES = { B01:'Branch 01 — Main Hub', B02:'Branch 02 — Downtown' };
 /* Left over from the browser-only version, which kept accounts in
    localStorage. Authentication is server-side now — loadAll() below is
@@ -4419,18 +4436,22 @@ function wire() {
   });
   $('btnLogout').addEventListener('click', function () {
     if (!confirm('Sign out?')) return;
-    // K.lastEntry exists to survive an ACCIDENTAL refresh — see its comment
-    // up top — so startApp() reopens the same record after a reload rather
-    // than dropping back to a blank form. A deliberate sign-out is the
-    // opposite of that: the next login silently reopening whatever record
-    // happened to be open before is exactly what was reported live
-    // 2026-09-15 as "opening birds showing 0 after logout and login again"
-    // — it wasn't a fresh new entry failing to carry forward at all, it was
-    // the OLD entry from before sign-out being reopened automatically, and
-    // whatever that old entry's own real opening figure was (0, for
-    // whichever record that happened to be) got mistaken for the bug.
-    // Clearing it here means the next login always starts clean instead.
-    LS.del(K.lastEntry);
+    // K.lastEntry/lastView/lastBranch and any in-progress draft exist to
+    // survive an ACCIDENTAL refresh — see their comments up top — so
+    // startApp() reopens the same record/screen after a reload rather than
+    // dropping back to a blank form. A deliberate sign-out is the opposite
+    // of that: the next login silently reopening whatever record happened
+    // to be open before is exactly what was reported live 2026-09-15 as
+    // "opening birds showing 0 after logout and login again" — it wasn't a
+    // fresh new entry failing to carry forward at all, it was the OLD entry
+    // from before sign-out being reopened automatically, and whatever that
+    // old entry's own real opening figure was (0, for whichever record that
+    // happened to be) got mistaken for the bug. clearSessionState() also
+    // sweeps every unsaved draft, not just the last-open pointer — several
+    // branches share one phone between supervisors, and the next person
+    // signing in on that device should never see the previous person's
+    // half-typed entry.
+    clearSessionState();
     api('POST', '/logout', {}).then(function () { location.reload(); }).catch(function () { location.reload(); });
   });
   $('btnStayIn').addEventListener('click', function () {

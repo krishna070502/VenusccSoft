@@ -538,7 +538,7 @@
 | TC-453 | Purchase ledger | A single-branch supplier row says which branch it's for | B01 | B01 | B01 | PASS |
 | TC-454 | Purchase ledger | Every transaction row is tagged with the same branch | True | True | as expected | PASS |
 | TC-455 | Purchase ledger | Omitting branch answers with no single branch code |  |  |  | PASS |
-| TC-456 | Purchase ledger | ...and Shiva Traders shows up once per branch, not merged together | {'B01', 'B02'} | {'B01', 'B02'} | {'B01', 'B02'} | PASS |
+| TC-456 | Purchase ledger | ...and Shiva Traders shows up once per branch, not merged together | {'B02', 'B01'} | {'B02', 'B01'} | {'B02', 'B01'} | PASS |
 | TC-457 | Purchase ledger | ...B01's Shiva Traders totals are exactly what the single-branch view showed | (40, 20) | (40, 20) | (40, 20) | PASS |
 | TC-458 | Purchase ledger | ...B02's Shiva Traders totals are kept separate, not merged into B01's | (300, 20) | (300, 20) | (300, 20) | PASS |
 | TC-459 | Purchase ledger | Every transaction row in the all-branch view is tagged with its own branch | True | True | as expected | PASS |
