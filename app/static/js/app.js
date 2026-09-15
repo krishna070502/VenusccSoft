@@ -906,7 +906,9 @@ function fetchCarryForward(){
    tryRestoreDraft() itself. Photos are deliberately left out of the
    snapshot: they're already attached (not "unsaved typing" in the same
    sense) and re-saving a handful of base64 images on every keystroke risks
-   the same "Storage full" wall LS.set() already has to guard against. */
+   the same "Storage full" wall LS.set() already has to guard against.
+   Opening birds/weight/meat/rate are left out too, for a different reason —
+   see the comment in saveDraftSoon() just below. */
 function draftKey(){
   return 'vcc_draft_'+(S.editing?S.editing.id:('new_'+S.branch+'_'+S.cat+'_'+dOf(tv('f_datetime')||nowLocal())));
 }
@@ -917,6 +919,22 @@ function saveDraftSoon(){
   draftTimer=setTimeout(function(){
     var snap=readForm();
     delete snap.photos; delete snap.photosLoaded;
+    /* Opening birds/weight/meat/rate are deliberately left out of the
+       snapshot. They're carried forward automatically by fetchCarryForward()
+       (see its "only fill a field the user hasn't already started typing
+       into" guard), which trusts a non-empty box as real typing to avoid
+       clobbering someone mid-entry. But this autosave fires on a timer
+       regardless of whether that fetch has resolved yet, and can capture
+       these boxes still blank/zero (a slow Render/Neon round trip) or
+       holding a since-corrected number (e.g. before an admin runs the
+       "Fix carried-forward closing stock" backfill) — reported live
+       2026-09-15 as the carry-forward NOTE showing the right figure while
+       the FIELD silently kept a stale one restored from an old draft.
+       Leaving these four out means a restored draft always arrives blank,
+       so the in-flight carry-forward fetch (already kicked off by
+       blankForm() before tryRestoreDraft() runs) is free to fill them with
+       whatever is actually correct right now. */
+    delete snap.openBirds; delete snap.openWtG; delete snap.openMeatG; delete snap.openRate;
     DB.write(draftKey(),{ savedAt:Date.now(), data:snap });
   },800);
 }
@@ -930,6 +948,11 @@ function tryRestoreDraft(){
   // keep whatever photos actually loaded from the server — the draft never
   // carried them in the first place (see the note above)
   restored.photos=S.photos.slice(); restored.photosLoaded=S.photosLoaded;
+  // Belt-and-braces for a draft saved by an older build of this file, before
+  // openBirds/openWtG/openMeatG/openRate were excluded above: strip them
+  // here too, so an old cached draft can't resurrect the same stale-field-
+  // vs-correct-note bug on a device that hasn't saved a fresh draft since.
+  delete restored.openBirds; delete restored.openWtG; delete restored.openMeatG; delete restored.openRate;
   fillForm(restored);
   recalc();
   toast('Restored what you were typing before the page reloaded.','warn');
