@@ -968,11 +968,35 @@ function tryRestoreDraft(){
   // keep whatever photos actually loaded from the server — the draft never
   // carried them in the first place (see the note above)
   restored.photos=S.photos.slice(); restored.photosLoaded=S.photosLoaded;
-  // Belt-and-braces for a draft saved by an older build of this file, before
-  // openBirds/openWtG/openMeatG/openRate were excluded above: strip them
-  // here too, so an old cached draft can't resurrect the same stale-field-
-  // vs-correct-note bug on a device that hasn't saved a fresh draft since.
-  delete restored.openBirds; delete restored.openWtG; delete restored.openMeatG; delete restored.openRate;
+  // openBirds/openWtG/openMeatG/openRate are deliberately left OUT of every
+  // draft snapshot (see saveDraftSoon()'s comment) — but "leave them out of
+  // the snapshot" and "delete them here" are not the same thing. Deleting
+  // them from `restored` makes fillForm() below write '' into all four
+  // boxes (setV()/setG() treat an undefined value as blank), and that is
+  // only safe for a brand-new, still-empty entry: blankForm() already has
+  // fetchCarryForward() in flight to fill them in right after.
+  //
+  // For an EXISTING entry (S.editing set) there is no such fetch coming —
+  // loadEntry() already populated these four correctly from the entry
+  // itself, via fillForm(S.editing), just before this function runs. Simply
+  // opening ANY saved entry calls recalc() (see loadEntry()'s last line),
+  // which debounce-saves a draft after 800ms regardless of whether anyone
+  // typed a single key — so merely viewing an entry for over a second, then
+  // reopening it later in the same session, was enough to trigger this.
+  // Reported live 2026-09-16: an admin "just opening/looking" at entries in
+  // sequence via Records → Edit saw Opening Birds/Weight blank out on
+  // entries already checked, both earlier and later ones, with no editing
+  // involved — confirmed by a fresh production backup showing the
+  // UNDERLYING data was correct the whole time; only the form redisplayed
+  // it wrong. Restoring straight from S.editing (the authoritative record
+  // just loaded) fixes that, while a brand-new entry keeps the old
+  // behaviour of leaving these blank for the carry-forward fetch to fill.
+  if(S.editing){
+    restored.openBirds=S.editing.openBirds; restored.openWtG=S.editing.openWtG;
+    restored.openMeatG=S.editing.openMeatG; restored.openRate=S.editing.openRate;
+  } else {
+    delete restored.openBirds; delete restored.openWtG; delete restored.openMeatG; delete restored.openRate;
+  }
   fillForm(restored);
   recalc();
   toast('Restored what you were typing before the page reloaded.','warn');
