@@ -107,7 +107,7 @@ var S = { users:[], branches:{}, entries:[], workers:[], ledger:[], overheads:[]
           window:null, fetching:null, ovhScope:'branch', ovhLedger:null, plScope:'branch', wkLedger:null, dcCurrent:null, closeHistory:[],
           lastAct:Date.now(), auto:{ closeBirds:true, closeWt:true },
           user:null, branch:null, cat:'broiler', dashCat:'all', dashScope:'branch',
-          editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null,
+          editing:null, photos:[], purchases:[], hotelSales:[], charts:{}, carryForward:null, reviewEntry:null,
           purchaseLedger:null, openPurchases:{}, gramsTouched:{}, openTouched:{} };
 
 /* ---------------- helpers ---------------- */
@@ -2098,6 +2098,11 @@ function costingPanel(e,c){
 
 function openReview(id){
   var e=S.entries.filter(function(x){return x.id===id;})[0]; if(!e) return;
+  // The #reviewBody 'input' listener (registered ONCE, in wire() — see
+  // reviewInputHandler()) reads this rather than closing over `e` itself,
+  // so opening a second, third, fourth review in the same page session
+  // doesn't leave an earlier entry's listener still attached underneath.
+  S.reviewEntry=e;
   var c=calc(e);
   $('reviewTitle').textContent=(e.category==='parents'?'Parents':'Broiler')+' — '+dOf(e.datetime);
   $('reviewSub').textContent=(S.branches[e.branch]||e.branch)+' · by '+userName(e.createdBy)+' · '+e.status;
@@ -2165,42 +2170,59 @@ function openReview(id){
   $('reviewFoot').innerHTML=foot;
   bind('rvApprove',function(){ decide(e.id,'approved'); });
   bind('rvPrint',function(){ printEntryVoucher(e.id); });
-  $('reviewBody').addEventListener('input',function(ev){
-    var t=ev.target;
-    if(t.id==='rvDate'){
-      var nd=t.value; if(!nd || nd.length<16) return;
-      api('PUT','/entries/'+e.id+'/costing',{ datetime:nd })
-        .then(function(rec){
-          upsertEntry(rec);
-          e.datetime=rec.datetime; e.businessDate=rec.businessDate;
-          $('rvDateNote').textContent='moved to '+String(rec.datetime||'').replace('T',' ');
-          $('rvDateNote').className='text-xs font-semibold text-emerald-700';
-          $('reviewTitle').textContent=(rec.category==='parents'?'Parents':'Broiler')+' — '+dOf(rec.datetime);
-          $('rvDate').value=String(rec.datetime||'').slice(0,16);
-          renderRecords(); renderDashboard();
-          toast('Business date changed to '+nd+'.');
-        })
-        .catch(function(err){
-          $('rvDateNote').textContent=(err&&err.message)||'Could not move the entry';
-          $('rvDateNote').className='text-xs font-semibold text-rose-600';
-          t.value=String(e.datetime||'').slice(0,16);
-          apiFail(err);
-        });
-      return;
-    }
-    if(t.id==='rvOpenRate'){ e.openRate=num(t.value); }
-    else if(t.hasAttribute&&t.hasAttribute('data-rvrate')){
-      var i=+t.getAttribute('data-rvrate');
-      if(e.purchases&&e.purchases[i]) e.purchases[i].rate=num(t.value);
-    } else return;
-    t.classList.toggle('missing',num(t.value)<=0);
-    DB.write(K.entries,S.entries);
-    repriceReview(e.id);
-  });
   repriceReview(e.id);
   bind('rvReject',function(){ closeModal('reviewModal'); askReject(e.id); });
   bind('rvEdit',function(){ closeModal('reviewModal'); showView('entry'); loadEntry(e.id); });
   $('reviewModal').classList.remove('hidden');
+}
+
+/* Handles every keystroke inside the review modal (the rvDate field, the
+   opening-stock cost rate, and each purchase line's rate) — registered
+   ONCE on #reviewBody, in wire(), rather than re-added by openReview()
+   every time a review is opened. That used to matter a great deal: opening
+   a second, third, fourth review in the same page session (an admin
+   working through several pending days in a row) added ANOTHER listener
+   on top of the ones from every entry already reviewed, each one still
+   holding onto ITS OWN entry via a closured `e` that never got cleaned up.
+   A single keystroke in the box currently on screen fired every stacked
+   listener at once, and each dutifully wrote that same typed number into
+   its own old entry's openRate/purchase rate, silently corrupting whatever
+   had been reviewed earlier in the session. Reading S.reviewEntry (set by
+   openReview() just before this modal opens) instead of a closure means
+   there is only ever one listener, and it always acts on whichever entry
+   is actually showing right now. */
+function reviewInputHandler(ev){
+  var e=S.reviewEntry; if(!e) return;
+  var t=ev.target;
+  if(t.id==='rvDate'){
+    var nd=t.value; if(!nd || nd.length<16) return;
+    api('PUT','/entries/'+e.id+'/costing',{ datetime:nd })
+      .then(function(rec){
+        upsertEntry(rec);
+        e.datetime=rec.datetime; e.businessDate=rec.businessDate;
+        $('rvDateNote').textContent='moved to '+String(rec.datetime||'').replace('T',' ');
+        $('rvDateNote').className='text-xs font-semibold text-emerald-700';
+        $('reviewTitle').textContent=(rec.category==='parents'?'Parents':'Broiler')+' — '+dOf(rec.datetime);
+        $('rvDate').value=String(rec.datetime||'').slice(0,16);
+        renderRecords(); renderDashboard();
+        toast('Business date changed to '+nd+'.');
+      })
+      .catch(function(err){
+        $('rvDateNote').textContent=(err&&err.message)||'Could not move the entry';
+        $('rvDateNote').className='text-xs font-semibold text-rose-600';
+        t.value=String(e.datetime||'').slice(0,16);
+        apiFail(err);
+      });
+    return;
+  }
+  if(t.id==='rvOpenRate'){ e.openRate=num(t.value); }
+  else if(t.hasAttribute&&t.hasAttribute('data-rvrate')){
+    var i=+t.getAttribute('data-rvrate');
+    if(e.purchases&&e.purchases[i]) e.purchases[i].rate=num(t.value);
+  } else return;
+  t.classList.toggle('missing',num(t.value)<=0);
+  DB.write(K.entries,S.entries);
+  repriceReview(e.id);
 }
 
 /* A one-page printable voucher for a single daily entry — the full breakdown
@@ -4813,6 +4835,11 @@ function wire() {
     var im = ev.target.closest('img[data-view]'); if (!im) return;
     $('lightboxImg').src = im.src; $('lightbox').classList.remove('hidden');
   });
+  // Registered exactly ONCE here, rather than inside openReview() itself —
+  // see reviewInputHandler()'s own comment for why that used to stack a
+  // fresh listener (and a fresh stale `e` closure) every time an admin
+  // opened another entry from Approvals in the same page session.
+  $('reviewBody').addEventListener('input', reviewInputHandler);
 
   /* ---- labour ---- */
   $('wkDate').addEventListener('change', renderWorkers);
