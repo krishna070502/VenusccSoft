@@ -3309,6 +3309,9 @@ function renderCustomers() {
       '<td class="px-4 py-2.5 text-right num font-bold ' + (bal > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(bal) + '</td>' +
       '<td class="px-4 py-2.5 text-right whitespace-nowrap">' +
         '<button data-cact="ledger" data-id="' + c.id + '" title="Ledger" class="h-8 w-8 rounded-lg text-slate-700 hover:bg-slate-100"><i class="fa-solid fa-book-open"></i></button>' +
+        (WA_BRANCHES.indexOf(c.branch) >= 0
+          ? '<button data-cact="wa" data-id="' + c.id + '" title="' + (waNumber(c.phone) ? 'Send due reminder on WhatsApp' : 'No phone number saved — edit this customer to add one') + '" class="h-8 w-8 rounded-lg ' + (waNumber(c.phone) ? 'text-green-600 hover:bg-green-100' : 'text-slate-300') + '"><i class="fa-brands fa-whatsapp text-lg"></i></button>'
+          : '') +
         '<button data-cact="pay" data-id="' + c.id + '" title="Record a receipt" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-hand-holding-dollar"></i></button>' +
         (isAdmin() ? '<button data-cact="adjust" data-id="' + c.id + '" title="Add or reduce billed amount" class="h-8 w-8 rounded-lg text-amber-700 hover:bg-amber-100"><i class="fa-solid fa-sliders"></i></button>' : '') +
         '<button data-cact="edit" data-id="' + c.id + '" title="Edit" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-pen-to-square"></i></button>' +
@@ -3526,6 +3529,40 @@ function adjustBillModal(cid) {
         savedModal((amt > 0 ? 'Added ' : 'Reduced by ') + money0(Math.abs(amt)) + ' for ' + c.name + '.');
       }).catch(apiFail).then(function () { done('adjSave'); });
   });
+}
+
+/* ---------------- WhatsApp due reminder (trial) ----------------
+   Trial: only branches listed here show the WhatsApp button. Nothing is sent
+   automatically — the button opens WhatsApp with the message already typed
+   and the person presses Send. */
+var WA_BRANCHES = ['B01'];   /* B01 = LB peta */
+
+/* Digits only, as wa.me wants: a bare 10-digit Indian mobile gets 91 in front,
+   a leading 0 is dropped. Returns '' when there is no usable number. */
+function waNumber(phone) {
+  var d = String(phone || '').replace(/\D/g, '');
+  if (d.length === 11 && d.charAt(0) === '0') d = d.slice(1);
+  if (d.length === 10) d = '91' + d;
+  return d.length >= 11 && d.length <= 15 ? d : '';
+}
+
+function sendDueOnWhatsApp(c) {
+  var num_ = waNumber(c.phone);
+  if (!num_) { toast('No phone number saved for ' + c.name + '. Edit the customer and add one.', 'warn'); return; }
+  /* open the tab now, inside the click, so the browser's pop-up blocker
+     lets it through — the statement is fetched a moment later */
+  var win = window.open('', '_blank');
+  var today = todayISO();
+  api('GET', '/customers/' + c.id + '/ledger?from=' + today + '&to=' + today).then(function (d) {
+    var p = d.period || { opening: d.totals.balance, billed: 0, closing: d.totals.balance };
+    var msg = 'Venus Chicken — ' + c.name + '\nDate: ' + today +
+      '\nPrevious due: ' + money0(p.opening) +
+      '\nToday\'s purchase: ' + money0(p.billed) +
+      '\nTotal due: ' + money0(p.closing) +
+      '\n\nThank you.';
+    var url = 'https://wa.me/' + num_ + '?text=' + encodeURIComponent(msg);
+    if (win) win.location = url; else window.location = url;
+  }).catch(function (err) { if (win) win.close(); apiFail(err); });
 }
 
 /* The ledger popup's own From/To range, remembered so reopening it after a
@@ -4829,6 +4866,7 @@ function wire() {
     var id = b.getAttribute('data-id'), act = b.getAttribute('data-cact');
     var c = customerById(id); if (!c) return;
     if (act === 'ledger') openCustomerLedger(id, '', '');
+    else if (act === 'wa') sendDueOnWhatsApp(c);
     else if (act === 'pay') receiptModal(id);
     else if (act === 'adjust') adjustBillModal(id);
     else if (act === 'edit') customerModal(c);
