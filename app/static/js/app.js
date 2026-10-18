@@ -3309,8 +3309,8 @@ function renderCustomers() {
       '<td class="px-4 py-2.5 text-right num font-bold ' + (bal > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(bal) + '</td>' +
       '<td class="px-4 py-2.5 text-right whitespace-nowrap">' +
         '<button data-cact="ledger" data-id="' + c.id + '" title="Ledger" class="h-8 w-8 rounded-lg text-slate-700 hover:bg-slate-100"><i class="fa-solid fa-book-open"></i></button>' +
-        (WA_BRANCHES.indexOf(c.branch) >= 0
-          ? '<button data-cact="wa" data-id="' + c.id + '" title="' + (waNumber(c.phone) ? 'Send due reminder on WhatsApp' : 'No phone number saved — edit this customer to add one') + '" class="h-8 w-8 rounded-lg ' + (waNumber(c.phone) ? 'text-green-600 hover:bg-green-100' : 'text-slate-300') + '"><i class="fa-brands fa-whatsapp text-lg"></i></button>'
+        (waEnabled(c)
+          ?'<button data-cact="wa" data-id="' + c.id + '" title="' + (waNumber(c.phone) ? 'Send due reminder on WhatsApp' : 'No phone number saved — edit this customer to add one') + '" class="h-8 w-8 rounded-lg ' + (waNumber(c.phone) ? 'text-green-600 hover:bg-green-100' : 'text-slate-300') + '"><i class="fa-brands fa-whatsapp text-lg"></i></button>'
           : '') +
         '<button data-cact="pay" data-id="' + c.id + '" title="Record a receipt" class="h-8 w-8 rounded-lg text-emerald-700 hover:bg-emerald-100"><i class="fa-solid fa-hand-holding-dollar"></i></button>' +
         (isAdmin() ? '<button data-cact="adjust" data-id="' + c.id + '" title="Add or reduce billed amount" class="h-8 w-8 rounded-lg text-amber-700 hover:bg-amber-100"><i class="fa-solid fa-sliders"></i></button>' : '') +
@@ -3536,6 +3536,11 @@ function adjustBillModal(cid) {
    automatically — the button opens WhatsApp with the message already typed
    and the person presses Send. */
 var WA_BRANCHES = ['B01'];   /* B01 = LB peta */
+/* matched by code OR by the branch's name, so it still works if LB peta was
+   ever given a different code in the live database */
+function waEnabled(c) {
+  return WA_BRANCHES.indexOf(c.branch) >= 0 || /lb\s*peta/i.test(S.branches[c.branch] || '');
+}
 
 /* Digits only, as wa.me wants: a bare 10-digit Indian mobile gets 91 in front,
    a leading 0 is dropped. Returns '' when there is no usable number. */
