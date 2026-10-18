@@ -1870,7 +1870,44 @@ def customer_ledger(cid):
     totals = customer_totals([c.id])[c.id]
     totals["opening"] = float(c.opening_balance)
     totals["balance"] = round(balance, 2)
-    return jsonify({"customer": c.to_dict(), "rows": rows, "totals": totals})
+
+    # Optional date range. The running balance above was already computed
+    # over the WHOLE history, so every row keeps its true balance; the range
+    # only decides which rows are shown. `period` summarises just that slice:
+    # what was owed going in (the balance as of the day before `from`), what
+    # was billed on account and received inside it, and what was owed at the
+    # end (the balance as of `to`).
+    d_from = parse_date(request.args["from"], field="from") if request.args.get("from") else None
+    d_to = parse_date(request.args["to"], field="to") if request.args.get("to") else None
+    period = None
+    if d_from or d_to:
+        f_iso = d_from.isoformat() if d_from else None
+        t_iso = d_to.isoformat() if d_to else None
+        opening_p = float(c.opening_balance)
+        closing_p = float(c.opening_balance)
+        billed_p = received_p = 0.0
+        shown = []
+        for r in rows:
+            if f_iso and r["date"] < f_iso:
+                opening_p = r["balance"]
+            if t_iso and r["date"] > t_iso:
+                continue
+            closing_p = r["balance"]
+            if f_iso and r["date"] < f_iso:
+                continue
+            shown.append(r)
+            if r["kind"] == "receipt":
+                received_p += r["amount"]
+            elif r["effect"] > 0:
+                billed_p += r["effect"]
+            elif r["kind"] == "adjustment" and r["effect"] < 0:
+                billed_p += r["effect"]
+        rows = shown
+        period = {"from": f_iso, "to": t_iso, "opening": round(opening_p, 2),
+                  "billed": round(billed_p, 2), "received": round(received_p, 2),
+                  "closing": round(closing_p, 2)}
+    return jsonify({"customer": c.to_dict(), "rows": rows, "totals": totals,
+                    "period": period})
 
 
 @bp.post("/customers/<cid>/payments")

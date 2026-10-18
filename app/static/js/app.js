@@ -3528,16 +3528,57 @@ function adjustBillModal(cid) {
   });
 }
 
-function openCustomerLedger(cid) {
-  api('GET', '/customers/' + cid + '/ledger').then(function (d) {
-    var c = d.customer, t = d.totals;
+/* The ledger popup's own From/To range, remembered so reopening it after a
+   receipt edit/delete (which calls openCustomerLedger(cid) with no range)
+   lands on the same slice the admin was looking at. Cleared when a different
+   hotel is opened without an explicit range. */
+var ledgerRange = { cid: null, from: '', to: '' };
+
+function openCustomerLedger(cid, from, to) {
+  if (from === undefined && to === undefined) {
+    from = ledgerRange.cid === cid ? ledgerRange.from : '';
+    to = ledgerRange.cid === cid ? ledgerRange.to : '';
+  }
+  from = from || ''; to = to || '';
+  ledgerRange = { cid: cid, from: from, to: to };
+  var qs = (from || to) ? '?' + (from ? 'from=' + encodeURIComponent(from) : '') +
+                          (from && to ? '&' : '') + (to ? 'to=' + encodeURIComponent(to) : '') : '';
+  api('GET', '/customers/' + cid + '/ledger' + qs).then(function (d) {
+    var c = d.customer, t = d.totals, p = d.period;
+    var card = function (label, val, cls, big) {
+      return '<div class="rounded-lg ' + cls + ' border p-3"><p class="text-[10px] font-bold uppercase text-slate-500">' + label +
+        '</p><p class="font-bold num' + (big ? ' text-lg' : '') + '">' + money0(val) + '</p></div>';
+    };
+    var shownBal = p ? p.closing : t.balance;
     var head = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">' +
-      '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><p class="text-[10px] font-bold uppercase text-slate-500">Opening</p><p class="font-bold num">' + money0(t.opening) + '</p></div>' +
-      '<div class="rounded-lg bg-emerald-50 border border-emerald-200 p-3"><p class="text-[10px] font-bold uppercase text-emerald-700">Billed on account</p><p class="font-bold num">' + money0(t.credit) + '</p></div>' +
-      '<div class="rounded-lg bg-slate-50 border border-slate-200 p-3"><p class="text-[10px] font-bold uppercase text-slate-500">Received</p><p class="font-bold num">' + money0(t.receipts) + '</p></div>' +
-      '<div class="rounded-lg ' + (t.balance > 0.005 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200') + ' border p-3">' +
-        '<p class="text-[10px] font-bold uppercase text-slate-500">Balance due</p><p class="font-bold num text-lg ' + (t.balance > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(t.balance) + '</p></div>' +
+      card(p ? 'Owed on ' + (p.from || 'start') : 'Opening', p ? p.opening : t.opening, 'bg-slate-50 border-slate-200') +
+      card(p ? 'Billed in range' : 'Billed on account', p ? p.billed : t.credit, 'bg-emerald-50 border-emerald-200') +
+      card(p ? 'Received in range' : 'Received', p ? p.received : t.receipts, 'bg-slate-50 border-slate-200') +
+      '<div class="rounded-lg ' + (shownBal > 0.005 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200') + ' border p-3">' +
+        '<p class="text-[10px] font-bold uppercase text-slate-500">' + (p ? 'Balance due on ' + (p.to || 'today') : 'Balance due') + '</p><p class="font-bold num text-lg ' + (shownBal > 0.005 ? 'text-rose-600' : 'text-emerald-700') + '">' + money0(shownBal) + '</p></div>' +
       '</div>';
+
+    /* Hotel picker (every hotel/hostel/function in every branch this user can
+       see) + From/To. Picking another hotel or pressing Apply reloads the
+       statement for that hotel and range. */
+    var opts = S.customers.slice().sort(function (a, b) {
+      var ba = S.branches[a.branch] || a.branch, bb = S.branches[b.branch] || b.branch;
+      return ba < bb ? -1 : ba > bb ? 1 : (a.name < b.name ? -1 : 1);
+    }).map(function (x) {
+      return '<option value="' + x.id + '"' + (x.id === cid ? ' selected' : '') + '>' +
+        esc((S.branches[x.branch] || x.branch) + ' — ' + x.name) + '</option>';
+    }).join('');
+    var filterBar = '<div class="flex flex-wrap items-end gap-3 mb-4 p-3 rounded-lg bg-slate-50 border border-slate-200">' +
+      '<div class="min-w-[220px] flex-1"><label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Hotel / hostel (all branches)</label>' +
+        '<select id="cuLedHotel" class="inp">' + opts + '</select></div>' +
+      '<div><label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">From</label>' +
+        '<input type="date" id="cuLedFrom" class="inp" value="' + from + '" /></div>' +
+      '<div><label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">To</label>' +
+        '<input type="date" id="cuLedTo" class="inp" value="' + to + '" /></div>' +
+      '<button id="cuLedApply" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm px-4 py-2.5 rounded-lg">Apply</button>' +
+      '<button id="cuLedClear" class="border border-slate-300 text-slate-600 font-bold text-sm px-4 py-2.5 rounded-lg">All dates</button>' +
+      '</div>';
+    head = filterBar + head;
 
     var note = '<p class="text-xs text-slate-500 mb-3">Cash sales settle on the day and never touch the balance. ' +
       (t.pending > 0 ? 'A further <b>' + money0(t.pending) + '</b> is sold but not yet approved, so it is listed below and excluded from the balance.' : 'Everything sold has been approved.') + '</p>';
@@ -3573,7 +3614,7 @@ function openCustomerLedger(cid) {
             : r.concession < 0 ? '<span class="block text-[10px] text-emerald-700">+' + money(-r.concession) + '</span>' : '') + '</td>' +
         '<td class="px-3 py-2 text-right num font-semibold">' + money0(r.amount) + ' ' + chip + '</td>' +
         '<td class="px-3 py-2 text-right num font-bold">' + money0(r.balance) + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="px-3 py-10 text-center text-slate-400">Nothing on this ledger yet.</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="px-3 py-10 text-center text-slate-400">' + (p ? 'Nothing on this ledger between these dates.' : 'Nothing on this ledger yet.') + '</td></tr>';
 
     openGen(c.name + ' — ledger',
       head + note +
@@ -3605,6 +3646,14 @@ function openCustomerLedger(cid) {
       });
       return { headers: headers, rows: rows };
     };
+    var reload = function (newCid) {
+      var f = $('cuLedFrom').value, t2 = $('cuLedTo').value;
+      if (f && t2 && f > t2) { toast('"From" date is after the "To" date.', 'error'); return; }
+      openCustomerLedger(newCid, f, t2);
+    };
+    bind('cuLedApply', function () { reload(cid); });
+    bind('cuLedClear', function () { openCustomerLedger(cid, '', ''); });
+    if ($('cuLedHotel')) $('cuLedHotel').addEventListener('change', function () { reload(this.value); });
     bind('cuLedPay', function () { receiptModal(cid); });
     bind('cuLedAdjust', function () { closeModal('genModal'); adjustBillModal(cid); });
     if (isAdmin()) {
@@ -3623,11 +3672,13 @@ function openCustomerLedger(cid) {
     }
     bind('cuLedCsv', function () {
       var x = custLedgerRows();
-      toXlsx('VCC_ledger_' + c.code + '_' + todayISO(), 'Ledger', x.headers, x.rows);
+      toXlsx('VCC_ledger_' + c.code + (p ? '_' + (p.from || 'start') + '_to_' + (p.to || todayISO()) : '_' + todayISO()),
+             'Ledger', x.headers, x.rows);
     });
     bind('cuLedPrint', function () {
       var x = custLedgerRows();
-      printTable(c.name + ' — ledger', 'Balance due ' + money0(t.balance), x.headers, x.rows);
+      printTable(c.name + ' — ledger' + (p ? ' (' + (p.from || 'start') + ' → ' + (p.to || 'today') + ')' : ''),
+                 (S.branches[c.branch] || c.branch) + ' · Balance due ' + money0(shownBal), x.headers, x.rows);
     });
   }).catch(apiFail);
 }
@@ -4777,7 +4828,7 @@ function wire() {
     var b = ev.target.closest('button[data-cact]'); if (!b) return;
     var id = b.getAttribute('data-id'), act = b.getAttribute('data-cact');
     var c = customerById(id); if (!c) return;
-    if (act === 'ledger') openCustomerLedger(id);
+    if (act === 'ledger') openCustomerLedger(id, '', '');
     else if (act === 'pay') receiptModal(id);
     else if (act === 'adjust') adjustBillModal(id);
     else if (act === 'edit') customerModal(c);
