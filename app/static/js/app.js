@@ -3347,7 +3347,7 @@ function customerModal(c) {
     '</div>' +
     '<div class="grid grid-cols-2 gap-3">' +
       '<div><label class="lbl" for="cuContact">Contact person</label><input id="cuContact" class="inp" value="' + esc(c.contact || '') + '" placeholder="Optional" /></div>' +
-      '<div><label class="lbl" for="cuPhone">Phone</label><input id="cuPhone" class="inp" value="' + esc(c.phone || '') + '" placeholder="Optional" /></div>' +
+      '<div><label class="lbl" for="cuPhone">Phone (WhatsApp)</label><input id="cuPhone" class="inp" type="tel" inputmode="tel" value="' + esc(c.phone || '') + '" placeholder="10-digit mobile — used for the WhatsApp due reminder" /></div>' +
     '</div>' +
     '<div><label class="lbl" for="cuMode">How is their price set?</label><select id="cuMode" class="inp">' +
       '<option value="less"' + (mode === 'less' ? ' selected' : '') + '>Adjusted from today\'s market rate (usual)</option>' +
@@ -3531,16 +3531,13 @@ function adjustBillModal(cid) {
   });
 }
 
-/* ---------------- WhatsApp due reminder (trial) ----------------
-   Trial: only branches listed here show the WhatsApp button. Nothing is sent
-   automatically — the button opens WhatsApp with the message already typed
-   and the person presses Send. */
-var WA_BRANCHES = ['B01'];   /* B01 = LB peta */
-/* matched by code OR by the branch's name, so it still works if LB peta was
-   ever given a different code in the live database */
-function waEnabled(c) {
-  return WA_BRANCHES.indexOf(c.branch) >= 0 || /lb\s*peta/i.test(S.branches[c.branch] || '');
-}
+/* ---------------- WhatsApp due reminder ----------------
+   Every hotel, hostel and function in every branch gets the button — it is
+   drawn per row from the customer list, so a branch or customer added later
+   gets it automatically with no code change. Nothing is sent automatically:
+   the button opens WhatsApp with the message already typed and the person
+   presses Send. A customer with no phone saved shows a greyed icon. */
+function waEnabled(c) { return !!c; }
 
 /* Digits only, as wa.me wants: a bare 10-digit Indian mobile gets 91 in front,
    a leading 0 is dropped. Returns '' when there is no usable number. */
