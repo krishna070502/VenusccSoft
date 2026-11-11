@@ -1540,6 +1540,12 @@ def create_user():
     d = request.get_json(silent=True) or {}
     name, username = (d.get("name") or "").strip(), (d.get("username") or "").strip()
     password, role = d.get("password") or "", d.get("role", "supervisor")
+    # "viewer" is not a stored role: it is an admin account with view_only set,
+    # so it sees every branch but cannot change anything (see the guard in
+    # app/__init__.py). The Dashboard and Administration stay super-admin-only.
+    view_only = role == "viewer"
+    if view_only:
+        role = "admin"
     if not (name and username and password):
         return jsonify({"error": "validation",
                         "message": "Name, username and password are required."}), 422
@@ -1553,13 +1559,13 @@ def create_user():
         return jsonify({"error": "validation",
                         "message": "Assign at least one branch to a supervisor."}), 422
 
-    user = User(name=name, username=username, role=role)
+    user = User(name=name, username=username, role=role, view_only=view_only)
     user.set_password(password)
     picked = (Branch.query.all() if role in ("admin", "super_admin")
              else Branch.query.filter(Branch.code.in_(codes)).all())
     user.branches = picked
     db.session.add(user)
-    log_activity("Created user", f"{username} ({role})")
+    log_activity("Created user", f"{username} ({'viewer' if view_only else role})")
     db.session.commit()
     return jsonify(user.to_dict()), 201
 

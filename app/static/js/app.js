@@ -558,7 +558,12 @@ function existingEntry(branch,cat,date,exceptId){
     return x.branch===branch && x.category===cat && dOf(x.datetime)===date && x.id!==exceptId;
   })[0]||null;
 }
+/* A view-only account sees everything an admin sees but changes nothing — the
+   server refuses every write for it (see the guard in app/__init__.py); this
+   is just the matching tidy-up so it isn't offered buttons that cannot work. */
+function isViewOnly(){ return !!S.user && !!S.user.viewOnly; }
 function canEdit(e){
+  if(isViewOnly()) return false;
   if(!e) return true;
   if(isAdmin()) return true;
   // A supervisor only ever has today — matches can_edit() server-side.
@@ -568,6 +573,18 @@ function canEdit(e){
 function userName(id){ var u=S.users.filter(function(x){return x.id===id;})[0]; return u?u.name:'—'; }
 
 function applyRbac(){
+  document.body.classList.toggle('viewonly', isViewOnly());
+  if(!$('viewonlyCss')){
+    var st=document.createElement('style'); st.id='viewonlyCss';
+    st.textContent='body.viewonly #formActions, body.viewonly #rvApprove, body.viewonly #rvReject, body.viewonly #rvEdit,'+
+      'body.viewonly #btnAddCustomer, body.viewonly [data-cact="pay"], body.viewonly [data-cact="adjust"],'+
+      'body.viewonly [data-cact="del"], body.viewonly [data-cact="edit"], body.viewonly [data-cact="wa"] ~ [data-cact="pay"],'+
+      'body.viewonly #btnAddWorker, body.viewonly #btnPayWorker, body.viewonly #btnAddExpense, body.viewonly #btnAddOverhead,'+
+      'body.viewonly #cuLedPay, body.viewonly #cuLedAdjust, body.viewonly [id^="rcEdit_"], body.viewonly [id^="rcDel_"],'+
+      'body.viewonly #recBody [data-act="del"], body.viewonly #btnAddPurchase, body.viewonly #btnAddReturn,'+
+      'body.viewonly #btnAddHotelSale { display:none !important; }';
+    document.head.appendChild(st);
+  }
   qsa('[data-admin]').forEach(function(el){ el.classList.toggle('hidden',!isAdmin()); });
   qsa('[data-superadmin]').forEach(function(el){ el.classList.toggle('hidden',!isSuperAdmin()); });
   qsa('[data-sup]').forEach(function(el){ el.classList.toggle('hidden',isAdmin()); });
@@ -1168,7 +1185,7 @@ function loadEntry(id){
     // one it actually belongs to).
     refreshBranchSelects(); syncSegs(); fillForm(S.editing); $('carryNote').textContent='';
   } else { blankForm(); }
-  var e=S.editing, locked=e?!canEdit(e):false;
+  var e=S.editing, locked=isViewOnly() || (e?!canEdit(e):false);
   lockForm(locked);
   if(!locked) tryRestoreDraft();
 
@@ -1205,7 +1222,8 @@ function loadEntry(id){
   });
 
   $('entryLockNotice').classList.toggle('hidden',!locked);
-  if(locked) $('entryLockNotice').innerHTML='<i class="fa-solid fa-lock mr-1"></i>'+(st==='approved'?'Approved records can only be modified by an admin.':'Submitted — only an admin can modify it now.');
+  if(locked && isViewOnly()) $('entryLockNotice').innerHTML='<i class="fa-solid fa-eye mr-1"></i>View-only account — you can look at this record but not change it.';
+  else if(locked) $('entryLockNotice').innerHTML='<i class="fa-solid fa-lock mr-1"></i>'+(st==='approved'?'Approved records can only be modified by an admin.':'Submitted — only an admin can modify it now.');
   if(!locked && e && isAdmin()){
     $('entryLockNotice').classList.remove('hidden');
     $('entryLockNotice').innerHTML='<i class="fa-solid fa-user-shield mr-1"></i>Admin: you may change the date, time and figures on this record.';
@@ -2549,7 +2567,7 @@ function renderAdmin(){
   }).join('');
   $('userBody').innerHTML=S.users.map(function(u){
     return '<tr class="rowhover"><td class="px-5 py-2.5 font-semibold">'+esc(u.name)+'</td><td class="px-3 py-2.5 font-mono text-xs">'+esc(u.username)+'</td>'+
-      '<td class="px-3 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(u.role==='super_admin'?'bg-rose-100 text-rose-800':u.role==='admin'?'bg-amber-100 text-amber-800':'bg-emerald-100 text-emerald-800')+'">'+(u.role==='super_admin'?'Super Admin':u.role)+'</span></td>'+
+      '<td class="px-3 py-2.5"><span class="text-[10px] font-bold uppercase px-2 py-1 rounded-full '+(u.viewOnly?'bg-sky-100 text-sky-800':u.role==='super_admin'?'bg-rose-100 text-rose-800':u.role==='admin'?'bg-amber-100 text-amber-800':'bg-emerald-100 text-emerald-800')+'">'+(u.viewOnly?'Viewer':u.role==='super_admin'?'Super Admin':u.role)+'</span></td>'+
       '<td class="px-3 py-2.5 text-xs text-slate-500">'+(u.role!=='supervisor'?'All':esc((u.branches||[]).join(', ')||'—'))+'</td>'+
       '<td class="px-5 py-2.5 text-right"><button data-uact="pass" data-id="'+u.id+'" title="Reset password" class="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100"><i class="fa-solid fa-key"></i></button>'+
       (u.id!==S.user.id?'<button data-uact="del" data-id="'+u.id+'" class="h-8 w-8 rounded-lg text-rose-600 hover:bg-rose-100"><i class="fa-solid fa-trash"></i></button>':'')+'</td></tr>';

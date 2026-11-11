@@ -72,6 +72,12 @@ class User(db.Model):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False)          # 'admin' | 'supervisor' | 'super_admin'
     is_active = Column(Boolean, nullable=False, default=True)
+    # A "viewer": role is 'admin' (so they see every branch and every admin
+    # screen's data) but view_only blocks every write on the server — see the
+    # before_request guard in app/__init__.py. A flag rather than a fourth
+    # role value because ck_users_role below is a CHECK constraint that the
+    # automatic schema upgrade cannot alter on an existing database.
+    view_only = Column(Boolean, nullable=False, default=False)
     last_login_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
@@ -112,6 +118,7 @@ class User(db.Model):
     def to_dict(self):
         return {"id": self.id, "username": self.username, "name": self.name,
                 "role": self.role, "active": self.is_active,
+                "viewOnly": bool(self.view_only),
                 "branches": self.branch_codes()}
 
 

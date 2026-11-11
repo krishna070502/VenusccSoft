@@ -99,6 +99,18 @@ def create_app(config_object=Config) -> Flask:
         user, reason = load_current_user()
         g.user = user
         g.session_expired = reason
+        # A view-only account (an admin with view_only set) may read
+        # everything an admin can, but nothing that changes data. Enforced
+        # here, once, for EVERY write endpoint — present and future — rather
+        # than endpoint by endpoint, so a new feature can never forget it.
+        # Sign-in/out and the idle heartbeat are not data changes.
+        if (user is not None and getattr(user, "view_only", False)
+                and request.path.startswith("/api/")
+                and request.method not in ("GET", "HEAD", "OPTIONS")
+                and request.path not in ("/api/login", "/api/logout", "/api/heartbeat")):
+            return jsonify({"error": "forbidden",
+                            "message": "This account is view-only — it cannot "
+                                       "add, edit, approve or delete anything."}), 403
 
     # ---- cache-busting for the JS bundle ---------------------------------
     # {{ url_for('static', filename='js/app.js') }} is the same URL on every
